@@ -54,11 +54,18 @@ BASE_I18N_EXPORT void SetICUDefaultLocale(const std::string& locale_string);
 // Returns true if the application text direction is right-to-left.
 BASE_I18N_EXPORT bool IsRTL();
 
+// A test utility function to set the application default text direction.
+BASE_I18N_EXPORT void SetRTLForTesting(bool rtl);
+
 // Returns whether the text direction for the default ICU locale is RTL.  This
 // assumes that SetICUDefaultLocale has been called to set the default locale to
 // the UI locale of Chrome.
 // NOTE: Generally, you should call IsRTL() instead of this.
 BASE_I18N_EXPORT bool ICUIsRTL();
+
+// Gets the explicitly forced text direction for debugging. If no forcing is
+// applied, returns UNKNOWN_DIRECTION.
+BASE_I18N_EXPORT TextDirection GetForcedTextDirection();
 
 // Returns the text direction for |locale_name|.
 // As a startup optimization, this method checks the locale against a list of

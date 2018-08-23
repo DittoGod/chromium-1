@@ -5,6 +5,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "contentsOpaque": true,
       "drawsContent": true,
       "paintInvalidations": [
@@ -119,52 +120,6 @@
           "reason": "bounds change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='mask'",
-      "reason": "bounds change"
     }
   ]
 }

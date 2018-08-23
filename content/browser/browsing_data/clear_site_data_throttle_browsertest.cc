@@ -19,6 +19,7 @@
 #include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/storage_partition.h"
@@ -136,6 +137,7 @@ class ServiceWorkerActivationObserver
 
   // ServiceWorkerContextCoreObserver overrides.
   void OnVersionStateChanged(int64_t version_id,
+                             const GURL& scope,
                              ServiceWorkerVersion::Status) override {
     if (context_->GetLiveVersion(version_id)->status() ==
         ServiceWorkerVersion::ACTIVATED) {
@@ -207,7 +209,7 @@ class ClearSiteDataThrottleBrowserTest : public ContentBrowserTest {
       base::Closure callback) {
     cookie_store_ =
         request_context_getter->GetURLRequestContext()->cookie_store();
-    callback.Run();
+    std::move(callback).Run();
   }
 
   // Adds a cookie for the |url|. Used in the cookie integration tests.
@@ -665,7 +667,7 @@ IN_PROC_BROWSER_TEST_F(ClearSiteDataThrottleBrowserTest, MAYBE_Credentials) {
     std::string credentials;
     bool should_run;
   } kTestCases[] = {
-      {true, "", false},
+      {true, "", true},
       {true, "omit", false},
       {true, "same-origin", true},
       {true, "include", true},

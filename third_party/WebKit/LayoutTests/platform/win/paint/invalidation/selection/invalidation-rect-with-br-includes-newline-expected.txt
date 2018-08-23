@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -32,32 +33,6 @@
           "reason": "selection"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "selection"
-    },
-    {
-      "object": "InlineTextBox 'a'",
-      "reason": "selection"
-    },
-    {
-      "object": "LayoutBR BR",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineTextBox '\n'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'b'",
-      "reason": "geometry"
     }
   ]
 }

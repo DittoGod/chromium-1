@@ -15,7 +15,8 @@ bool TestPreviewsDecider::ShouldAllowPreviewAtECT(
     const net::URLRequest& request,
     previews::PreviewsType type,
     net::EffectiveConnectionType effective_connection_type_threshold,
-    const std::vector<std::string>& host_blacklist_from_server) const {
+    const std::vector<std::string>& host_blacklist_from_server,
+    bool ignore_long_term_black_list_rules) const {
   return allow_previews_;
 }
 
@@ -24,5 +25,12 @@ bool TestPreviewsDecider::ShouldAllowPreview(
     previews::PreviewsType type) const {
   return allow_previews_;
 }
+
+bool TestPreviewsDecider::IsURLAllowedForPreview(const net::URLRequest& request,
+                                                 PreviewsType type) const {
+  return allow_previews_;
+}
+
+void TestPreviewsDecider::LoadResourceHints(const net::URLRequest& request) {}
 
 }  // namespace previews

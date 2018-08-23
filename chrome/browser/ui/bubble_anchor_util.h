@@ -6,14 +6,24 @@
 #define CHROME_BROWSER_UI_BUBBLE_ANCHOR_UTIL_H_
 
 #include "build/build_config.h"
+#include "ui/gfx/native_widget_types.h"
 
 namespace gfx {
+class Point;
 class Rect;
 }
 
 class Browser;
+class ExtensionInstalledBubble;
 
 namespace bubble_anchor_util {
+
+// Indicates which browser component to use as an anchor.
+// Used as a parameter of GetPageInfoAnchorView().
+enum Anchor {
+  kLocationBar,
+  kAppMenuButton,
+};
 
 // Offset from the window edge to show bubbles when there is no location bar.
 // E.g., when in fullscreen or in a Hosted App window. Don't center, since that
@@ -31,6 +41,16 @@ gfx::Rect GetPageInfoAnchorRect(Browser* browser);
 // Returns the page info anchor rect for |browser|, which is assumed to have a
 // Cocoa browser window.
 gfx::Rect GetPageInfoAnchorRectCocoa(Browser* browser);
+
+// Returns the anchor point for the extension installed bubble for |window|,
+// which is assumed to be a Cocoa browser window.
+gfx::Point GetExtensionInstalledAnchorPointCocoa(
+    gfx::NativeWindow window,
+    const ExtensionInstalledBubble* bubble);
+
+// Returns the app menu anchor rect for |browser|, which is assumed to have a
+// Cocoa browser window.
+gfx::Rect GetAppMenuAnchorRectCocoa(Browser* browser);
 #endif
 
 }  // namespace bubble_anchor_util

@@ -37,6 +37,19 @@ cr.define('extensions', function() {
       'onItemIdChanged_(data.id, delegate)',
     ],
 
+    listeners: {
+      'view-enter-start': 'onViewEnterStart_',
+    },
+
+    /**
+     * Focuses the back button when page is loaded.
+     * @private
+     */
+    onViewEnterStart_: function() {
+      Polymer.RenderStatus.afterNextRender(
+          this, () => cr.ui.focusWithoutInk(this.$.closeButton));
+    },
+
     /** @private */
     onItemIdChanged_: function() {
       // Clear the size, since this view is reused, such that no obsolete size
@@ -101,7 +114,8 @@ cr.define('extensions', function() {
     hasWarnings_: function() {
       return this.data.disableReasons.corruptInstall ||
           this.data.disableReasons.suspiciousInstall ||
-          this.data.disableReasons.updateRequired || !!this.data.blacklistText;
+          this.data.disableReasons.updateRequired ||
+          !!this.data.blacklistText || this.data.runtimeWarnings.length > 0;
     },
 
     /**
@@ -147,8 +161,7 @@ cr.define('extensions', function() {
      */
     shouldShowOptionsSection_: function() {
       return this.data.incognitoAccess.isEnabled ||
-          this.data.fileAccess.isEnabled || this.data.runOnAllUrls.isEnabled ||
-          this.data.errorCollection.isEnabled;
+          this.data.fileAccess.isEnabled || this.data.errorCollection.isEnabled;
     },
 
     /**
@@ -179,6 +192,13 @@ cr.define('extensions', function() {
     },
 
     /** @private */
+    onReloadTap_: function() {
+      this.delegate.reloadItem(this.data.id).catch(loadError => {
+        this.fire('load-error', loadError);
+      });
+    },
+
+    /** @private */
     onRemoveTap_: function() {
       this.delegate.deleteItem(this.data.id);
     },
@@ -203,12 +223,6 @@ cr.define('extensions', function() {
     onAllowOnFileUrlsChange_: function() {
       this.delegate.setItemAllowedOnFileUrls(
           this.data.id, this.$$('#allow-on-file-urls').checked);
-    },
-
-    /** @private */
-    onAllowOnAllSitesChange_: function() {
-      this.delegate.setItemAllowedOnAllSites(
-          this.data.id, this.$$('#allow-on-all-sites').checked);
     },
 
     /** @private */
@@ -261,6 +275,23 @@ cr.define('extensions', function() {
         default:
           return '';
       }
+    },
+
+    /**
+     * @return {boolean}
+     * @private
+     */
+    hasPermissions_: function() {
+      return this.data.permissions.simplePermissions.length > 0 ||
+          !!this.data.permissions.hostAccess;
+    },
+
+    /**
+     * @return {boolean}
+     * @private
+     */
+    showRuntimeHostPermissions_: function() {
+      return !!this.data.permissions.hostAccess;
     },
   });
 

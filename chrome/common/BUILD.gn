@@ -3,16 +3,18 @@
 # found in the LICENSE file.
 
 import("//build/buildflag_header.gni")
+import("//build/util/lastchange.gni")
 import("//build/util/process_version.gni")
 import("//chrome/common/features.gni")
 import("//chrome/process_version_rc_template.gni")  # For branding_file_path.
 import("//components/nacl/features.gni")
-import("//device/vr/features/features.gni")
-import("//extensions/features/features.gni")
+import("//components/offline_pages/buildflags/features.gni")
+import("//device/vr/buildflags/buildflags.gni")
+import("//extensions/buildflags/buildflags.gni")
 import("//media/media_options.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 import("//pdf/features.gni")
-import("//ppapi/features/features.gni")
+import("//ppapi/buildflags/buildflags.gni")
 import("//tools/grit/grit_rule.gni")
 
 if (enable_pdf) {
@@ -30,20 +32,21 @@ grit("resources") {
   ]
 }
 
-buildflag_header("features") {
-  header = "features.h"
+buildflag_header("buildflags") {
+  header = "buildflags.h"
   flags = [
     "ENABLE_APP_LIST=$enable_app_list",
     "ENABLE_BACKGROUND_MODE=$enable_background_mode",
     "ENABLE_BACKGROUND_CONTENTS=$enable_background_contents",
     "ENABLE_BASIC_PRINT_DIALOG=$enable_basic_print_dialog",
     "ENABLE_CAPTIVE_PORTAL_DETECTION=$enable_captive_portal_detection",
-    "ENABLE_GOOGLE_NOW=$enable_google_now",
     "ENABLE_HANGOUT_SERVICES_EXTENSION=$enable_hangout_services_extension",
     "ENABLE_ONE_CLICK_SIGNIN=$enable_one_click_signin",
     "ENABLE_NATIVE_NOTIFICATIONS=$enable_native_notifications",
     "ENABLE_SERVICE_DISCOVERY=$enable_service_discovery",
     "ENABLE_SESSION_SERVICE=$enable_session_service",
+    "ENABLE_SIMPLE_BROWSER_SERVICE_IN_PROCESS=$enable_simple_browser_service_in_process",
+    "ENABLE_SIMPLE_BROWSER_SERVICE_OUT_OF_PROCESS=$enable_simple_browser_service_out_of_process",
     "ENABLE_SUPERVISED_USERS=$enable_supervised_users",
     "ENABLE_WAYLAND_SERVER=$enable_wayland_server",
     "PGO_BUILD=$pgo_build",
@@ -61,7 +64,7 @@ source_set("channel_info") {
     "channel_info_win.cc",
   ]
 
-  if (!is_android && !is_chromeos && !is_mac) {
+  if (is_posix && !is_android && !is_chromeos && !is_mac) {
     sources += [ "channel_info_posix.cc" ]
   }
   public_deps = [
@@ -71,6 +74,9 @@ source_set("channel_info") {
   ]
   if (is_win) {
     public_deps += [ "//chrome/install_static:install_static_util" ]
+  }
+  if (is_android) {
+    public_deps += [ "//components/version_info/android:channel_getter" ]
   }
 }
 
@@ -126,6 +132,8 @@ static_library("common") {
     "custom_handlers/protocol_handler.cc",
     "custom_handlers/protocol_handler.h",
     "descriptors_android.h",
+    "google_url_loader_throttle.cc",
+    "google_url_loader_throttle.h",
     "instant_struct_traits.h",
     "logging_chrome.cc",
     "logging_chrome.h",
@@ -200,13 +208,15 @@ static_library("common") {
   ]
 
   public_deps = [
+    ":available_offline_content_mojom",
+    ":buildflags",
     ":channel_info",
     ":client_hints_mojom",
     ":common_param_traits_macros",
-    ":features",
     ":ini_parser",
     ":mojo_bindings",
     ":page_load_metrics_mojom",
+    ":supervised_user_commands_mojom",
     "//base:base",
     "//base:base_static",
     "//base:i18n",
@@ -215,7 +225,6 @@ static_library("common") {
     "//chrome/app/theme:theme_resources",
     "//chrome/common:constants",
     "//chrome/common/net",
-    "//chrome/common/profiling",
     "//chrome/installer/util:with_no_strings",
     "//components/cast_certificate",
     "//components/cdm/common",
@@ -231,38 +240,40 @@ static_library("common") {
     "//components/json_schema",
     "//components/metrics",
     "//components/metrics:net",
-    "//components/nacl/common:features",
+    "//components/nacl/common:buildflags",
     "//components/nacl/common:process_type",
     "//components/nacl/common:switches",
+    "//components/net_log",
     "//components/network_session_configurator/common",
     "//components/ntp_tiles",
+    "//components/offline_pages/buildflags",
     "//components/offline_pages/core:switches",
-    "//components/offline_pages/features:features",
     "//components/omnibox/common",
     "//components/password_manager/core/common",
     "//components/policy:generated",
     "//components/policy/core/common",
     "//components/prefs",
     "//components/safe_browsing/web_ui:constants",
+    "//components/services/heap_profiling/public/cpp",
     "//components/strings",
     "//components/translate/content/common",
     "//components/translate/core/common",
     "//components/url_formatter",
     "//components/variations",
+    "//components/variations/net:net",
     "//components/visitedlink/common",
     "//content/public/common",
+    "//extensions/buildflags",
     "//extensions/common:common_constants",
-    "//extensions/features",
     "//google_apis",
     "//gpu/command_buffer/service",
     "//gpu/config",
     "//ipc",
     "//media",
-    "//mojo/edk/system",
     "//mojo/public/cpp/bindings",
-    "//pdf:features",
-    "//ppapi/features",
-    "//printing/features",
+    "//pdf:buildflags",
+    "//ppapi/buildflags",
+    "//printing/buildflags",
     "//services/service_manager/sandbox",
     "//skia",
     "//third_party/icu",
@@ -315,6 +326,8 @@ static_library("common") {
       "extensions/chrome_aliases.cc",
       "extensions/chrome_aliases.h",
       "extensions/chrome_extension_messages.h",
+      "extensions/chrome_extensions_api_provider.cc",
+      "extensions/chrome_extensions_api_provider.h",
       "extensions/chrome_extensions_client.cc",
       "extensions/chrome_extensions_client.h",
       "extensions/chrome_manifest_handlers.cc",
@@ -335,10 +348,6 @@ static_library("common") {
       "extensions/manifest_handlers/app_launch_info.h",
       "extensions/manifest_handlers/app_theme_color_info.cc",
       "extensions/manifest_handlers/app_theme_color_info.h",
-      "extensions/manifest_handlers/automation.cc",
-      "extensions/manifest_handlers/automation.h",
-      "extensions/manifest_handlers/content_scripts_handler.cc",
-      "extensions/manifest_handlers/content_scripts_handler.h",
       "extensions/manifest_handlers/extension_action_handler.cc",
       "extensions/manifest_handlers/extension_action_handler.h",
       "extensions/manifest_handlers/linked_app_icons.cc",
@@ -362,6 +371,8 @@ static_library("common") {
       "extensions/sync_helper.h",
       "extensions/webstore_install_result.cc",
       "extensions/webstore_install_result.h",
+      "initialize_extensions_client.cc",
+      "initialize_extensions_client.h",
     ]
     public_deps += [
       "//chrome/common/extensions:mojo_bindings",
@@ -370,6 +381,7 @@ static_library("common") {
       "//device/usb",
       "//extensions:extensions_resources",
       "//extensions/common",
+      "//extensions/common:core_api_provider",
       "//extensions/common/api",
       "//extensions/strings",
       "//media/cast:net",
@@ -383,10 +395,9 @@ static_library("common") {
         "extensions/api/input_ime/input_components_handler.cc",
         "extensions/api/input_ime/input_components_handler.h",
       ]
-    }
-    if (use_aura) {
+
       # This dependency is for a header used only by extensions code.
-      public_deps += [ "//ui/keyboard:keyboard_with_content" ]
+      public_deps += [ "//ui/keyboard:keyboard" ]
     }
   }
 
@@ -402,7 +413,7 @@ static_library("common") {
   }
 
   # Printing.
-  if (enable_basic_printing || enable_print_preview) {
+  if (enable_basic_printing) {
     public_deps += [
       "//chrome/common/cloud_print",
       "//components/printing/common",
@@ -414,10 +425,14 @@ static_library("common") {
         "service_process_util.h",
         "service_process_util_linux.cc",
         "service_process_util_mac.mm",
-        "service_process_util_posix.cc",
-        "service_process_util_posix.h",
         "service_process_util_win.cc",
       ]
+      if (is_posix) {
+        sources += [
+          "service_process_util_posix.cc",
+          "service_process_util_posix.h",
+        ]
+      }
     }
     if (enable_print_preview && is_win) {
       sources += [ "chrome_utility_printing_messages.h" ]
@@ -474,16 +489,6 @@ static_library("common") {
       "pepper_permission_util.h",
     ]
   }
-  if (enable_library_cdms) {
-    sources += [
-      "widevine_cdm_constants.cc",
-      "widevine_cdm_constants.h",
-    ]
-    public_deps += [ "//media/cdm:cdm_paths" ]
-  }
-  if (!enable_webrtc) {
-    sources -= [ "media/webrtc_logging_messages.h" ]
-  }
 
   if (safe_browsing_mode != 0) {
     public_deps += [ "//chrome/common/safe_browsing" ]
@@ -508,10 +513,11 @@ process_version("version_header") {
   #visibility = [ ":*" ]
 
   sources = [
-    "//build/util/LASTCHANGE",
     "//chrome/VERSION",
     branding_file_path,
+    lastchange_file,
   ]
+
   template_file = "chrome_version.h.in"
 
   output = "$target_gen_dir/chrome_version.h"
@@ -524,20 +530,53 @@ static_library("non_code_constants") {
     "chrome_constants.cc",
     "chrome_constants.h",
     "chrome_icon_resources_win.h",
+    "chrome_switches.cc",
+    "chrome_switches.h",
     "env_vars.cc",
     "env_vars.h",
   ]
 
   deps = [
+    ":buildflags",
     ":version_header",
     "//base",
+    "//ppapi/buildflags",
+  ]
+
+  public_deps = [
+    "//printing/buildflags",
+    "//ui/base:ui_features",
+  ]
+}
+
+component("chrome_features") {
+  defines = [ "IS_CHROME_FEATURES_IMPL" ]
+
+  sources = [
+    "chrome_features.cc",
+    "chrome_features.h",
+  ]
+
+  deps = [
+    ":buildflags",
+    ":non_code_constants",
+    "//base",
+    "//components/offline_pages/buildflags",
+    "//device/vr/buildflags",
+    "//extensions/buildflags",
+    "//media:media_buildflags",
+    "//ppapi/buildflags",
+    "//printing/buildflags",
+    "//rlz/buildflags",
+  ]
+
+  public_deps = [
+    "//ui/base:ui_features",
   ]
 }
 
 static_library("constants") {
   sources = [
-    "chrome_features.cc",
-    "chrome_features.h",
     "chrome_paths.cc",
     "chrome_paths.h",
     "chrome_paths_android.cc",
@@ -546,8 +585,6 @@ static_library("constants") {
     "chrome_paths_mac.mm",
     "chrome_paths_win.cc",
     "chrome_result_codes.h",
-    "chrome_switches.cc",
-    "chrome_switches.h",
     "pref_font_script_names-inl.h",
     "pref_font_webkit_names.h",
     "pref_names.cc",
@@ -555,14 +592,13 @@ static_library("constants") {
   ]
 
   public_deps = [
-    ":features",
+    ":buildflags",
+    ":chrome_features",
     ":non_code_constants",
     "//content/public/common:result_codes",
-    "//extensions/features",
-    "//printing/features",
-    "//rlz/features",
-    "//ui/base:ui_features",
+    "//rlz/buildflags",
   ]
+
   deps = [
     ":channel_info",
     ":version_header",
@@ -570,11 +606,11 @@ static_library("constants") {
     "//base/third_party/dynamic_annotations",
     "//components/bookmarks/common",
     "//components/nacl/common:switches",
-    "//components/offline_pages/features",
-    "//device/vr/features",
-    "//media:media_features",
+    "//components/offline_pages/buildflags",
+    "//extensions/buildflags",
     "//media/cdm:cdm_paths",  # Needed by chrome_paths.cc.
-    "//ppapi/features",
+    "//ppapi/buildflags",
+    "//printing/buildflags",
     "//third_party/widevine/cdm:headers",
   ]
 
@@ -660,6 +696,8 @@ source_set("app_mode_app_support") {
 }
 
 mojom("mojo_bindings") {
+  disable_variants = true
+
   sources = [
     "cache_stats_recorder.mojom",
     "chrome_render_frame.mojom",
@@ -674,15 +712,27 @@ mojom("mojo_bindings") {
     "renderer_configuration.mojom",
   ]
 
+  if (is_android) {
+    sources += [ "sandbox_status_extension_android.mojom" ]
+  }
+
+  if (is_mac) {
+    sources += [ "mac/app_shim.mojom" ]
+  }
+
   if (is_win) {
     sources += [ "conflicts/module_event_sink_win.mojom" ]
+  }
+
+  if (enable_offline_pages) {
+    sources += [ "mhtml_page_notifier.mojom" ]
   }
 
   public_deps = [
     "//components/content_settings/core/common:mojo_bindings",
     "//content/public/common:interfaces",
-    "//mojo/common:common_custom_types",
-    "//third_party/WebKit/public:mojo_bindings",
+    "//mojo/public/mojom/base",
+    "//third_party/blink/public:mojo_bindings",
     "//ui/gfx/geometry/mojo",
     "//url/mojom:url_mojom_gurl",
     "//url/mojom:url_mojom_origin",
@@ -693,14 +743,11 @@ mojom("mojo_bindings") {
   }
 
   overridden_deps = [
-    "//third_party/WebKit/public:mojo_bindings",
+    "//third_party/blink/public:mojo_bindings",
     "//content/public/common:interfaces",
   ]
 
   component_deps = [ "//content/public/common" ]
-
-  # TODO(crbug.com/714018): Convert the implementation to use OnceCallback.
-  use_once_callback = false
 }
 
 mojom("search_mojom") {
@@ -709,7 +756,7 @@ mojom("search_mojom") {
   ]
 
   public_deps = [
-    "//mojo/common:common_custom_types",
+    "//mojo/public/mojom/base",
     "//url/mojom:url_mojom_gurl",
   ]
 }
@@ -720,8 +767,8 @@ mojom("page_load_metrics_mojom") {
   ]
 
   public_deps = [
-    "//mojo/common:common_custom_types",
-    "//third_party/WebKit/public:web_feature_mojo_bindings",
+    "//mojo/public/mojom/base",
+    "//third_party/blink/public:web_feature_mojo_bindings",
   ]
 }
 
@@ -731,8 +778,8 @@ mojom("client_hints_mojom") {
   ]
 
   public_deps = [
-    "//mojo/common:common_custom_types",
-    "//third_party/WebKit/public:web_client_hints_types_mojo_bindings",
+    "//mojo/public/mojom/base",
+    "//third_party/blink/public:web_client_hints_types_mojo_bindings",
     "//url/mojom:url_mojom_origin",
   ]
 }
@@ -744,7 +791,22 @@ if (enable_print_preview && !is_chromeos) {
       "service_process.mojom",
     ]
     public_deps = [
-      "//mojo/common:common_custom_types",
+      "//mojo/public/mojom/base",
     ]
   }
+}
+
+mojom("supervised_user_commands_mojom") {
+  sources = [
+    "supervised_user_commands.mojom",
+  ]
+}
+
+mojom("available_offline_content_mojom") {
+  sources = [
+    "available_offline_content.mojom",
+  ]
+  public_deps = [
+    "//url/mojom:url_mojom_gurl",
+  ]
 }

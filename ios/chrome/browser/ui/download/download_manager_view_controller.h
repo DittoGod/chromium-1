@@ -9,7 +9,9 @@
 
 #import "ios/chrome/browser/ui/download/download_manager_consumer.h"
 
+@class DownloadManagerStateView;
 @class DownloadManagerViewController;
+@class RadialProgressView;
 
 @protocol DownloadManagerViewControllerDelegate<NSObject>
 @optional
@@ -27,6 +29,10 @@
 - (void)downloadManagerViewController:(DownloadManagerViewController*)controller
      presentOpenInMenuWithLayoutGuide:(UILayoutGuide*)layoutGuide;
 
+// Called when install google drive button was tapped.
+- (void)installDriveForDownloadManagerViewController:
+    (DownloadManagerViewController*)controller;
+
 @end
 
 // Presents bottom bar UI for a single download task.
@@ -34,6 +40,9 @@
     : UIViewController<DownloadManagerConsumer>
 
 @property(nonatomic, weak) id<DownloadManagerViewControllerDelegate> delegate;
+
+// Controls the height of the bottom margin.
+@property(nonatomic) NSLayoutDimension* bottomMarginHeightAnchor;
 
 @end
 
@@ -43,12 +52,30 @@
 // Button to dismiss the download toolbar.
 @property(nonatomic, readonly) UIButton* closeButton;
 
+// Icon that represents the current download status.
+@property(nonatomic, readonly) DownloadManagerStateView* stateIcon;
+
 // Label that describes the current download status.
 @property(nonatomic, readonly) UILabel* statusLabel;
 
 // Button appropriate for the current download status ("Download", "Open In..",
 // "Try Again").
 @property(nonatomic, readonly) UIButton* actionButton;
+
+// Install Google Drive button. Only visible if
+// setInstallGoogleDriveButtonVisible:animated: was called with YES.
+@property(nonatomic, readonly) UIButton* installDriveButton;
+
+// Install Google Drive app icon. Only visible if
+// setInstallGoogleDriveButtonVisible:animated: was called with YES.
+@property(nonatomic, readonly) UIImageView* installDriveIcon;
+
+// Install Google Drive label. Only visible if
+// setInstallGoogleDriveButtonVisible:animated: was called with YES.
+@property(nonatomic, readonly) UILabel* installDriveLabel;
+
+// View that represents download progress.
+@property(nonatomic, readonly) RadialProgressView* progressView;
 
 @end
 

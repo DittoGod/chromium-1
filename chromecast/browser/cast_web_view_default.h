@@ -49,7 +49,11 @@ class CastWebViewDefault : public CastWebView,
   content::WebContents* web_contents() const override;
   void LoadUrl(GURL url) override;
   void ClosePage(const base::TimeDelta& shutdown_delay) override;
-  void Show(CastWindowManager* window_manager) override;
+  void InitializeWindow(CastWindowManager* window_manager,
+                        CastWindowManager::WindowId z_order,
+                        VisibilityPriority initial_priority) override;
+  void GrantScreenAccess() override;
+  void RevokeScreenAccess() override;
 
  private:
   // WebContentsObserver implementation:
@@ -79,17 +83,21 @@ class CastWebViewDefault : public CastWebView,
   void LoadingStateChanged(content::WebContents* source,
                            bool to_different_document) override;
   void ActivateContents(content::WebContents* contents) override;
-  bool CheckMediaAccessPermission(content::WebContents* web_contents,
+  bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
                                   content::MediaStreamType type) override;
+  bool DidAddMessageToConsole(content::WebContents* source,
+                              int32_t level,
+                              const base::string16& message,
+                              int32_t line_no,
+                              const base::string16& source_id) override;
   void RequestMediaAccessPermission(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback) override;
-#if defined(OS_ANDROID)
-  base::android::ScopedJavaLocalRef<jobject> GetContentVideoViewEmbedder()
-      override;
-#endif  // defined(OS_ANDROID)
+      content::MediaResponseCallback callback) override;
+  std::unique_ptr<content::BluetoothChooser> RunBluetoothChooser(
+      content::RenderFrameHost* frame,
+      const content::BluetoothChooser::EventHandler& event_handler) override;
 
   CastWebContentsManager* const web_contents_manager_;
   content::BrowserContext* const browser_context_;

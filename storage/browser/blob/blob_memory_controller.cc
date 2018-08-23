@@ -12,6 +12,7 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "base/command_line.h"
 #include "base/containers/small_map.h"
 #include "base/files/file_util.h"
 #include "base/guid.h"
@@ -49,6 +50,16 @@ using MemoryAllocation = BlobMemoryController::MemoryAllocation;
 using QuotaAllocationTask = BlobMemoryController::QuotaAllocationTask;
 using DiskSpaceFuncPtr = BlobMemoryController::DiskSpaceFuncPtr;
 
+File::Error CreateBlobDirectory(const FilePath& blob_storage_dir) {
+  File::Error error = File::FILE_OK;
+  base::CreateDirectoryAndGetError(blob_storage_dir, &error);
+  UMA_HISTOGRAM_ENUMERATION("Storage.Blob.CreateDirectoryResult", -error,
+                            -File::FILE_ERROR_MAX);
+  DLOG_IF(ERROR, error != File::FILE_OK)
+      << "Error creating blob storage directory: " << error;
+  return error;
+}
+
 // CrOS:
 // * Ram -  20%
 // * Disk - 50%
@@ -62,9 +73,10 @@ using DiskSpaceFuncPtr = BlobMemoryController::DiskSpaceFuncPtr;
 // * Disk - 10%
 BlobStorageLimits CalculateBlobStorageLimitsImpl(const FilePath& storage_dir,
                                                  bool disk_enabled) {
-  int64_t disk_size =
-      disk_enabled ? base::SysInfo::AmountOfTotalDiskSpace(storage_dir) : 0ull;
+  int64_t disk_size = 0ull;
   int64_t memory_size = base::SysInfo::AmountOfPhysicalMemory();
+  if (disk_enabled && CreateBlobDirectory(storage_dir) == base::File::FILE_OK)
+    disk_size = base::SysInfo::AmountOfTotalDiskSpace(storage_dir);
 
   BlobStorageLimits limits;
 
@@ -94,17 +106,9 @@ BlobStorageLimits CalculateBlobStorageLimitsImpl(const FilePath& storage_dir,
                           limits.desired_max_disk_space / kMegabyte);
   limits.effective_max_disk_space = limits.desired_max_disk_space;
 
-  return limits;
-}
+  CHECK(limits.IsValid());
 
-File::Error CreateBlobDirectory(const FilePath& blob_storage_dir) {
-  File::Error error = File::FILE_OK;
-  base::CreateDirectoryAndGetError(blob_storage_dir, &error);
-  UMA_HISTOGRAM_ENUMERATION("Storage.Blob.CreateDirectoryResult", -error,
-                            -File::FILE_ERROR_MAX);
-  DLOG_IF(ERROR, error != File::FILE_OK)
-      << "Error creating blob storage directory: " << error;
-  return error;
+  return limits;
 }
 
 void DestructFile(File infos_without_references) {}
@@ -214,7 +218,7 @@ std::pair<FileCreationInfo, int64_t> CreateFileAndWriteItems(
   file.SetLength(total_size_bytes);
   int bytes_written = 0;
   for (const auto& item : data) {
-    size_t length = item.length();
+    size_t length = item.size();
     size_t bytes_left = length;
     while (bytes_left > 0) {
       bytes_written =
@@ -277,7 +281,7 @@ FileCreationInfo::~FileCreationInfo() {
   if (file.IsValid()) {
     DCHECK(file_deletion_runner);
     file_deletion_runner->PostTask(
-        FROM_HERE, base::Bind(&DestructFile, base::Passed(&file)));
+        FROM_HERE, base::BindOnce(&DestructFile, std::move(file)));
   }
 }
 FileCreationInfo::FileCreationInfo(FileCreationInfo&&) = default;
@@ -287,11 +291,11 @@ MemoryAllocation::MemoryAllocation(
     base::WeakPtr<BlobMemoryController> controller,
     uint64_t item_id,
     size_t length)
-    : controller(controller), item_id(item_id), length(length) {}
+    : controller_(std::move(controller)), item_id_(item_id), length_(length) {}
 
 MemoryAllocation::~MemoryAllocation() {
-  if (controller)
-    controller->RevokeMemoryAllocation(item_id, length);
+  if (controller_)
+    controller_->RevokeMemoryAllocation(item_id_, length_);
 }
 
 BlobMemoryController::QuotaAllocationTask::~QuotaAllocationTask() = default;
@@ -367,7 +371,19 @@ class BlobMemoryController::FileQuotaAllocationTask
     // Get the file sizes and total size.
     uint64_t total_size =
         GetTotalSizeAndFileSizes(unreserved_file_items, &file_sizes_);
-    DCHECK_LE(total_size, controller_->GetAvailableFileSpaceForBlobs());
+
+// When we do perf tests that force the file strategy, these often run
+// before |CalculateBlobStorageLimitsImpl| is complete. The disk isn't
+// enabled until after this call returns (|file_paging_enabled_| is false)
+// and |GetAvailableFileSpaceForBlobs()| will thus return 0. So skip this
+// check when we have a custom file transportation trigger.
+#if DCHECK_IS_ON()
+    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+    if (LIKELY(
+            !command_line->HasSwitch(kBlobFileTransportByFileTriggerSwitch))) {
+      DCHECK_LE(total_size, controller_->GetAvailableFileSpaceForBlobs());
+    }
+#endif
     allocation_size_ = total_size;
 
     // Check & set our item states.
@@ -412,7 +428,7 @@ class BlobMemoryController::FileQuotaAllocationTask
       // Register the disk space accounting callback.
       DCHECK_EQ(file_info.size(), file_sizes_.size());
       for (size_t i = 0; i < file_sizes_.size(); i++) {
-        file_info[i].file_reference->AddFinalReleaseCallback(base::Bind(
+        file_info[i].file_reference->AddFinalReleaseCallback(base::BindOnce(
             &BlobMemoryController::OnBlobFileDelete,
             controller_->weak_factory_.GetWeakPtr(), file_sizes_[i]));
       }
@@ -458,7 +474,7 @@ class BlobMemoryController::FileQuotaAllocationTask
       controller_->disk_used_ -= allocation_size_;
       controller_->AdjustDiskUsage(static_cast<uint64_t>(avail_disk_space));
       controller_->file_runner_->PostTask(
-          FROM_HERE, base::Bind(&DeleteFiles, base::Passed(&result.files)));
+          FROM_HERE, base::BindOnce(&DeleteFiles, std::move(result.files)));
       std::unique_ptr<FileQuotaAllocationTask> this_object =
           std::move(*my_list_position_);
       controller_->pending_file_quota_tasks_.erase(my_list_position_);
@@ -559,14 +575,22 @@ BlobMemoryController::Strategy BlobMemoryController::DetermineStrategy(
       preemptive_transported_bytes <= GetAvailableMemoryForBlobs()) {
     return Strategy::NONE_NEEDED;
   }
+
+  if (UNLIKELY(limits_.override_file_transport_min_size > 0) &&
+      file_paging_enabled_ &&
+      total_transportation_bytes >= limits_.override_file_transport_min_size) {
+    return Strategy::FILE;
+  }
+
+  if (total_transportation_bytes <= limits_.max_ipc_memory_size)
+    return Strategy::IPC;
+
   if (file_paging_enabled_ &&
       total_transportation_bytes <= GetAvailableFileSpaceForBlobs() &&
       total_transportation_bytes > limits_.memory_limit_before_paging()) {
     return Strategy::FILE;
   }
-  if (total_transportation_bytes > limits_.max_ipc_memory_size)
-    return Strategy::SHARED_MEMORY;
-  return Strategy::IPC;
+  return Strategy::SHARED_MEMORY;
 }
 
 bool BlobMemoryController::CanReserveQuota(uint64_t size) const {
@@ -639,6 +663,44 @@ base::WeakPtr<QuotaAllocationTask> BlobMemoryController::ReserveFileQuota(
   return pending_file_quota_tasks_.back()->GetWeakPtr();
 }
 
+void BlobMemoryController::ShrinkMemoryAllocation(ShareableBlobDataItem* item) {
+  DCHECK(item->HasGrantedQuota());
+  DCHECK_EQ(item->item()->type(), BlobDataItem::Type::kBytes);
+  DCHECK_GE(item->memory_allocation_->length(), item->item()->length());
+  DCHECK_EQ(item->memory_allocation_->controller_.get(), this);
+
+  // Setting a new MemoryAllocation will delete and free the existing memory
+  // allocation, so here we only have to account for the new allocation.
+  blob_memory_used_ += item->item()->length();
+  item->set_memory_allocation(std::make_unique<MemoryAllocation>(
+      weak_factory_.GetWeakPtr(), item->item_id(),
+      base::checked_cast<size_t>(item->item()->length())));
+  MaybeGrantPendingMemoryRequests();
+}
+
+void BlobMemoryController::ShrinkFileAllocation(
+    ShareableFileReference* file_reference,
+    uint64_t old_length,
+    uint64_t new_length) {
+  DCHECK_GE(old_length, new_length);
+
+  DCHECK_GE(disk_used_, old_length - new_length);
+  disk_used_ -= old_length - new_length;
+  file_reference->AddFinalReleaseCallback(
+      base::BindOnce(&BlobMemoryController::OnShrunkenBlobFileDelete,
+                     weak_factory_.GetWeakPtr(), old_length - new_length));
+}
+
+void BlobMemoryController::GrowFileAllocation(
+    ShareableFileReference* file_reference,
+    uint64_t delta) {
+  DCHECK_LE(delta, GetAvailableFileSpaceForBlobs());
+  disk_used_ += delta;
+  file_reference->AddFinalReleaseCallback(
+      base::BindOnce(&BlobMemoryController::OnBlobFileDelete,
+                     weak_factory_.GetWeakPtr(), delta));
+}
+
 void BlobMemoryController::NotifyMemoryItemsUsed(
     const std::vector<scoped_refptr<ShareableBlobDataItem>>& items) {
   for (const auto& item : items) {
@@ -662,7 +724,20 @@ void BlobMemoryController::NotifyMemoryItemsUsed(
       base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE);
 }
 
+void BlobMemoryController::CallWhenStorageLimitsAreKnown(
+    base::OnceClosure callback) {
+  if (did_calculate_storage_limits_) {
+    std::move(callback).Run();
+    return;
+  }
+  on_calculate_limits_callbacks_.push_back(std::move(callback));
+  CalculateBlobStorageLimits();
+}
+
 void BlobMemoryController::CalculateBlobStorageLimits() {
+  if (did_schedule_limit_calculation_)
+    return;
+  did_schedule_limit_calculation_ = true;
   if (file_runner_) {
     PostTaskAndReplyWithResult(
         file_runner_.get(), FROM_HERE,
@@ -680,9 +755,14 @@ base::WeakPtr<BlobMemoryController> BlobMemoryController::GetWeakPtr() {
 }
 
 void BlobMemoryController::OnStorageLimitsCalculated(BlobStorageLimits limits) {
-  if (!limits.IsValid() || manual_limits_set_)
+  DCHECK(limits.IsValid());
+  if (manual_limits_set_)
     return;
   limits_ = limits;
+  did_calculate_storage_limits_ = true;
+  for (auto& callback : on_calculate_limits_callbacks_)
+    std::move(callback).Run();
+  on_calculate_limits_callbacks_.clear();
 }
 
 namespace {
@@ -826,15 +906,12 @@ void BlobMemoryController::MaybeScheduleEvictionUntilSystemHealthy(
   // We try to page items to disk until our current system size + requested
   // memory is below our size limit.
   // Size limit is a lower |memory_limit_before_paging()| if we have disk space.
-  while (total_memory_usage > limits_.effective_max_disk_space ||
-         (disk_used_ < limits_.effective_max_disk_space &&
-          total_memory_usage > in_memory_limit)) {
+  while (disk_used_ < limits_.effective_max_disk_space &&
+         total_memory_usage > in_memory_limit) {
     const char* reason = nullptr;
     if (memory_pressure_level !=
         base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE) {
       reason = "OnMemoryPressure";
-    } else if (total_memory_usage > limits_.effective_max_disk_space) {
-      reason = "SizeExceededMaxDiskSpace";
     } else {
       reason = "SizeExceededInMemoryLimit";
     }
@@ -871,8 +948,8 @@ void BlobMemoryController::MaybeScheduleEvictionUntilSystemHealthy(
             file_runner_.get());
     // Add the release callback so we decrement our disk usage on file deletion.
     file_reference->AddFinalReleaseCallback(
-        base::Bind(&BlobMemoryController::OnBlobFileDelete,
-                   weak_factory_.GetWeakPtr(), total_items_size));
+        base::BindOnce(&BlobMemoryController::OnBlobFileDelete,
+                       weak_factory_.GetWeakPtr(), total_items_size));
 
     // Post the file writing task.
     base::PostTaskAndReplyWithResult(
@@ -1040,6 +1117,11 @@ void BlobMemoryController::OnBlobFileDelete(uint64_t size,
                                             const FilePath& path) {
   DCHECK_LE(size, disk_used_);
   disk_used_ -= size;
+}
+
+void BlobMemoryController::OnShrunkenBlobFileDelete(uint64_t shrink_delta,
+                                                    const FilePath& path) {
+  disk_used_ += shrink_delta;
 }
 
 }  // namespace storage

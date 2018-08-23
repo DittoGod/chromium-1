@@ -14,7 +14,7 @@
 #include "content/renderer/media/webrtc/webrtc_audio_renderer.h"
 #include "content/renderer/media/webrtc_logging.h"
 #include "content/renderer/render_thread_impl.h"
-#include "third_party/WebKit/public/platform/WebMediaStream.h"
+#include "third_party/blink/public/platform/web_media_stream.h"
 #include "third_party/webrtc/api/mediastreaminterface.h"
 
 namespace content {
@@ -53,36 +53,31 @@ MediaStreamRendererFactoryImpl::GetVideoRenderer(
     const blink::WebMediaStream& web_stream,
     const base::Closure& error_cb,
     const MediaStreamVideoRenderer::RepaintCB& repaint_cb,
-    const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
-    const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
-    const scoped_refptr<base::TaskRunner>& worker_task_runner,
-    media::GpuVideoAcceleratorFactories* gpu_factories) {
+    const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner) {
   DCHECK(!web_stream.IsNull());
 
   DVLOG(1) << "MediaStreamRendererFactoryImpl::GetVideoRenderer stream:"
            << web_stream.Id().Utf8();
 
-  blink::WebVector<blink::WebMediaStreamTrack> video_tracks;
-  web_stream.VideoTracks(video_tracks);
+  blink::WebVector<blink::WebMediaStreamTrack> video_tracks =
+      web_stream.VideoTracks();
   if (video_tracks.IsEmpty() ||
       !MediaStreamVideoTrack::GetTrack(video_tracks[0])) {
     return nullptr;
   }
 
   return new MediaStreamVideoRendererSink(video_tracks[0], error_cb, repaint_cb,
-                                          io_task_runner, media_task_runner,
-                                          worker_task_runner, gpu_factories);
+                                          io_task_runner);
 }
 
 scoped_refptr<MediaStreamAudioRenderer>
 MediaStreamRendererFactoryImpl::GetAudioRenderer(
     const blink::WebMediaStream& web_stream,
     int render_frame_id,
-    const std::string& device_id,
-    const url::Origin& security_origin) {
+    const std::string& device_id) {
   DCHECK(!web_stream.IsNull());
-  blink::WebVector<blink::WebMediaStreamTrack> audio_tracks;
-  web_stream.AudioTracks(audio_tracks);
+  blink::WebVector<blink::WebMediaStreamTrack> audio_tracks =
+      web_stream.AudioTracks();
   if (audio_tracks.IsEmpty()) {
     WebRtcLogMessage("No audio tracks in media stream (return null).");
     return nullptr;
@@ -116,8 +111,7 @@ MediaStreamRendererFactoryImpl::GetAudioRenderer(
              << (audio_track->is_local_track() ? "local" : "remote")
              << " track.";
     return new TrackAudioRenderer(audio_tracks[0], render_frame_id,
-                                  0 /* no session_id */, device_id,
-                                  security_origin);
+                                  0 /* no session_id */, device_id);
   }
 
   // This is a remote WebRTC media stream.
@@ -134,7 +128,7 @@ MediaStreamRendererFactoryImpl::GetAudioRenderer(
     renderer = new WebRtcAudioRenderer(
         GetPeerConnectionDependencyFactory()->GetWebRtcSignalingThread(),
         web_stream, render_frame_id, GetSessionIdForWebRtcAudioRenderer(),
-        device_id, security_origin);
+        device_id);
 
     if (!audio_device->SetAudioRenderer(renderer.get())) {
       WebRtcLogMessage("Error: SetAudioRenderer failed for remote track.");

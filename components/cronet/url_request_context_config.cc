@@ -13,6 +13,7 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "components/cronet/stale_host_resolver.h"
 #include "net/base/address_family.h"
 #include "net/cert/caching_cert_verifier.h"
@@ -27,10 +28,11 @@
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties.h"
 #include "net/nqe/network_quality_estimator_params.h"
-#include "net/quic/chromium/quic_utils_chromium.h"
-#include "net/quic/core/quic_packets.h"
+#include "net/quic/quic_utils_chromium.h"
 #include "net/reporting/reporting_policy.h"
 #include "net/socket/ssl_client_socket.h"
+#include "net/ssl/ssl_key_logger_impl.h"
+#include "net/third_party/quic/core/quic_packets.h"
 #include "net/url_request/url_request_context_builder.h"
 
 #if BUILDFLAG(ENABLE_REPORTING)
@@ -42,7 +44,8 @@ namespace cronet {
 namespace {
 
 // Name of disk cache directory.
-const char kDiskCacheDirectoryName[] = "disk_cache";
+const base::FilePath::CharType kDiskCacheDirectoryName[] =
+    FILE_PATH_LITERAL("disk_cache");
 // TODO(xunjieli): Refactor constants in io_thread.cc.
 const char kQuicFieldTrialName[] = "QUIC";
 const char kQuicConnectionOptions[] = "connection_options";
@@ -58,16 +61,17 @@ const char kQuicMaxTimeBeforeCryptoHandshakeSeconds[] =
 const char kQuicMaxIdleTimeBeforeCryptoHandshakeSeconds[] =
     "max_idle_time_before_crypto_handshake_seconds";
 const char kQuicCloseSessionsOnIpChange[] = "close_sessions_on_ip_change";
-const char kQuicMigrateSessionsOnNetworkChange[] =
-    "migrate_sessions_on_network_change";
+const char kQuicGoAwaySessionsOnIpChange[] = "goaway_sessions_on_ip_change";
+const char kQuicAllowServerMigration[] = "allow_server_migration";
 const char kQuicMigrateSessionsOnNetworkChangeV2[] =
     "migrate_sessions_on_network_change_v2";
 const char kQuicMaxTimeOnNonDefaultNetworkSeconds[] =
     "max_time_on_non_default_network_seconds";
+const char kQuicMaxMigrationsToNonDefaultNetworkOnWriteError[] =
+    "max_migrations_to_non_default_network_on_write_error";
 const char kQuicMaxMigrationsToNonDefaultNetworkOnPathDegrading[] =
     "max_migrations_to_non_default_network_on_path_degrading";
 const char kQuicUserAgentId[] = "user_agent_id";
-const char kQuicMigrateSessionsEarly[] = "migrate_sessions_early";
 const char kQuicMigrateSessionsEarlyV2[] = "migrate_sessions_early_v2";
 const char kQuicDisableBidirectionalStreams[] =
     "quic_disable_bidirectional_streams";
@@ -103,6 +107,10 @@ const char kStaleDnsPersist[] = "persist_to_disk";
 // cache persistence. Default value is one minute. Only relevant if
 // "persist_to_disk" is true.
 const char kStaleDnsPersistTimer[] = "persist_delay_ms";
+// Name of boolean to allow use of stale DNS results when network resolver
+// returns ERR_NAME_NOT_RESOLVED.
+const char kStaleDnsUseStaleOnNameNotResolved[] =
+    "use_stale_on_name_not_resolved";
 
 // Rules to override DNS resolution. Intended for testing.
 // See explanation of format in net/dns/mapped_host_resolver.h.
@@ -124,19 +132,13 @@ const char kDisableIPv6OnWifi[] = "disable_ipv6_on_wifi";
 
 const char kSSLKeyLogFile[] = "ssl_key_log_file";
 
-// A CTPolicyEnforcer that accepts all certificates.
-class DoNothingCTPolicyEnforcer : public net::CTPolicyEnforcer {
- public:
-  DoNothingCTPolicyEnforcer() = default;
-  ~DoNothingCTPolicyEnforcer() override = default;
-
-  net::ct::CTPolicyCompliance CheckCompliance(
-      net::X509Certificate* cert,
-      const net::SCTList& verified_scts,
-      const net::NetLogWithSource& net_log) override {
-    return net::ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-  }
-};
+// "goaway_sessions_on_ip_change" is default on for iOS unless overrided via
+// experimental options explicitly.
+#if defined(OS_IOS)
+const bool kDefaultQuicGoAwaySessionsOnIpChange = true;
+#else
+const bool kDefaultQuicGoAwaySessionsOnIpChange = false;
+#endif
 
 }  // namespace
 
@@ -170,8 +172,7 @@ URLRequestContextConfig::URLRequestContextConfig(
     const std::string& experimental_options,
     std::unique_ptr<net::CertVerifier> mock_cert_verifier,
     bool enable_network_quality_estimator,
-    bool bypass_public_key_pinning_for_local_trust_anchors,
-    const std::string& cert_verifier_data)
+    bool bypass_public_key_pinning_for_local_trust_anchors)
     : enable_quic(enable_quic),
       quic_user_agent_id(quic_user_agent_id),
       enable_spdy(enable_spdy),
@@ -186,7 +187,6 @@ URLRequestContextConfig::URLRequestContextConfig(
       enable_network_quality_estimator(enable_network_quality_estimator),
       bypass_public_key_pinning_for_local_trust_anchors(
           bypass_public_key_pinning_for_local_trust_anchors),
-      cert_verifier_data(cert_verifier_data),
       experimental_options(experimental_options) {}
 
 URLRequestContextConfig::~URLRequestContextConfig() {}
@@ -229,8 +229,7 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
   StaleHostResolver::StaleOptions stale_dns_options;
   std::string host_resolver_rules_string;
 
-  for (base::DictionaryValue::Iterator it(*dict.get()); !it.IsAtEnd();
-       it.Advance()) {
+  for (base::DictionaryValue::Iterator it(*dict); !it.IsAtEnd(); it.Advance()) {
     if (it.key() == kQuicFieldTrialName) {
       const base::DictionaryValue* quic_args = nullptr;
       if (!it.value().GetAsDictionary(&quic_args)) {
@@ -298,20 +297,28 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
                                 &quic_close_sessions_on_ip_change)) {
         session_params->quic_close_sessions_on_ip_change =
             quic_close_sessions_on_ip_change;
+        if (quic_close_sessions_on_ip_change &&
+            kDefaultQuicGoAwaySessionsOnIpChange) {
+          // "close_sessions_on_ip_change" and "goaway_sessions_on_ip_change"
+          // are mutually exclusive. Turn off the goaway option which is
+          // default on for iOS if "close_sessions_on_ip_change" is set via
+          // experimental options.
+          session_params->quic_goaway_sessions_on_ip_change = false;
+        }
       }
 
-      bool quic_migrate_sessions_on_network_change = false;
-      if (quic_args->GetBoolean(kQuicMigrateSessionsOnNetworkChange,
-                                &quic_migrate_sessions_on_network_change)) {
-        session_params->quic_migrate_sessions_on_network_change =
-            quic_migrate_sessions_on_network_change;
+      bool goaway_sessions_on_ip_change;
+      if (quic_args->GetBoolean(kQuicGoAwaySessionsOnIpChange,
+                                &goaway_sessions_on_ip_change)) {
+        session_params->quic_goaway_sessions_on_ip_change =
+            goaway_sessions_on_ip_change;
       }
 
-      bool quic_migrate_sessions_early = false;
-      if (quic_args->GetBoolean(kQuicMigrateSessionsEarly,
-                                &quic_migrate_sessions_early)) {
-        session_params->quic_migrate_sessions_early =
-            quic_migrate_sessions_early;
+      bool quic_allow_server_migration = false;
+      if (quic_args->GetBoolean(kQuicAllowServerMigration,
+                                &quic_allow_server_migration)) {
+        session_params->quic_allow_server_migration =
+            quic_allow_server_migration;
       }
 
       std::string quic_user_agent_id;
@@ -328,6 +335,7 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
 
       bool quic_migrate_sessions_on_network_change_v2 = false;
       int quic_max_time_on_non_default_network_seconds = 0;
+      int quic_max_migrations_to_non_default_network_on_write_error = 0;
       int quic_max_migrations_to_non_default_network_on_path_degrading = 0;
       if (quic_args->GetBoolean(kQuicMigrateSessionsOnNetworkChangeV2,
                                 &quic_migrate_sessions_on_network_change_v2)) {
@@ -339,6 +347,13 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
           session_params->quic_max_time_on_non_default_network =
               base::TimeDelta::FromSeconds(
                   quic_max_time_on_non_default_network_seconds);
+        }
+        if (quic_args->GetInteger(
+                kQuicMaxMigrationsToNonDefaultNetworkOnWriteError,
+                &quic_max_migrations_to_non_default_network_on_write_error)) {
+          session_params
+              ->quic_max_migrations_to_non_default_network_on_write_error =
+              quic_max_migrations_to_non_default_network_on_write_error;
         }
         if (quic_args->GetInteger(
                 kQuicMaxMigrationsToNonDefaultNetworkOnPathDegrading,
@@ -423,6 +438,12 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
         int persist_timer;
         if (stale_dns_args->GetInteger(kStaleDnsPersistTimer, &persist_timer))
           host_cache_persistence_delay_ms = persist_timer;
+        bool use_stale_on_name_not_resolved;
+        if (stale_dns_args->GetBoolean(kStaleDnsUseStaleOnNameNotResolved,
+                                       &use_stale_on_name_not_resolved)) {
+          stale_dns_options.use_stale_on_name_not_resolved =
+              use_stale_on_name_not_resolved;
+        }
       }
     } else if (it.key() == kHostResolverRulesFieldTrialName) {
       const base::DictionaryValue* host_resolver_rules_args = nullptr;
@@ -453,14 +474,16 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
     } else if (it.key() == kSSLKeyLogFile) {
       std::string ssl_key_log_file_string;
       if (it.value().GetAsString(&ssl_key_log_file_string)) {
-        base::FilePath ssl_key_log_file(ssl_key_log_file_string);
+        base::FilePath ssl_key_log_file(
+            base::FilePath::FromUTF8Unsafe(ssl_key_log_file_string));
         if (!ssl_key_log_file.empty()) {
-          // SetSSLKeyLogFile is only safe to call before any SSLClientSockets
+          // SetSSLKeyLogger is only safe to call before any SSLClientSockets
           // are created. This should not be used if there are multiple
           // CronetEngine.
           // TODO(xunjieli): Expose this as a stable API after crbug.com/458365
           // is resolved.
-          net::SSLClientSocket::SetSSLKeyLogFile(ssl_key_log_file);
+          net::SSLClientSocket::SetSSLKeyLogger(
+              std::make_unique<net::SSLKeyLoggerImpl>(ssl_key_log_file));
         }
       }
     } else if (it.key() == kNetworkQualityEstimatorFieldTrialName) {
@@ -517,7 +540,7 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
 
 #if BUILDFLAG(ENABLE_REPORTING)
   if (nel_enable) {
-    auto policy = std::make_unique<net::ReportingPolicy>();
+    auto policy = net::ReportingPolicy::Create();
 
     // Apps (like Cronet embedders) are generally allowed to run in the
     // background, even across network changes, so use more relaxed privacy
@@ -543,9 +566,8 @@ void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
     net::URLRequestContextBuilder::HttpCacheParams cache_params;
     if (http_cache == DISK && !storage_path.empty()) {
       cache_params.type = net::URLRequestContextBuilder::HttpCacheParams::DISK;
-      cache_params.path =
-          base::FilePath(storage_path)
-              .Append(FILE_PATH_LITERAL(kDiskCacheDirectoryName));
+      cache_params.path = base::FilePath::FromUTF8Unsafe(storage_path)
+                              .Append(kDiskCacheDirectoryName);
     } else {
       cache_params.type =
           net::URLRequestContextBuilder::HttpCacheParams::IN_MEMORY;
@@ -560,29 +582,25 @@ void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
   net::HttpNetworkSession::Params session_params;
   session_params.enable_http2 = enable_spdy;
   session_params.enable_quic = enable_quic;
-  if (enable_quic)
+  if (enable_quic) {
     session_params.quic_user_agent_id = quic_user_agent_id;
+    // Note goaway sessions on ip change will be turned on by default
+    // for iOS unless overrided via experiemental options.
+    session_params.quic_goaway_sessions_on_ip_change =
+        kDefaultQuicGoAwaySessionsOnIpChange;
+  }
 
   ParseAndSetExperimentalOptions(context_builder, &session_params, net_log);
   context_builder->set_http_network_session_params(session_params);
 
-  std::unique_ptr<net::CertVerifier> cert_verifier;
-  if (mock_cert_verifier) {
-    // Because |context_builder| expects CachingCertVerifier, wrap
-    // |mock_cert_verifier| into a CachingCertVerifier.
-    cert_verifier = std::make_unique<net::CachingCertVerifier>(
-        std::move(mock_cert_verifier));
-  } else {
-    // net::CertVerifier::CreateDefault() returns a CachingCertVerifier.
-    cert_verifier = net::CertVerifier::CreateDefault();
-  }
-  context_builder->SetCertVerifier(std::move(cert_verifier));
+  if (mock_cert_verifier)
+    context_builder->SetCertVerifier(std::move(mock_cert_verifier));
   // Certificate Transparency is intentionally ignored in Cronet.
   // See //net/docs/certificate-transparency.md for more details.
   context_builder->set_ct_verifier(
       std::make_unique<net::DoNothingCTVerifier>());
   context_builder->set_ct_policy_enforcer(
-      std::make_unique<DoNothingCTPolicyEnforcer>());
+      std::make_unique<net::DefaultCTPolicyEnforcer>());
   // TODO(mef): Use |config| to set cookies.
 }
 
@@ -596,7 +614,7 @@ URLRequestContextConfigBuilder::Build() {
       http_cache_max_size, load_disable_cache, storage_path, accept_language,
       user_agent, experimental_options, std::move(mock_cert_verifier),
       enable_network_quality_estimator,
-      bypass_public_key_pinning_for_local_trust_anchors, cert_verifier_data);
+      bypass_public_key_pinning_for_local_trust_anchors);
 }
 
 }  // namespace cronet

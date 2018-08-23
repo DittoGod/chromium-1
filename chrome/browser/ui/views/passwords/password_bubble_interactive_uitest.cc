@@ -11,7 +11,6 @@
 #include "base/macros.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/passwords/manage_passwords_test.h"
@@ -25,6 +24,7 @@
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "chrome/test/views/scoped_macviews_browser_mode.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/common/content_features.h"
@@ -32,7 +32,6 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_features.h"
 #include "ui/views/window/dialog_client_view.h"
 
@@ -71,16 +70,6 @@ class PasswordBubbleInteractiveUiTest : public ManagePasswordsTest {
   PasswordBubbleInteractiveUiTest() {}
   ~PasswordBubbleInteractiveUiTest() override {}
 
-  // ManagePasswordsTest:
-  void SetUp() override {
-#if defined(OS_MACOSX)
-    scoped_feature_list_.InitWithFeatures(
-        {features::kSecondaryUiMd, features::kShowAllDialogsWithViewsToolkit},
-        {});
-#endif
-    ManagePasswordsTest::SetUp();
-  }
-
   MOCK_METHOD0(OnIconRequestDone, void());
 
   // Called on the server background thread.
@@ -93,7 +82,7 @@ class PasswordBubbleInteractiveUiTest : public ManagePasswordsTest {
   }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  test::ScopedMacViewsBrowserMode views_mode_{true};
 
   DISALLOW_COPY_AND_ASSIGN(PasswordBubbleInteractiveUiTest);
 };

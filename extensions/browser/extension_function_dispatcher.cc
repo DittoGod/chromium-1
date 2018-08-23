@@ -64,7 +64,7 @@ void NotifyApiFunctionCalled(const std::string& extension_id,
 bool IsRequestFromServiceWorker(
     const ExtensionHostMsg_Request_Params& request_params) {
   return request_params.service_worker_version_id !=
-         extensions::kInvalidServiceWorkerVersionId;
+         blink::mojom::kInvalidServiceWorkerVersionId;
 }
 
 // Separate copy of ExtensionAPI used for IO thread extension functions. We need
@@ -186,9 +186,9 @@ class ExtensionFunctionDispatcher::UIThreadWorkerResponseCallbackWrapper
   ~UIThreadWorkerResponseCallbackWrapper() override {}
 
   // content::RenderProcessHostObserver override.
-  void RenderProcessExited(content::RenderProcessHost* rph,
-                           base::TerminationStatus status,
-                           int exit_code) override {
+  void RenderProcessExited(
+      content::RenderProcessHost* rph,
+      const content::ChildProcessTerminationInfo& info) override {
     CleanUp();
   }
 
@@ -303,8 +303,8 @@ void ExtensionFunctionDispatcher::DispatchOnIOThread(
   function_io->set_ipc_sender(ipc_sender, routing_id);
   function_io->set_extension_info_map(extension_info_map);
   if (extension) {
-    function->set_include_incognito(
-        extension_info_map->IsIncognitoEnabled(extension->id()));
+    function->set_include_incognito_information(
+        extension_info_map->CanCrossIncognito(extension));
   }
 
   if (!CheckPermissions(function.get(), params, callback))
@@ -452,7 +452,7 @@ void ExtensionFunctionDispatcher::DispatchWithCallbackInternal(
   if (extension &&
       ExtensionsBrowserClient::Get()->CanExtensionCrossIncognito(
           extension, browser_context_)) {
-    function->set_include_incognito(true);
+    function->set_include_incognito_information(true);
   }
 
   if (!CheckPermissions(function.get(), params, callback))

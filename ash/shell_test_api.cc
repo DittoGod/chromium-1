@@ -10,6 +10,7 @@
 #include "ash/shell.h"
 #include "ash/system/power/backlights_forced_off_setter.h"
 #include "ash/system/power/power_button_controller.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "components/prefs/testing_pref_service.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
@@ -48,6 +49,10 @@ DragDropController* ShellTestApi::drag_drop_controller() {
   return shell_->drag_drop_controller_.get();
 }
 
+PowerPrefs* ShellTestApi::power_prefs() {
+  return shell_->power_prefs_.get();
+}
+
 void ShellTestApi::OnLocalStatePrefServiceInitialized(
     std::unique_ptr<PrefService> pref_service) {
   shell_->OnLocalStatePrefServiceInitialized(std::move(pref_service));
@@ -65,6 +70,10 @@ void ShellTestApi::SimulateModalWindowOpenForTest(bool modal_window_open) {
 
 void ShellTestApi::IsSystemModalWindowOpen(IsSystemModalWindowOpenCallback cb) {
   std::move(cb).Run(Shell::IsSystemModalWindowOpen());
+}
+
+void ShellTestApi::EnableTabletModeWindowManager(bool enable) {
+  shell_->tablet_mode_controller()->EnableTabletModeWindowManager(enable);
 }
 
 }  // namespace ash

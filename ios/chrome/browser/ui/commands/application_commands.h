@@ -7,8 +7,9 @@
 
 #import <Foundation/Foundation.h>
 
+#import "ios/chrome/browser/ui/commands/browsing_data_commands.h"
+
 @class OpenNewTabCommand;
-@class OpenUrlCommand;
 @class ShowSigninCommand;
 @class StartVoiceSearchCommand;
 @class UIViewController;
@@ -32,6 +33,10 @@
 - (void)showSyncPassphraseSettingsFromViewController:
     (UIViewController*)baseViewController;
 
+// Shows the list of saved passwords in the settings.
+- (void)showSavedPasswordsSettingsFromViewController:
+    (UIViewController*)baseViewController;
+
 @end
 
 // Protocol for commands that will generally be handled by the application,
@@ -41,7 +46,9 @@
 // object that implements the methods in this protocol should be able to forward
 // ApplicationSettingsCommands to the settings view controller if necessary.
 
-@protocol ApplicationCommands<NSObject, ApplicationSettingsCommands>
+@protocol ApplicationCommands<NSObject,
+                              ApplicationSettingsCommands,
+                              BrowsingDataCommands>
 
 // Dismisses all modal dialogs.
 - (void)dismissModalDialogs;
@@ -50,19 +57,14 @@
 // Shows the Settings UI, presenting from |baseViewController|.
 - (void)showSettingsFromViewController:(UIViewController*)baseViewController;
 
-// Switches to show either regular or incognito tabs, and then opens
-// a new oen of those tabs. |newTabCommand|'s |incognito| property inidcates
-// the type of tab to open.
-- (void)switchModesAndOpenNewTab:(OpenNewTabCommand*)newTabCommand;
-
 // Starts a voice search on the current BVC.
-- (void)startVoiceSearch:(StartVoiceSearchCommand*)command;
+- (void)startVoiceSearch;
 
 // Shows the History UI.
 - (void)showHistory;
 
 // Closes the History UI and opens a URL.
-- (void)closeSettingsUIAndOpenURL:(OpenUrlCommand*)command;
+- (void)closeSettingsUIAndOpenURL:(OpenNewTabCommand*)command;
 
 // Closes the History UI.
 - (void)closeSettingsUI;
@@ -83,8 +85,8 @@
 - (void)showReportAnIssueFromViewController:
     (UIViewController*)baseViewController;
 
-// Opens the |command| URL.
-- (void)openURL:(OpenUrlCommand*)command;
+// Opens the |command| URL in a new tab.
+- (void)openURLInNewTab:(OpenNewTabCommand*)command;
 
 // TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
 // Shows the signin UI, presenting from |baseViewController|.
@@ -95,11 +97,8 @@
 // Shows the Add Account UI, presenting from |baseViewController|.
 - (void)showAddAccountFromViewController:(UIViewController*)baseViewController;
 
-// Prepares the UI for ClearBrowsingData.
-- (void)prepareForBrowsingDataRemoval;
-
-// Updates the UI once ClearBrowsingData has occured.
-- (void)browsingDataWasRemoved;
+// Sets whether the UI is displaying incognito content.
+- (void)setIncognitoContentVisible:(BOOL)incognitoContentVisible;
 
 @end
 

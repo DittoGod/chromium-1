@@ -23,6 +23,7 @@
 #include "base/macros.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/supports_user_data.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -44,6 +45,10 @@ namespace base {
 class SingleThreadTaskRunner;
 }
 
+namespace syncer {
+class ModelTypeControllerDelegate;
+}
+
 namespace history {
 struct DownloadRow;
 class HistoryBackendClient;
@@ -54,13 +59,16 @@ class HistoryDatabase;
 struct HistoryDatabaseParams;
 class HistoryDBTask;
 class InMemoryHistoryBackend;
-class TypedUrlSyncableService;
 class HistoryBackendHelper;
 class URLDatabase;
 
 // The maximum number of bitmaps for a single icon URL which can be stored in
 // the thumbnail database.
 static const size_t kMaxFaviconBitmapsPerIconURL = 8;
+
+// Returns a formatted version of |url| with the HTTP/HTTPS scheme, port,
+// username/password, and any trivial subdomains (e.g., "www.", "m.") removed.
+base::string16 FormatUrlForRedirectComparison(const GURL& url);
 
 // Keeps track of a queued HistoryDBTask. This class lives solely on the
 // DB thread.
@@ -144,10 +152,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
     // Notify HistoryService that some or all of the URLs have been deleted.
     // The event will be forwarded to the HistoryServiceObservers in the correct
     // thread.
-    virtual void NotifyURLsDeleted(const DeletionTimeRange& time_range,
-                                   bool expired,
-                                   const URLRows& deleted_rows,
-                                   const std::set<GURL>& favicon_urls) = 0;
+    virtual void NotifyURLsDeleted(DeletionInfo deletion_info) = 0;
 
     // Notify HistoryService that some keyword has been searched using omnibox.
     // The event will be forwarded to the HistoryServiceObservers in the correct
@@ -164,6 +169,9 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
     // Invoked when the backend has finished loading the db.
     virtual void DBLoaded() = 0;
   };
+
+  // Check if the transition should increment the typed_count of a visit.
+  static bool IsTypedIncrement(ui::PageTransition transition);
 
   // Init must be called to complete object creation. This object can be
   // constructed on any thread, but all other functions including Init() must
@@ -338,6 +346,9 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
                            const GURL& icon_url,
                            const std::vector<SkBitmap>& bitmaps);
 
+  bool CanSetOnDemandFavicons(const GURL& page_url,
+                              favicon_base::IconType icon_type);
+
   void SetFaviconsOutOfDateForPage(const GURL& page_url);
 
   void TouchOnDemandFavicon(const GURL& icon_url);
@@ -408,13 +419,10 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   bool GetURLByID(URLID url_id, URLRow* url_row);
 
-  // Returns the syncable service for syncing typed urls. The returned service
-  // is owned by |this| object.
-  virtual TypedUrlSyncableService* GetTypedUrlSyncableService() const;
-
-  // Returns the sync bridge for syncing typed urls. The returned service
-  // is owned by |this| object.
-  TypedURLSyncBridge* GetTypedURLSyncBridge() const;
+  // Returns the sync controller delegate for syncing typed urls. The returned
+  // delegate is owned by |this| object.
+  base::WeakPtr<syncer::ModelTypeControllerDelegate>
+  GetTypedURLSyncControllerDelegate();
 
   // Deleting ------------------------------------------------------------------
 
@@ -440,6 +448,10 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // The fields of |ExpireHistoryArgs| map directly to the arguments of
   // of ExpireHistoryBetween().
   void ExpireHistory(const std::vector<ExpireHistoryArgs>& expire_list);
+
+  // Expires all visits before and including the given time, updating the URLs
+  // accordingly.
+  void ExpireHistoryBeforeForTesting(base::Time end_time);
 
   // Bookmarks -----------------------------------------------------------------
 
@@ -623,12 +635,15 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   //
   // This does not schedule database commits, it is intended to be used as a
   // subroutine for AddPage only. It also assumes the database is valid.
-  std::pair<URLID, VisitID> AddPageVisit(const GURL& url,
-                                         base::Time time,
-                                         VisitID referring_visit,
-                                         ui::PageTransition transition,
-                                         bool hidden,
-                                         VisitSource visit_source);
+  std::pair<URLID, VisitID> AddPageVisit(
+      const GURL& url,
+      base::Time time,
+      VisitID referring_visit,
+      ui::PageTransition transition,
+      bool hidden,
+      VisitSource visit_source,
+      bool should_increment_typed_count,
+      base::Optional<base::string16> title = base::nullopt);
 
   // Returns a redirect chain in |redirects| for the VisitID
   // |cur_visit|. |cur_visit| is assumed to be valid. Assumes that
@@ -820,10 +835,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
                         const RedirectList& redirects,
                         base::Time visit_time) override;
   void NotifyURLsModified(const URLRows& rows) override;
-  void NotifyURLsDeleted(const DeletionTimeRange& time_range,
-                         bool expired,
-                         const URLRows& rows,
-                         const std::set<GURL>& favicon_urls) override;
+  void NotifyURLsDeleted(DeletionInfo deletion_info) override;
 
   void RecordTopHostsMetrics(const GURL& url);
 
@@ -931,13 +943,11 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   mutable base::hash_map<std::string, int> host_ranks_;
 
   // List of observers
-  base::ObserverList<HistoryBackendObserver> observers_;
+  base::ObserverList<HistoryBackendObserver>::Unchecked observers_;
 
-  // Used to manage syncing of the typed urls datatype. They will be null before
-  // Init is called, and only one will be instantiated after Init is called
-  // depending on switches::kSyncUSSTypedURL. Defined after observers_ because
+  // Used to manage syncing of the typed urls datatype. It will be null before
+  // HistoryBackend::Init is called. Defined after observers_ because
   // it unregisters itself as observer during destruction.
-  std::unique_ptr<TypedUrlSyncableService> typed_url_syncable_service_;
   std::unique_ptr<TypedURLSyncBridge> typed_url_sync_bridge_;
 
   DISALLOW_COPY_AND_ASSIGN(HistoryBackend);

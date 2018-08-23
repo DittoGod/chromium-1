@@ -7,24 +7,27 @@
 namespace web {
 namespace features {
 
-const base::Feature kContextMenuElementPostMessage{
-    "ContextMenuElementPostMessage", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kWebFrameMessaging{"WebFrameMessaging",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kSlimNavigationManager{"SlimNavigationManager",
                                            base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kNewPassKitDownload{"NewPassKitDownload",
-                                        base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kWebErrorPages{"WebErrorPages",
+                                   base::FEATURE_ENABLED_BY_DEFAULT};
 
-const base::Feature kNewFileDownload{"NewFileDownload",
-                                     base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kUseWebThreadInCertVerificationController{
+    "UseWebThreadInCertVerificationController",
+    base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kWKHTTPSystemCookieStore{"WKHTTPSystemCookieStore",
-                                             base::FEATURE_ENABLED_BY_DEFAULT};
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kPreloadWebViewWhenNavigatingFromNativeContentOnIOS11_3{
-    "PreloadWebViewWhenNavigatingFromNativeContentOnIOS11_3",
-    base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kCrashOnUnexpectedURLChange{
+    "CrashOnUnexpectedURLChange", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kBrowserContainerFullscreen{
+    "BrowserContainerFullscreen", base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace features
 }  // namespace web

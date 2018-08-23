@@ -15,8 +15,7 @@ LayerTreeSettings::LayerTreeSettings()
       minimum_occlusion_tracking_size(gfx::Size(160, 160)),
       memory_policy(64 * 1024 * 1024,
                     gpu::MemoryAllocation::CUTOFF_ALLOW_EVERYTHING,
-                    ManagedMemoryPolicy::kDefaultNumResourcesLimit),
-      preferred_tile_format(viz::PlatformColor::BestTextureFormat()) {}
+                    ManagedMemoryPolicy::kDefaultNumResourcesLimit) {}
 
 LayerTreeSettings::LayerTreeSettings(const LayerTreeSettings& other) = default;
 LayerTreeSettings::~LayerTreeSettings() = default;
@@ -44,7 +43,6 @@ TileManagerSettings LayerTreeSettings::ToTileManagerSettings() const {
   tile_manager_settings.use_partial_raster = use_partial_raster;
   tile_manager_settings.enable_checker_imaging = enable_checker_imaging;
   tile_manager_settings.min_image_bytes_to_checker = min_image_bytes_to_checker;
-  tile_manager_settings.enable_image_animations = enable_image_animations;
   return tile_manager_settings;
 }
 

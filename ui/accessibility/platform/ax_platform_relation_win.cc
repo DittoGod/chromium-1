@@ -122,7 +122,7 @@ int AXPlatformRelationWin::EnumerateRelationships(
   if (first_time) {
     for (int32_t attr_index =
              static_cast<int32_t>(ax::mojom::IntAttribute::kNone);
-         attr_index <= static_cast<int32_t>(ax::mojom::IntAttribute::kLast);
+         attr_index <= static_cast<int32_t>(ax::mojom::IntAttribute::kMaxValue);
          ++attr_index) {
       auto attr = static_cast<ax::mojom::IntAttribute>(attr_index);
       if (!GetIA2ReverseRelationFromIntAttr(attr).empty())
@@ -130,7 +130,8 @@ int AXPlatformRelationWin::EnumerateRelationships(
     }
     for (int32_t attr_index =
              static_cast<int32_t>(ax::mojom::IntListAttribute::kNone);
-         attr_index <= static_cast<int32_t>(ax::mojom::IntListAttribute::kLast);
+         attr_index <=
+         static_cast<int32_t>(ax::mojom::IntListAttribute::kMaxValue);
          ++attr_index) {
       auto attr = static_cast<ax::mojom::IntListAttribute>(attr_index);
       if (!GetIA2ReverseRelationFromIntListAttr(attr).empty())
@@ -249,7 +250,7 @@ void AXPlatformRelationWin::AddTarget(AXPlatformNodeWin* target) {
   targets_.push_back(target);
 }
 
-STDMETHODIMP AXPlatformRelationWin::get_relationType(BSTR* relation_type) {
+IFACEMETHODIMP AXPlatformRelationWin::get_relationType(BSTR* relation_type) {
   if (!relation_type)
     return E_INVALIDARG;
 
@@ -258,7 +259,7 @@ STDMETHODIMP AXPlatformRelationWin::get_relationType(BSTR* relation_type) {
   return S_OK;
 }
 
-STDMETHODIMP AXPlatformRelationWin::get_nTargets(LONG* n_targets) {
+IFACEMETHODIMP AXPlatformRelationWin::get_nTargets(LONG* n_targets) {
   if (!n_targets)
     return E_INVALIDARG;
 
@@ -266,8 +267,8 @@ STDMETHODIMP AXPlatformRelationWin::get_nTargets(LONG* n_targets) {
   return S_OK;
 }
 
-STDMETHODIMP AXPlatformRelationWin::get_target(LONG target_index,
-                                               IUnknown** target) {
+IFACEMETHODIMP AXPlatformRelationWin::get_target(LONG target_index,
+                                                 IUnknown** target) {
   if (!target)
     return E_INVALIDARG;
 
@@ -280,9 +281,9 @@ STDMETHODIMP AXPlatformRelationWin::get_target(LONG target_index,
   return S_OK;
 }
 
-STDMETHODIMP AXPlatformRelationWin::get_targets(LONG max_targets,
-                                                IUnknown** targets,
-                                                LONG* n_targets) {
+IFACEMETHODIMP AXPlatformRelationWin::get_targets(LONG max_targets,
+                                                  IUnknown** targets,
+                                                  LONG* n_targets) {
   if (!targets || !n_targets)
     return E_INVALIDARG;
 
@@ -303,7 +304,7 @@ STDMETHODIMP AXPlatformRelationWin::get_targets(LONG max_targets,
   return S_OK;
 }
 
-STDMETHODIMP
+IFACEMETHODIMP
 AXPlatformRelationWin::get_localizedRelationType(BSTR* relation_type) {
   return E_NOTIMPL;
 }

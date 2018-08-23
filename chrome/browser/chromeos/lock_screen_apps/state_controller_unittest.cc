@@ -90,7 +90,7 @@ scoped_refptr<extensions::Extension> CreateTestNoteTakingApp(
   ListBuilder action_handlers;
   action_handlers.Append(DictionaryBuilder()
                              .Set("action", "new_note")
-                             .SetBoolean("enabled_on_lock_screen", true)
+                             .Set("enabled_on_lock_screen", true)
                              .Build());
   DictionaryBuilder background;
   background.Set("scripts", ListBuilder().Append("background.js").Build());
@@ -436,15 +436,13 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
 
     focus_cycler_delegate_ = std::make_unique<TestFocusCyclerDelegate>();
 
-    auto tick_clock = std::make_unique<base::SimpleTestTickClock>();
     // Advance the clock to have non-null value.
-    tick_clock->Advance(base::TimeDelta::FromMilliseconds(1));
-    tick_clock_ = tick_clock.get();
+    tick_clock_.Advance(base::TimeDelta::FromMilliseconds(1));
 
     state_controller_ = std::make_unique<lock_screen_apps::StateController>();
     state_controller_->SetTrayActionPtrForTesting(
         tray_action_.CreateInterfacePtrAndBind());
-    state_controller_->SetTickClockForTesting(std::move(tick_clock));
+    state_controller_->SetTickClockForTesting(&tick_clock_);
     state_controller_->SetLockScreenLockScreenProfileCreatorForTesting(
         std::move(profile_creator));
     state_controller_->SetAppManagerForTesting(std::move(app_manager));
@@ -573,6 +571,7 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
     SetFirstRunCompletedIfNeeded(app_->id());
 
     session_manager_->SetSessionState(session_manager::SessionState::LOCKED);
+    state_controller_->FlushTrayActionForTesting();
 
     if (app_manager_->state() != TestAppManager::State::kStarted) {
       ADD_FAILURE() << "Lock app manager Start not invoked.";
@@ -676,7 +675,7 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
     return lock_screen_profile_creator_;
   }
 
-  base::SimpleTestTickClock* tick_clock() { return tick_clock_; }
+  base::SimpleTestTickClock* tick_clock() { return &tick_clock_; }
 
  protected:
   // Should be set by tests that excercise the logic for the first lock screen
@@ -719,7 +718,7 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
   std::unique_ptr<TestAppWindow> app_window_;
   scoped_refptr<const extensions::Extension> app_;
 
-  base::SimpleTestTickClock* tick_clock_;
+  base::SimpleTestTickClock tick_clock_;
 
   DISALLOW_COPY_AND_ASSIGN(LockScreenAppStateTest);
 };
@@ -772,8 +771,8 @@ TEST_F(LockScreenAppStateKioskUserTest, SetPrimaryProfile) {
   EXPECT_EQ(TestAppManager::State::kNotInitialized, app_manager()->state());
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  EXPECT_EQ(0u, observer()->observed_states().size());
   EXPECT_FALSE(lock_screen_profile_creator()->Initialized());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 }
 
 TEST_F(LockScreenAppStateNoStylusInputTest,
@@ -789,7 +788,7 @@ TEST_F(LockScreenAppStateNoStylusInputTest,
   EXPECT_EQ(TestAppManager::State::kStopped, app_manager()->state());
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  EXPECT_EQ(0u, observer()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 
   // Enable stylus input.
   SetStylusEnabled();
@@ -814,7 +813,7 @@ TEST_F(LockScreenAppStateNoStylusInputTest, StylusDetectedAfterInitialization) {
   EXPECT_EQ(TestAppManager::State::kStopped, app_manager()->state());
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  EXPECT_EQ(0u, observer()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 
   // Given that the screen is locked, lock screen apps should become available.
   session_manager()->SetSessionState(session_manager::SessionState::LOCKED);
@@ -839,8 +838,7 @@ TEST_F(LockScreenAppStateTest, InitialState) {
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
 
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 }
 
 TEST_F(LockScreenAppStateTest, SetPrimaryProfile) {
@@ -850,7 +848,7 @@ TEST_F(LockScreenAppStateTest, SetPrimaryProfile) {
   EXPECT_EQ(TestAppManager::State::kStopped, app_manager()->state());
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  EXPECT_EQ(0u, observer()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 }
 
 TEST_F(LockScreenAppStateTest, SetPrimaryProfileWhenSessionLocked) {
@@ -1032,9 +1030,8 @@ TEST_F(LockScreenAppStateTest, SessionUnlockedWhileStartingAppManager) {
 
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  state_controller()->FlushTrayActionForTesting();
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on session unlock.");
 
   // Test that subsequent session lock works as expected.
   session_manager()->SetSessionState(session_manager::SessionState::LOCKED);
@@ -1057,18 +1054,17 @@ TEST_F(LockScreenAppStateTest, AppManagerNoApp) {
 
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  state_controller()->FlushTrayActionForTesting();
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on session lock.");
 
   tray_action()->SendNewNoteRequest(
       LockScreenNoteOrigin::kLockScreenButtonSwipe);
+  state_controller()->FlushTrayActionForTesting();
 
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  state_controller()->FlushTrayActionForTesting();
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on note request.");
 
   // App manager should be started on next session lock.
   session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
@@ -1139,8 +1135,8 @@ TEST_F(LockScreenAppStateTest, HandleActionWhenNotAvaiable) {
       LockScreenNoteOrigin::kLockScreenButtonSwipe);
   state_controller()->FlushTrayActionForTesting();
 
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on note request");
 }
 
 TEST_F(LockScreenAppStateTest, HandleAction) {
@@ -1162,8 +1158,8 @@ TEST_F(LockScreenAppStateTest, HandleAction) {
 
   // There should be no state change - the state_controller was already in
   // launching state when the request was received.
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on repeated launch");
   EXPECT_EQ(1, app_manager()->launch_count());
 }
 
@@ -1202,6 +1198,7 @@ TEST_F(LockScreenAppStateWebUiLockTest,
   ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kAvailable,
                                       true /* enable_app_launch */));
   tray_action()->SendNewNoteRequest(LockScreenNoteOrigin::kStylusEject);
+  state_controller()->FlushTrayActionForTesting();
 
   ExpectObservedStatesMatch({TrayActionState::kLaunching},
                             "Launch on new note request");
@@ -1221,8 +1218,8 @@ TEST_F(LockScreenAppStateWebUiLockTest,
   // is closed/canceled before that.
   state_controller()->NewNoteLaunchAnimationDone();
   EXPECT_EQ(0, app_manager()->launch_count());
-  EXPECT_TRUE(observer()->observed_states().empty());
-  EXPECT_TRUE(tray_action()->observed_states().empty());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change if canceled");
 }
 
 TEST_F(LockScreenAppStateTest, AppWindowRegistration) {

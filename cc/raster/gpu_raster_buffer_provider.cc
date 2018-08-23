@@ -9,8 +9,8 @@
 #include <algorithm>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/base/histograms.h"
 #include "cc/paint/display_item_list.h"
@@ -18,7 +18,8 @@
 #include "cc/paint/paint_recorder.h"
 #include "cc/raster/raster_source.h"
 #include "cc/raster/scoped_gpu_raster.h"
-#include "cc/resources/resource.h"
+#include "cc/raster/scoped_grcontext_access.h"
+#include "components/viz/client/client_resource_provider.h"
 #include "components/viz/common/gpu/context_provider.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
 #include "components/viz/common/gpu/texture_allocation.h"
@@ -34,9 +35,81 @@
 #include "third_party/skia/include/gpu/GrContext.h"
 #include "ui/gfx/geometry/axis_transform2d.h"
 #include "ui/gl/trace_util.h"
+#include "url/gurl.h"
 
 namespace cc {
 namespace {
+
+class ScopedSkSurfaceForUnpremultiplyAndDither {
+ public:
+  ScopedSkSurfaceForUnpremultiplyAndDither(
+      viz::RasterContextProvider* context_provider,
+      const gfx::Rect& playback_rect,
+      const gfx::Rect& raster_full_rect,
+      const gfx::Size& max_tile_size,
+      GLuint texture_id,
+      const gfx::Size& texture_size,
+      bool can_use_lcd_text,
+      int msaa_sample_count)
+      : context_provider_(context_provider),
+        texture_id_(texture_id),
+        offset_(playback_rect.OffsetFromOrigin() -
+                raster_full_rect.OffsetFromOrigin()),
+        size_(playback_rect.size()) {
+    // Determine the |intermediate_size| to use for our 32-bit texture. If we
+    // know the max tile size, use that. This prevents GPU cache explosion due
+    // to using lots of different 32-bit texture sizes. Otherwise just use the
+    // exact size of the target texture.
+    gfx::Size intermediate_size;
+    if (!max_tile_size.IsEmpty()) {
+      DCHECK_GE(max_tile_size.width(), texture_size.width());
+      DCHECK_GE(max_tile_size.height(), texture_size.height());
+      intermediate_size = max_tile_size;
+    } else {
+      intermediate_size = texture_size;
+    }
+
+    // Allocate a 32-bit surface for raster. We will copy from that into our
+    // actual surface in destruction.
+    SkImageInfo n32Info = SkImageInfo::MakeN32Premul(
+        intermediate_size.width(), intermediate_size.height());
+    SkSurfaceProps surface_props =
+        viz::ClientResourceProvider::ScopedSkSurface::ComputeSurfaceProps(
+            can_use_lcd_text);
+    surface_ = SkSurface::MakeRenderTarget(
+        context_provider->GrContext(), SkBudgeted::kNo, n32Info,
+        msaa_sample_count, kTopLeft_GrSurfaceOrigin, &surface_props);
+  }
+
+  ~ScopedSkSurfaceForUnpremultiplyAndDither() {
+    // In lost-context cases, |surface_| may be null and there's nothing
+    // meaningful to do here.
+    if (!surface_)
+      return;
+
+    GrBackendTexture backend_texture =
+        surface_->getBackendTexture(SkSurface::kFlushRead_BackendHandleAccess);
+    if (!backend_texture.isValid()) {
+      return;
+    }
+    GrGLTextureInfo info;
+    if (!backend_texture.getGLTextureInfo(&info)) {
+      return;
+    }
+    context_provider_->ContextGL()->UnpremultiplyAndDitherCopyCHROMIUM(
+        info.fID, texture_id_, offset_.x(), offset_.y(), size_.width(),
+        size_.height());
+  }
+
+  SkSurface* surface() { return surface_.get(); }
+
+ private:
+  viz::RasterContextProvider* context_provider_;
+  GLuint texture_id_;
+  gfx::Vector2d offset_;
+  gfx::Size size_;
+  sk_sp<SkSurface> surface_;
+};
 
 static void RasterizeSourceOOP(
     const RasterSource* raster_source,
@@ -53,10 +126,11 @@ static void RasterizeSourceOOP(
     const gfx::AxisTransform2d& transform,
     const RasterSource::PlaybackSettings& playback_settings,
     viz::RasterContextProvider* context_provider,
-    bool use_distance_field_text,
     int msaa_sample_count) {
   gpu::raster::RasterInterface* ri = context_provider->RasterInterface();
-  GLuint texture_id = ri->CreateAndConsumeTextureCHROMIUM(mailbox.name);
+  GLuint texture_id = ri->CreateAndConsumeTexture(
+      texture_is_overlay_candidate, gfx::BufferUsage::SCANOUT, resource_format,
+      mailbox.name);
   if (!texture_storage_allocated) {
     viz::TextureAllocation alloc = {texture_id, texture_target,
                                     texture_is_overlay_candidate};
@@ -67,11 +141,11 @@ static void RasterizeSourceOOP(
 
   // TODO(enne): Use the |texture_target|? GpuMemoryBuffer backed textures don't
   // use GL_TEXTURE_2D.
-  ri->BeginRasterCHROMIUM(
-      texture_id, raster_source->background_color(), msaa_sample_count,
-      playback_settings.use_lcd_text, use_distance_field_text,
-      viz::ResourceFormatToClosestSkColorType(resource_format),
-      playback_settings.raster_color_space);
+  ri->BeginRasterCHROMIUM(raster_source->background_color(), msaa_sample_count,
+                          playback_settings.use_lcd_text,
+                          viz::ResourceFormatToClosestSkColorType(
+                              /*gpu_compositing=*/true, resource_format),
+                          playback_settings.raster_color_space, mailbox.name);
   float recording_to_raster_scale =
       transform.scale() / raster_source->recording_scale_factor();
   gfx::Size content_size = raster_source->GetContentSize(transform.scale());
@@ -85,29 +159,11 @@ static void RasterizeSourceOOP(
                      raster_source->requires_clear());
   ri->EndRasterCHROMIUM();
 
+  // TODO(ericrk): Handle unpremultiply+dither for 4444 cases.
+  // https://crbug.com/789153
+
   ri->DeleteTextures(1, &texture_id);
 }
-
-// The following class is needed to correctly reset GL state when rendering to
-// SkCanvases with a GrContext on a RasterInterface enabled context.
-class ScopedGrContextAccess {
- public:
-  explicit ScopedGrContextAccess(viz::RasterContextProvider* context_provider)
-      : context_provider_(context_provider) {
-    gpu::raster::RasterInterface* ri = context_provider_->RasterInterface();
-    ri->BeginGpuRaster();
-
-    class GrContext* gr_context = context_provider_->GrContext();
-    gr_context->resetContext();
-  }
-  ~ScopedGrContextAccess() {
-    gpu::raster::RasterInterface* ri = context_provider_->RasterInterface();
-    ri->EndGpuRaster();
-  }
-
- private:
-  viz::RasterContextProvider* context_provider_;
-};
 
 static void RasterizeSource(
     const RasterSource* raster_source,
@@ -124,12 +180,13 @@ static void RasterizeSource(
     const gfx::AxisTransform2d& transform,
     const RasterSource::PlaybackSettings& playback_settings,
     viz::RasterContextProvider* context_provider,
-    bool use_distance_field_text,
-    int msaa_sample_count) {
-  ScopedGrContextAccess gr_context_access(context_provider);
-
+    int msaa_sample_count,
+    bool unpremultiply_and_dither,
+    const gfx::Size& max_tile_size) {
   gpu::raster::RasterInterface* ri = context_provider->RasterInterface();
-  GLuint texture_id = ri->CreateAndConsumeTextureCHROMIUM(mailbox.name);
+  GLuint texture_id = ri->CreateAndConsumeTexture(
+      texture_is_overlay_candidate, gfx::BufferUsage::SCANOUT, resource_format,
+      mailbox.name);
   if (!texture_storage_allocated) {
     viz::TextureAllocation alloc = {texture_id, texture_target,
                                     texture_is_overlay_candidate};
@@ -139,12 +196,23 @@ static void RasterizeSource(
   }
 
   {
-    LayerTreeResourceProvider::ScopedSkSurface scoped_surface(
-        context_provider->GrContext(), texture_id, texture_target,
-        resource_size, resource_format, use_distance_field_text,
-        playback_settings.use_lcd_text, msaa_sample_count);
-
-    SkSurface* surface = scoped_surface.surface();
+    ScopedGrContextAccess gr_context_access(context_provider);
+    base::Optional<viz::ClientResourceProvider::ScopedSkSurface> scoped_surface;
+    base::Optional<ScopedSkSurfaceForUnpremultiplyAndDither>
+        scoped_dither_surface;
+    SkSurface* surface;
+    if (!unpremultiply_and_dither) {
+      scoped_surface.emplace(context_provider->GrContext(), texture_id,
+                             texture_target, resource_size, resource_format,
+                             playback_settings.use_lcd_text, msaa_sample_count);
+      surface = scoped_surface->surface();
+    } else {
+      scoped_dither_surface.emplace(
+          context_provider, playback_rect, raster_full_rect, max_tile_size,
+          texture_id, resource_size, playback_settings.use_lcd_text,
+          msaa_sample_count);
+      surface = scoped_dither_surface->surface();
+    }
 
     // Allocating an SkSurface will fail after a lost context.  Pretend we
     // rasterized, as the contents of the resource don't matter anymore.
@@ -185,15 +253,20 @@ class GpuRasterBufferProvider::GpuRasterBacking
       gl->DeleteTextures(1, &texture_id);
   }
 
-  base::trace_event::MemoryAllocatorDumpGuid MemoryDumpGuid(
-      uint64_t tracing_process_id) override {
+  void OnMemoryDump(
+      base::trace_event::ProcessMemoryDump* pmd,
+      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
+      uint64_t tracing_process_id,
+      int importance) const override {
     if (!storage_allocated)
-      return {};
-    return gl::GetGLTextureClientGUIDForTracing(
+      return;
+
+    auto texture_tracing_guid = gl::GetGLTextureClientGUIDForTracing(
         compositor_context_provider->ContextSupport()->ShareGroupTracingGUID(),
         texture_id);
+    pmd->CreateSharedGlobalAllocatorDump(texture_tracing_guid);
+    pmd->AddOwnershipEdge(buffer_dump_guid, texture_tracing_guid, importance);
   }
-  base::UnguessableToken SharedMemoryGuid() override { return {}; }
 
   // The ContextProvider used to clean up the texture id.
   viz::ContextProvider* compositor_context_provider = nullptr;
@@ -215,17 +288,13 @@ GpuRasterBufferProvider::RasterBufferImpl::RasterBufferImpl(
       resource_format_(in_use_resource.format()),
       color_space_(in_use_resource.color_space()),
       resource_has_previous_content_(resource_has_previous_content),
-      returned_sync_token_(backing->returned_sync_token),
+      before_raster_sync_token_(backing->returned_sync_token),
       mailbox_(backing->mailbox),
       texture_target_(backing->texture_target),
       texture_is_overlay_candidate_(backing->overlay_candidate),
-      texture_storage_allocated_(backing->storage_allocated) {
-  client_->pending_raster_buffers_.insert(this);
-}
+      texture_storage_allocated_(backing->storage_allocated) {}
 
 GpuRasterBufferProvider::RasterBufferImpl::~RasterBufferImpl() {
-  client_->pending_raster_buffers_.erase(this);
-
   // This SyncToken was created on the worker context after rastering the
   // texture content.
   backing_->mailbox_sync_token = after_raster_sync_token_;
@@ -243,50 +312,45 @@ void GpuRasterBufferProvider::RasterBufferImpl::Playback(
     const gfx::Rect& raster_dirty_rect,
     uint64_t new_content_id,
     const gfx::AxisTransform2d& transform,
-    const RasterSource::PlaybackSettings& playback_settings) {
+    const RasterSource::PlaybackSettings& playback_settings,
+    const GURL& url) {
   TRACE_EVENT0("cc", "GpuRasterBuffer::Playback");
-  // Either a SyncToken had to be made in OrderingBarrier, because a texture
-  // was made in AcquireBufferForRaster, or a texture already existed and we're
-  // reusing it. In that case a SyncToken was on the GpuBacking that we must
-  // wait on befor using the texture.
-  if (returned_sync_token_.HasData())
-    before_raster_sync_token_ = returned_sync_token_;
-  // The |sync_token_| passed in here was created on the compositor thread, or
-  // given back with the texture for reuse. This call returns another SyncToken
-  // generated on the worker thread to synchronize with after the raster is
-  // complete.
+  // The |before_raster_sync_token_| passed in here was created on the
+  // compositor thread, or given back with the texture for reuse. This call
+  // returns another SyncToken generated on the worker thread to synchronize
+  // with after the raster is complete.
   after_raster_sync_token_ = client_->PlaybackOnWorkerThread(
       mailbox_, texture_target_, texture_is_overlay_candidate_,
       texture_storage_allocated_, before_raster_sync_token_, resource_size_,
       resource_format_, color_space_, resource_has_previous_content_,
       raster_source, raster_full_rect, raster_dirty_rect, new_content_id,
-      transform, playback_settings);
+      transform, playback_settings, url);
   texture_storage_allocated_ = true;
 }
 
 GpuRasterBufferProvider::GpuRasterBufferProvider(
     viz::ContextProvider* compositor_context_provider,
     viz::RasterContextProvider* worker_context_provider,
-    LayerTreeResourceProvider* resource_provider,
-    bool use_distance_field_text,
     bool use_gpu_memory_buffer_resources,
     int gpu_rasterization_msaa_sample_count,
-    viz::ResourceFormat preferred_tile_format,
+    viz::ResourceFormat tile_format,
+    const gfx::Size& max_tile_size,
+    bool unpremultiply_and_dither_low_bit_depth_tiles,
     bool enable_oop_rasterization)
     : compositor_context_provider_(compositor_context_provider),
       worker_context_provider_(worker_context_provider),
-      resource_provider_(resource_provider),
-      use_distance_field_text_(use_distance_field_text),
       use_gpu_memory_buffer_resources_(use_gpu_memory_buffer_resources),
       msaa_sample_count_(gpu_rasterization_msaa_sample_count),
-      preferred_tile_format_(preferred_tile_format),
+      tile_format_(tile_format),
+      max_tile_size_(max_tile_size),
+      unpremultiply_and_dither_low_bit_depth_tiles_(
+          unpremultiply_and_dither_low_bit_depth_tiles),
       enable_oop_rasterization_(enable_oop_rasterization) {
   DCHECK(compositor_context_provider);
   DCHECK(worker_context_provider);
 }
 
 GpuRasterBufferProvider::~GpuRasterBufferProvider() {
-  DCHECK(pending_raster_buffers_.empty());
 }
 
 std::unique_ptr<RasterBuffer> GpuRasterBufferProvider::AcquireBufferForRaster(
@@ -306,55 +370,38 @@ std::unique_ptr<RasterBuffer> GpuRasterBufferProvider::AcquireBufferForRaster(
     backing->texture_id = alloc.texture_id;
     backing->texture_target = alloc.texture_target;
     backing->overlay_candidate = alloc.overlay_candidate;
-    backing->mailbox = gpu::Mailbox::Generate();
-    // The SyncToken in order to use this mailbox on another context will be
-    // generated later by OrderingBarrier(), once for all mailboxes made at a
-    // given time.
     gl->ProduceTextureDirectCHROMIUM(backing->texture_id,
                                      backing->mailbox.name);
+    // Save a sync token in the backing so that we always wait on it even if
+    // this task is cancelled between being scheduled and running.
+    backing->returned_sync_token =
+        viz::ClientResourceProvider::GenerateSyncTokenHelper(gl);
 
     resource.set_gpu_backing(std::move(backing));
   }
   GpuRasterBacking* backing =
       static_cast<GpuRasterBacking*>(resource.gpu_backing());
-
   bool resource_has_previous_content =
       resource_content_id && resource_content_id == previous_content_id;
   return std::make_unique<RasterBufferImpl>(this, resource, backing,
                                             resource_has_previous_content);
 }
 
-void GpuRasterBufferProvider::OrderingBarrier() {
-  TRACE_EVENT0("cc", "GpuRasterBufferProvider::OrderingBarrier");
-
-  gpu::gles2::GLES2Interface* gl = compositor_context_provider_->ContextGL();
-  gpu::SyncToken sync_token =
-      LayerTreeResourceProvider::GenerateSyncTokenHelper(gl);
-  for (RasterBufferImpl* buffer : pending_raster_buffers_)
-    buffer->set_sync_token(sync_token);
-  pending_raster_buffers_.clear();
-}
-
 void GpuRasterBufferProvider::Flush() {
   compositor_context_provider_->ContextSupport()->FlushPendingWork();
 }
 
-viz::ResourceFormat GpuRasterBufferProvider::GetResourceFormat(
-    bool must_support_alpha) const {
-  if (resource_provider_->IsRenderBufferFormatSupported(
-          preferred_tile_format_) &&
-      (DoesResourceFormatSupportAlpha(preferred_tile_format_) ||
-       !must_support_alpha)) {
-    return preferred_tile_format_;
-  }
-
-  return resource_provider_->best_render_buffer_format();
+viz::ResourceFormat GpuRasterBufferProvider::GetResourceFormat() const {
+  return tile_format_;
 }
 
-bool GpuRasterBufferProvider::IsResourceSwizzleRequired(
-    bool must_support_alpha) const {
+bool GpuRasterBufferProvider::IsResourceSwizzleRequired() const {
   // This doesn't require a swizzle because we rasterize to the correct format.
   return false;
+}
+
+bool GpuRasterBufferProvider::IsResourcePremultiplied() const {
+  return !ShouldUnpremultiplyAndDitherResource(GetResourceFormat());
 }
 
 bool GpuRasterBufferProvider::CanPartialRasterIntoProvidedResource() const {
@@ -404,7 +451,6 @@ uint64_t GpuRasterBufferProvider::SetReadyToDrawCallback(
 }
 
 void GpuRasterBufferProvider::Shutdown() {
-  pending_raster_buffers_.clear();
 }
 
 gpu::SyncToken GpuRasterBufferProvider::PlaybackOnWorkerThread(
@@ -422,9 +468,10 @@ gpu::SyncToken GpuRasterBufferProvider::PlaybackOnWorkerThread(
     const gfx::Rect& raster_dirty_rect,
     uint64_t new_content_id,
     const gfx::AxisTransform2d& transform,
-    const RasterSource::PlaybackSettings& playback_settings) {
+    const RasterSource::PlaybackSettings& playback_settings,
+    const GURL& url) {
   viz::RasterContextProvider::ScopedRasterContextLock scoped_context(
-      worker_context_provider_);
+      worker_context_provider_, url.possibly_invalid_spec().c_str());
   gpu::raster::RasterInterface* ri = scoped_context.RasterInterface();
   DCHECK(ri);
 
@@ -455,23 +502,34 @@ gpu::SyncToken GpuRasterBufferProvider::PlaybackOnWorkerThread(
   }
 
   if (enable_oop_rasterization_) {
-    RasterizeSourceOOP(
+    RasterizeSourceOOP(raster_source, resource_has_previous_content, mailbox,
+                       texture_target, texture_is_overlay_candidate,
+                       texture_storage_allocated, resource_size,
+                       resource_format, color_space, raster_full_rect,
+                       playback_rect, transform, playback_settings,
+                       worker_context_provider_, msaa_sample_count_);
+  } else {
+    RasterizeSource(
         raster_source, resource_has_previous_content, mailbox, texture_target,
         texture_is_overlay_candidate, texture_storage_allocated, resource_size,
         resource_format, color_space, raster_full_rect, playback_rect,
         transform, playback_settings, worker_context_provider_,
-        use_distance_field_text_, msaa_sample_count_);
-  } else {
-    RasterizeSource(raster_source, resource_has_previous_content, mailbox,
-                    texture_target, texture_is_overlay_candidate,
-                    texture_storage_allocated, resource_size, resource_format,
-                    color_space, raster_full_rect, playback_rect, transform,
-                    playback_settings, worker_context_provider_,
-                    use_distance_field_text_, msaa_sample_count_);
+        msaa_sample_count_,
+        ShouldUnpremultiplyAndDitherResource(resource_format), max_tile_size_);
   }
 
   // Generate sync token for cross context synchronization.
-  return LayerTreeResourceProvider::GenerateSyncTokenHelper(ri);
+  return viz::ClientResourceProvider::GenerateSyncTokenHelper(ri);
+}
+
+bool GpuRasterBufferProvider::ShouldUnpremultiplyAndDitherResource(
+    viz::ResourceFormat format) const {
+  switch (format) {
+    case viz::RGBA_4444:
+      return unpremultiply_and_dither_low_bit_depth_tiles_;
+    default:
+      return false;
+  }
 }
 
 }  // namespace cc

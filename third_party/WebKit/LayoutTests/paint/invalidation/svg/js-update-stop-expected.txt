@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -27,16 +28,6 @@
           "reason": "SVG resource change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "SVG resource change"
     }
   ]
 }

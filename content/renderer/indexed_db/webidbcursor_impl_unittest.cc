@@ -11,20 +11,19 @@
 
 #include "base/guid.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "content/child/thread_safe_sender.h"
-#include "content/common/indexed_db/indexed_db_key.h"
 #include "content/renderer/indexed_db/indexed_db_key_builders.h"
 #include "content/renderer/indexed_db/mock_webidbcallbacks.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/web_data.h"
 
+using blink::IndexedDBKey;
 using blink::WebBlobInfo;
 using blink::WebData;
 using blink::WebIDBCallbacks;
@@ -124,10 +123,7 @@ class WebIDBCursorImplTest : public testing::Test {
     indexed_db::mojom::CursorAssociatedPtr ptr;
     mock_cursor_ = std::make_unique<MockCursorImpl>(
         mojo::MakeRequestAssociatedWithDedicatedPipe(&ptr));
-    cursor_ = std::make_unique<WebIDBCursorImpl>(
-        ptr.PassInterface(), 1,
-        blink::scheduler::GetSingleThreadTaskRunnerForTesting(),
-        blink::scheduler::GetSingleThreadTaskRunnerForTesting());
+    cursor_ = std::make_unique<WebIDBCursorImpl>(ptr.PassInterface(), 1);
   }
 
  protected:

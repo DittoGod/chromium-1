@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [600, 250],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -16,12 +17,6 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    }
   ]
 }
 {
@@ -29,6 +24,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [400, 250],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -42,12 +38,6 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    }
   ]
 }
 {
@@ -55,6 +45,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [400, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -68,12 +59,6 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    }
   ]
 }
 {
@@ -81,6 +66,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -93,12 +79,6 @@
       "bounds": [2008, 2008],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
     }
   ]
 }

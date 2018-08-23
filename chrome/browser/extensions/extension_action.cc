@@ -129,8 +129,9 @@ bool ExtensionAction::ParseIconFromCanvasDictionary(
     std::string binary_string64;
     IPC::Message pickle;
     if (iter.value().is_blob()) {
-      pickle = IPC::Message(iter.value().GetBlob().data(),
-                            iter.value().GetBlob().size());
+      pickle = IPC::Message(
+          reinterpret_cast<const char*>(iter.value().GetBlob().data()),
+          iter.value().GetBlob().size());
     } else if (iter.value().GetAsString(&binary_string64)) {
       std::string binary_string;
       if (!base::Base64Decode(binary_string64, &binary_string))
@@ -290,7 +291,6 @@ void ExtensionAction::Populate(const extensions::Extension& extension,
       extension.name();
   SetTitle(kDefaultTabId, title);
   SetPopupUrl(kDefaultTabId, manifest_data.default_popup_url);
-  set_id(manifest_data.id);
 
   // Initialize the specified icon set.
   if (!manifest_data.default_icon.empty()) {

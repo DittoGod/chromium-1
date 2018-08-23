@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/callback_forward.h"
+#include "base/observer_list.h"
 #include "content/public/browser/service_worker_context.h"
 
 class GURL;
@@ -46,9 +47,9 @@ class FakeServiceWorkerContext : public ServiceWorkerContext {
                              const GURL& other_url,
                              CheckHasServiceWorkerCallback callback) override;
   void ClearAllServiceWorkersForTest(base::OnceClosure) override;
-  void StartActiveWorkerForPattern(
+  void StartWorkerForPattern(
       const GURL& pattern,
-      ServiceWorkerContext::StartActiveWorkerCallback info_callback,
+      ServiceWorkerContext::StartWorkerCallback info_callback,
       base::OnceClosure failure_callback) override;
   void StartServiceWorkerForNavigationHint(
       const GURL& document_url,
@@ -56,12 +57,24 @@ class FakeServiceWorkerContext : public ServiceWorkerContext {
   void StopAllServiceWorkersForOrigin(const GURL& origin) override;
   void StopAllServiceWorkers(base::OnceClosure callback) override;
 
+  // Explicitly notify ServiceWorkerContextObservers added to this context.
+  void NotifyObserversOnVersionActivated(int64_t version_id, const GURL& scope);
+  void NotifyObserversOnVersionRedundant(int64_t version_id, const GURL& scope);
+  void NotifyObserversOnNoControllees(int64_t version_id, const GURL& scope);
+
   bool start_service_worker_for_navigation_hint_called() {
     return start_service_worker_for_navigation_hint_called_;
   }
 
+  void StartServiceWorkerAndDispatchLongRunningMessage(
+      const GURL& pattern,
+      blink::TransferableMessage message,
+      FakeServiceWorkerContext::ResultCallback result_callback) override;
+
  private:
   bool start_service_worker_for_navigation_hint_called_ = false;
+
+  base::ObserverList<ServiceWorkerContextObserver, true>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeServiceWorkerContext);
 };

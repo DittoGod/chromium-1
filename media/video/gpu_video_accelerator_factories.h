@@ -35,9 +35,9 @@ namespace gpu {
 struct SyncToken;
 };
 
-namespace viz {
-class ContextProvider;
-}
+namespace ui {
+class ContextProviderCommandBuffer;
+}  // namespace ui
 
 namespace media {
 
@@ -53,24 +53,16 @@ class VideoDecodeAccelerator;
 //   loop.
 class MEDIA_EXPORT GpuVideoAcceleratorFactories {
  public:
-  class ScopedGLContextLock {
-   public:
-    ScopedGLContextLock() = default;
-    virtual ~ScopedGLContextLock() = default;
-
-    virtual gpu::gles2::GLES2Interface* ContextGL() = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(ScopedGLContextLock);
-  };
-
   enum class OutputFormat {
     UNDEFINED = 0,    // Unset state
     I420,             // 3 x R8 GMBs
     UYVY,             // One 422 GMB
     NV12_SINGLE_GMB,  // One NV12 GMB
     NV12_DUAL_GMB,    // One R8, one RG88 GMB
-    XR30,             // 10:10:10:2 BGRX in one GMB
+    XR30,             // 10:10:10:2 BGRX in one GMB (Usually Mac)
+    XB30,             // 10:10:10:2 RGBX in one GMB
+    RGBA,             // One 8:8:8:8 RGBA
+    BGRA,             // One 8:8:8:8 BGRA (Usually Mac)
   };
 
   // Return whether GPU encoding/decoding is enabled.
@@ -105,22 +97,31 @@ class MEDIA_EXPORT GpuVideoAcceleratorFactories {
   virtual void ShallowFlushCHROMIUM() = 0;
 
   virtual void WaitSyncToken(const gpu::SyncToken& sync_token) = 0;
+  virtual void SignalSyncToken(const gpu::SyncToken& sync_token,
+                               base::OnceClosure callback) = 0;
 
   virtual std::unique_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBuffer(
       const gfx::Size& size,
       gfx::BufferFormat format,
       gfx::BufferUsage usage) = 0;
 
-  virtual bool ShouldUseGpuMemoryBuffersForVideoFrames() const = 0;
+  // |for_media_stream| specifies webrtc use case of media streams.
+  virtual bool ShouldUseGpuMemoryBuffersForVideoFrames(
+      bool for_media_stream) const = 0;
 
   // The GLContextLock must be taken when calling this.
   virtual unsigned ImageTextureTarget(gfx::BufferFormat format) = 0;
 
   // Pixel format of the hardware video frames created when GpuMemoryBuffers
   // video frames are enabled.
-  virtual OutputFormat VideoFrameOutputFormat(size_t bit_depth) = 0;
+  virtual OutputFormat VideoFrameOutputFormat(
+      VideoPixelFormat pixel_format) = 0;
 
-  virtual std::unique_ptr<ScopedGLContextLock> GetGLContextLock() = 0;
+  // Returns a GL Context that can be used on the task runner associated with
+  // the same instance of GpuVideoAcceleratorFactories.
+  // nullptr will be returned in cases where a context couldn't be created or
+  // the context was lost.
+  virtual gpu::gles2::GLES2Interface* ContextGL() = 0;
 
   // Allocate & return a shared memory segment.
   virtual std::unique_ptr<base::SharedMemory> CreateSharedMemory(
@@ -138,7 +139,8 @@ class MEDIA_EXPORT GpuVideoAcceleratorFactories {
   virtual VideoEncodeAccelerator::SupportedProfiles
   GetVideoEncodeAcceleratorSupportedProfiles() = 0;
 
-  virtual viz::ContextProvider* GetMediaContextProvider() = 0;
+  virtual scoped_refptr<ui::ContextProviderCommandBuffer>
+  GetMediaContextProvider() = 0;
 
   // Sets the current pipeline rendering color space.
   virtual void SetRenderingColorSpace(const gfx::ColorSpace& color_space) = 0;

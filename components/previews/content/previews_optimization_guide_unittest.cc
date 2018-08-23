@@ -6,17 +6,21 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/run_loop.h"
 #include "base/test/gtest_util.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/optimization_guide/optimization_guide_service.h"
 #include "components/optimization_guide/optimization_guide_service_observer.h"
 #include "components/optimization_guide/proto/hints.pb.h"
+#include "components/previews/core/previews_features.h"
 #include "components/previews/core/previews_user_data.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
@@ -83,6 +87,13 @@ class PreviewsOptimizationGuideTest : public testing::Test {
                                   TRAFFIC_ANNOTATION_FOR_TESTS);
   }
 
+  void MaybeLoadOptimizationHintsCallback(
+      const GURL& document_gurl,
+      const std::vector<std::string>& resource_patterns) {
+    loaded_hints_document_gurl_ = document_gurl;
+    loaded_hints_resource_patterns_ = resource_patterns;
+  }
+
   void ResetGuide() {
     guide_.reset();
     RunUntilIdle();
@@ -90,11 +101,23 @@ class PreviewsOptimizationGuideTest : public testing::Test {
 
   base::FilePath temp_dir() const { return temp_dir_.GetPath(); }
 
+  const GURL& loaded_hints_document_gurl() const {
+    return loaded_hints_document_gurl_;
+  }
+  const std::vector<std::string>& loaded_hints_resource_patterns() const {
+    return loaded_hints_resource_patterns_;
+  }
+
  protected:
   void RunUntilIdle() {
     scoped_task_environment_.RunUntilIdle();
     base::RunLoop().RunUntilIdle();
   }
+
+  void DoExperimentFlagTest(base::Optional<std::string> experiment_name,
+                            bool expect_enabled);
+
+  void InitializeResourceLoadingHints();
 
  private:
   base::test::ScopedTaskEnvironment scoped_task_environment_;
@@ -104,6 +127,9 @@ class PreviewsOptimizationGuideTest : public testing::Test {
   std::unique_ptr<TestOptimizationGuideService> optimization_guide_service_;
 
   net::TestURLRequestContext context_;
+
+  GURL loaded_hints_document_gurl_;
+  std::vector<std::string> loaded_hints_resource_patterns_;
 
   DISALLOW_COPY_AND_ASSIGN(PreviewsOptimizationGuideTest);
 };
@@ -150,6 +176,208 @@ TEST_F(PreviewsOptimizationGuideTest,
   EXPECT_FALSE(
       guide()->IsWhitelisted(*CreateRequestWithURL(GURL("https://google.com")),
                              PreviewsType::NOSCRIPT));
+}
+
+// Test when resource loading hints are enabled.
+TEST_F(PreviewsOptimizationGuideTest,
+       ProcessHintsWhitelistForResourceLoadingHintsPopulatedCorrectly) {
+  optimization_guide::proto::Configuration config;
+  optimization_guide::proto::Hint* hint1 = config.add_hints();
+  hint1->set_key("facebook.com");
+  hint1->set_key_representation(optimization_guide::proto::HOST_SUFFIX);
+  optimization_guide::proto::Optimization* optimization1 =
+      hint1->add_whitelisted_optimizations();
+  optimization1->set_optimization_type(
+      optimization_guide::proto::RESOURCE_LOADING);
+  // Add a second optimization to ensure that the applicable optimizations are
+  // still whitelisted.
+  optimization_guide::proto::Optimization* optimization2 =
+      hint1->add_whitelisted_optimizations();
+  optimization2->set_optimization_type(
+      optimization_guide::proto::TYPE_UNSPECIFIED);
+  // Add a second hint.
+  optimization_guide::proto::Hint* hint2 = config.add_hints();
+  hint2->set_key("twitter.com");
+  hint2->set_key_representation(optimization_guide::proto::HOST_SUFFIX);
+  optimization_guide::proto::Optimization* optimization3 =
+      hint2->add_whitelisted_optimizations();
+  optimization3->set_optimization_type(
+      optimization_guide::proto::RESOURCE_LOADING);
+  ProcessHints(config, "2.0.0");
+
+  RunUntilIdle();
+
+  // Twitter and Facebook should be whitelisted but not Google.
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(GURL("https://m.facebook.com")),
+      PreviewsType::RESOURCE_LOADING_HINTS));
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(GURL("https://m.twitter.com/example")),
+      PreviewsType::RESOURCE_LOADING_HINTS));
+  EXPECT_FALSE(
+      guide()->IsWhitelisted(*CreateRequestWithURL(GURL("https://google.com")),
+                             PreviewsType::RESOURCE_LOADING_HINTS));
+}
+
+// Test when both NoScript and resource loading hints are enabled.
+TEST_F(
+    PreviewsOptimizationGuideTest,
+    ProcessHintsWhitelistForNoScriptAndResourceLoadingHintsPopulatedCorrectly) {
+  optimization_guide::proto::Configuration config;
+  optimization_guide::proto::Hint* hint1 = config.add_hints();
+  hint1->set_key("facebook.com");
+  hint1->set_key_representation(optimization_guide::proto::HOST_SUFFIX);
+  optimization_guide::proto::Optimization* optimization1 =
+      hint1->add_whitelisted_optimizations();
+  optimization1->set_optimization_type(optimization_guide::proto::NOSCRIPT);
+  // Add a second optimization to ensure that the applicable optimizations are
+  // still whitelisted.
+  optimization_guide::proto::Optimization* optimization2 =
+      hint1->add_whitelisted_optimizations();
+  optimization2->set_optimization_type(
+      optimization_guide::proto::TYPE_UNSPECIFIED);
+  // Add a second hint.
+  optimization_guide::proto::Hint* hint2 = config.add_hints();
+  hint2->set_key("twitter.com");
+  hint2->set_key_representation(optimization_guide::proto::HOST_SUFFIX);
+  optimization_guide::proto::Optimization* optimization3 =
+      hint2->add_whitelisted_optimizations();
+  optimization3->set_optimization_type(
+      optimization_guide::proto::RESOURCE_LOADING);
+  ProcessHints(config, "2.0.0");
+
+  RunUntilIdle();
+
+  // Twitter and Facebook should be whitelisted but not Google.
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(GURL("https://m.facebook.com")),
+      PreviewsType::NOSCRIPT));
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(GURL("https://m.facebook.com/example.html")),
+      PreviewsType::NOSCRIPT));
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(GURL("https://m.twitter.com/example")),
+      PreviewsType::RESOURCE_LOADING_HINTS));
+  EXPECT_FALSE(
+      guide()->IsWhitelisted(*CreateRequestWithURL(GURL("https://google.com")),
+                             PreviewsType::RESOURCE_LOADING_HINTS));
+}
+
+// This is a helper function for testing the experiment flags on the config for
+// the optimization guide. It creates a test config with a hint containing
+// multiple optimizations. The optimization under test will be marked with an
+// experiment name if one is provided in |experiment_name|. It will then be
+// tested to see if it's enabled, the expectation found in |expect_enabled|.
+void PreviewsOptimizationGuideTest::DoExperimentFlagTest(
+    base::Optional<std::string> experiment_name,
+    bool expect_enabled) {
+  optimization_guide::proto::Configuration config;
+
+  // Create a hint with two optimizations. One may be marked experimental
+  // depending on test configuration. The other is never marked experimental.
+  optimization_guide::proto::Hint* hint1 = config.add_hints();
+  hint1->set_key("facebook.com");
+  hint1->set_key_representation(optimization_guide::proto::HOST_SUFFIX);
+  optimization_guide::proto::Optimization* optimization1 =
+      hint1->add_whitelisted_optimizations();
+  // NOSCRIPT is the optimization under test and may be marked experimental.
+  if (experiment_name.has_value()) {
+    optimization1->set_experiment_name(experiment_name.value());
+  }
+  optimization1->set_optimization_type(optimization_guide::proto::NOSCRIPT);
+  // RESOURCE_LOADING is never marked experimental.
+  optimization_guide::proto::Optimization* optimization2 =
+      hint1->add_whitelisted_optimizations();
+  optimization2->set_optimization_type(
+      optimization_guide::proto::RESOURCE_LOADING);
+
+  // Add a second, non-experimental hint.
+  optimization_guide::proto::Hint* hint2 = config.add_hints();
+  hint2->set_key("twitter.com");
+  hint2->set_key_representation(optimization_guide::proto::HOST_SUFFIX);
+  optimization_guide::proto::Optimization* optimization3 =
+      hint2->add_whitelisted_optimizations();
+  optimization3->set_optimization_type(optimization_guide::proto::NOSCRIPT);
+  ProcessHints(config, "2.0.0");
+
+  RunUntilIdle();
+
+  // Check to ensure the optimization under test (facebook noscript) is either
+  // enabled or disabled, depending on what the caller told us to expect.
+  EXPECT_EQ(expect_enabled,
+            guide()->IsWhitelisted(
+                *CreateRequestWithURL(GURL("https://m.facebook.com")),
+                PreviewsType::NOSCRIPT));
+
+  // RESOURCE_LOADING_HINTS for facebook should always be enabled.
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(GURL("https://m.facebook.com")),
+      PreviewsType::RESOURCE_LOADING_HINTS));
+  // Twitter's NOSCRIPT should always be enabled; RESOURCE_LOADING_HINTS is not
+  // configured and should be disabled.
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(GURL("https://m.twitter.com/example")),
+      PreviewsType::NOSCRIPT));
+  // Google (which is not configured at all) should always have both NOSCRIPT
+  // and RESOURCE_LOADING_HINTS disabled.
+  EXPECT_FALSE(
+      guide()->IsWhitelisted(*CreateRequestWithURL(GURL("https://google.com")),
+                             PreviewsType::NOSCRIPT));
+}
+
+TEST_F(PreviewsOptimizationGuideTest,
+       HandlesExperimentalFlagWithNoExperimentFlaggedOrEnabled) {
+  // With the optimization NOT flagged as experimental and no experiment
+  // enabled, the optimization should be enabled.
+  base::test::ScopedFeatureList scoped_list;
+  scoped_list.InitAndDisableFeature(features::kOptimizationHintsExperiments);
+  DoExperimentFlagTest(base::nullopt, true);
+}
+
+TEST_F(PreviewsOptimizationGuideTest,
+       HandlesExperimentalFlagWithEmptyExperimentName) {
+  // Empty experiment names should be equivalent to no experiment flag set.
+  base::test::ScopedFeatureList scoped_list;
+  scoped_list.InitAndDisableFeature(features::kOptimizationHintsExperiments);
+  DoExperimentFlagTest("", true);
+}
+
+TEST_F(PreviewsOptimizationGuideTest,
+       HandlesExperimentalFlagWithExperimentConfiguredAndNotRunning) {
+  // With the optimization flagged as experimental and no experiment
+  // enabled, the optimization should be disabled.
+  base::test::ScopedFeatureList scoped_list;
+  scoped_list.InitAndDisableFeature(features::kOptimizationHintsExperiments);
+  DoExperimentFlagTest("foo_experiment", false);
+}
+
+TEST_F(PreviewsOptimizationGuideTest,
+       HandlesExperimentalFlagWithExperimentConfiguredAndSameOneRunning) {
+  // With the optimization flagged as experimental and an experiment with that
+  // name running, the optimization should be enabled.
+  base::test::ScopedFeatureList scoped_list;
+  scoped_list.InitAndEnableFeatureWithParameters(
+      features::kOptimizationHintsExperiments,
+      {{"experiment_name", "foo_experiment"}});
+  DoExperimentFlagTest("foo_experiment", true);
+}
+
+TEST_F(PreviewsOptimizationGuideTest,
+       HandlesExperimentalFlagWithExperimentConfiguredAndDifferentOneRunning) {
+  // With the optimization flagged as experimental and a *different* experiment
+  // enabled, the optimization should be disabled.
+  base::test::ScopedFeatureList scoped_list;
+  scoped_list.InitAndEnableFeatureWithParameters(
+      features::kOptimizationHintsExperiments,
+      {{"experiment_name", "bar_experiment"}});
+  DoExperimentFlagTest("foo_experiment", false);
+}
+
+TEST_F(PreviewsOptimizationGuideTest, EnsureExperimentsDisabledByDefault) {
+  // Mark an optimization as experiment, and ensure it's disabled even though we
+  // don't explicitly enable or disable the feature as part of the test. This
+  // ensures the experiments feature is disabled by default.
+  DoExperimentFlagTest("foo_experiment", false);
 }
 
 TEST_F(PreviewsOptimizationGuideTest, ProcessHintsUnsupportedKeyRepIsIgnored) {
@@ -368,6 +596,104 @@ TEST_F(PreviewsOptimizationGuideTest, IsWhitelistedWithMultipleHintMatches) {
       CreateRequestWithURL(GURL("https://outdoor.sports.yahoo.com"));
   // Uses "sports.yahoo.com" match before "yahoo.com" match.
   EXPECT_FALSE(guide()->IsWhitelisted(*request5, PreviewsType::NOSCRIPT));
+}
+
+// This is a helper function for initializing some ResourceLoading hints.
+void PreviewsOptimizationGuideTest::InitializeResourceLoadingHints() {
+  optimization_guide::proto::Configuration config;
+  optimization_guide::proto::Hint* hint1 = config.add_hints();
+  hint1->set_key("somedomain.org");
+  hint1->set_key_representation(optimization_guide::proto::HOST_SUFFIX);
+
+  // Page hint for "/news/"
+  optimization_guide::proto::PageHint* page_hint1 = hint1->add_page_hints();
+  page_hint1->set_page_pattern("/news/");
+  optimization_guide::proto::Optimization* optimization1 =
+      page_hint1->add_whitelisted_optimizations();
+  optimization1->set_optimization_type(
+      optimization_guide::proto::RESOURCE_LOADING);
+  optimization_guide::proto::ResourceLoadingHint* resource_loading_hint1 =
+      optimization1->add_resource_loading_hints();
+  resource_loading_hint1->set_loading_optimization_type(
+      optimization_guide::proto::LOADING_BLOCK_RESOURCE);
+  resource_loading_hint1->set_resource_pattern("news_cruft.js");
+
+  // Page hint for "football"
+  optimization_guide::proto::PageHint* page_hint2 = hint1->add_page_hints();
+  page_hint2->set_page_pattern("football");
+  optimization_guide::proto::Optimization* optimization2 =
+      page_hint2->add_whitelisted_optimizations();
+  optimization2->set_optimization_type(
+      optimization_guide::proto::RESOURCE_LOADING);
+  optimization_guide::proto::ResourceLoadingHint* resource_loading_hint2 =
+      optimization2->add_resource_loading_hints();
+  resource_loading_hint2->set_loading_optimization_type(
+      optimization_guide::proto::LOADING_BLOCK_RESOURCE);
+  resource_loading_hint2->set_resource_pattern("football_cruft.js");
+  ProcessHints(config, "2.0.0");
+
+  RunUntilIdle();
+}
+
+TEST_F(PreviewsOptimizationGuideTest, MaybeLoadOptimizationHints) {
+  base::test::ScopedFeatureList scoped_list;
+  scoped_list.InitAndEnableFeature(features::kResourceLoadingHints);
+
+  InitializeResourceLoadingHints();
+
+  EXPECT_TRUE(guide()->MaybeLoadOptimizationHints(
+      *CreateRequestWithURL(GURL("https://somedomain.org/")),
+      base::DoNothing()));
+  EXPECT_TRUE(guide()->MaybeLoadOptimizationHints(
+      *CreateRequestWithURL(GURL("https://www.somedomain.org/news/football")),
+      base::BindOnce(
+          &PreviewsOptimizationGuideTest::MaybeLoadOptimizationHintsCallback,
+          base::Unretained(this))));
+  EXPECT_FALSE(guide()->MaybeLoadOptimizationHints(
+      *CreateRequestWithURL(GURL("https://www.unknown.com")),
+      base::DoNothing()));
+
+  RunUntilIdle();
+
+  // Verify loaded hint data for www.somedomain.org
+  EXPECT_EQ(GURL("https://www.somedomain.org/news/football"),
+            loaded_hints_document_gurl());
+  EXPECT_EQ(1ul, loaded_hints_resource_patterns().size());
+  EXPECT_EQ("news_cruft.js", loaded_hints_resource_patterns().front());
+
+  // Verify whitelisting from loaded page hints.
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(
+          GURL("https://www.somedomain.org/news/weather/raininginseattle")),
+      PreviewsType::RESOURCE_LOADING_HINTS));
+  EXPECT_TRUE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(
+          GURL("https://www.somedomain.org/football/seahawksrebuildingyear")),
+      PreviewsType::RESOURCE_LOADING_HINTS));
+  EXPECT_FALSE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(GURL("https://www.somedomain.org/unhinted")),
+      PreviewsType::RESOURCE_LOADING_HINTS));
+}
+
+TEST_F(PreviewsOptimizationGuideTest,
+       MaybeLoadOptimizationHintsWithoutEnabledPageHintsFeature) {
+  // Without PageHints-oriented feature enabled, never see
+  // enabled, the optimization should be disabled.
+  base::test::ScopedFeatureList scoped_list;
+  scoped_list.InitAndDisableFeature(features::kResourceLoadingHints);
+
+  InitializeResourceLoadingHints();
+
+  EXPECT_FALSE(guide()->MaybeLoadOptimizationHints(
+      *CreateRequestWithURL(GURL("https://www.somedomain.org")),
+      base::DoNothing()));
+
+  RunUntilIdle();
+
+  EXPECT_FALSE(guide()->IsWhitelisted(
+      *CreateRequestWithURL(
+          GURL("https://www.somedomain.org/news/weather/raininginseattle")),
+      PreviewsType::RESOURCE_LOADING_HINTS));
 }
 
 TEST_F(PreviewsOptimizationGuideTest, RemoveObserverCalledAtDestruction) {

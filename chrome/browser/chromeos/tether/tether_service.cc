@@ -7,17 +7,17 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/chromeos/cryptauth/chrome_cryptauth_service_factory.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/tether/tether_service_factory.h"
-#include "chrome/browser/cryptauth/chrome_cryptauth_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/network/tether_notification_presenter.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/chromeos_features.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "chromeos/components/tether/gms_core_notifications_state_tracker_impl.h"
 #include "chromeos/components/tether/tether_component.h"
 #include "chromeos/components/tether/tether_component_impl.h"
@@ -25,12 +25,13 @@
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_connect.h"
 #include "chromeos/network/network_type_pattern.h"
+#include "chromeos/services/multidevice_setup/public/cpp/prefs.h"
+#include "chromeos/services/secure_channel/public/cpp/client/secure_channel_client.h"
 #include "components/cryptauth/cryptauth_enrollment_manager.h"
 #include "components/cryptauth/cryptauth_service.h"
 #include "components/cryptauth/remote_device_provider_impl.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/proximity_auth/logging/logging.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 
 namespace {
@@ -60,9 +61,6 @@ TetherService* TetherService::Get(Profile* profile) {
 // static
 void TetherService::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(prefs::kInstantTetheringAllowed, true);
-  registry->RegisterBooleanPref(prefs::kInstantTetheringEnabled, true);
-
   // If we initially assume that BLE advertising is not supported, it will
   // result in Tether's Settings and Quick Settings sections not being visible
   // when the user logs in with Bluetooth disabled (because the TechnologyState
@@ -83,7 +81,7 @@ void TetherService::RegisterProfilePrefs(
 
 // static
 bool TetherService::IsFeatureFlagEnabled() {
-  return base::FeatureList::IsEnabled(features::kInstantTethering);
+  return base::FeatureList::IsEnabled(chromeos::features::kInstantTethering);
 }
 
 // static.
@@ -112,6 +110,8 @@ std::string TetherService::TetherFeatureStateToString(
       return "[Wi-Fi is not present on the device]";
     case (TetherFeatureState::SUSPENDED):
       return "[Suspended]";
+    case (TetherFeatureState::MULTIDEVICE_HOST_UNVERIFIED):
+      return "[MultiDevice host unverified]";
     case (TetherFeatureState::TETHER_FEATURE_STATE_MAX):
       // |previous_feature_state_| is initialized to TETHER_FEATURE_STATE_MAX,
       // and this value is never actually used in practice.
@@ -126,11 +126,20 @@ TetherService::TetherService(
     Profile* profile,
     chromeos::PowerManagerClient* power_manager_client,
     cryptauth::CryptAuthService* cryptauth_service,
-    chromeos::NetworkStateHandler* network_state_handler)
+    chromeos::device_sync::DeviceSyncClient* device_sync_client,
+    chromeos::secure_channel::SecureChannelClient* secure_channel_client,
+    chromeos::multidevice_setup::MultiDeviceSetupClient*
+        multidevice_setup_client,
+    chromeos::NetworkStateHandler* network_state_handler,
+    session_manager::SessionManager* session_manager)
     : profile_(profile),
       power_manager_client_(power_manager_client),
       cryptauth_service_(cryptauth_service),
+      device_sync_client_(device_sync_client),
+      secure_channel_client_(secure_channel_client),
+      multidevice_setup_client_(multidevice_setup_client),
       network_state_handler_(network_state_handler),
+      session_manager_(session_manager),
       notification_presenter_(
           std::make_unique<chromeos::tether::TetherNotificationPresenter>(
               profile_,
@@ -139,39 +148,55 @@ TetherService::TetherService(
           std::make_unique<
               chromeos::tether::GmsCoreNotificationsStateTrackerImpl>()),
       remote_device_provider_(
-          cryptauth::RemoteDeviceProviderImpl::Factory::NewInstance(
-              cryptauth_service->GetCryptAuthDeviceManager(),
-              cryptauth_service->GetAccountId(),
-              cryptauth_service->GetCryptAuthEnrollmentManager()
-                  ->GetUserPrivateKey(),
-              cryptauth_service)),
+          base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi)
+              ? nullptr
+              : cryptauth::RemoteDeviceProviderImpl::Factory::NewInstance(
+                    cryptauth_service->GetCryptAuthDeviceManager(),
+                    cryptauth_service->GetAccountId(),
+                    cryptauth_service->GetCryptAuthEnrollmentManager()
+                        ->GetUserPrivateKey())),
       tether_host_fetcher_(
           chromeos::tether::TetherHostFetcherImpl::Factory::NewInstance(
-              remote_device_provider_.get())),
+              remote_device_provider_.get(),
+              device_sync_client_,
+              multidevice_setup_client_)),
       timer_(std::make_unique<base::OneShotTimer>()),
       weak_ptr_factory_(this) {
   tether_host_fetcher_->AddObserver(this);
   power_manager_client_->AddObserver(this);
   network_state_handler_->AddObserver(this, FROM_HERE);
+  if (base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi)) {
+    device_sync_client_->AddObserver(this);
+
+    if (base::FeatureList::IsEnabled(
+            chromeos::features::kEnableUnifiedMultiDeviceSetup)) {
+      multidevice_setup_client_->AddObserver(this);
+    }
+  }
 
   registrar_.Init(profile_->GetPrefs());
-  registrar_.Add(prefs::kInstantTetheringAllowed,
-                 base::Bind(&TetherService::OnPrefsChanged,
-                            weak_ptr_factory_.GetWeakPtr()));
+  registrar_.Add(
+      chromeos::multidevice_setup::kInstantTetheringFeatureAllowedPrefName,
+      base::BindRepeating(&TetherService::OnPrefsChanged,
+                          weak_ptr_factory_.GetWeakPtr()));
 
   UMA_HISTOGRAM_BOOLEAN("InstantTethering.UserPreference.OnStartup",
-                        IsEnabledbyPreference());
+                        IsEnabledByPreference());
   PA_LOG(INFO) << "TetherService has started. Initial user preference value: "
-               << IsEnabledbyPreference();
+               << IsEnabledByPreference();
 
-  // GetAdapter may call OnBluetoothAdapterFetched immediately which can cause
-  // problems with the Fake implementation since the class is not fully
-  // constructed yet. Post the GetAdapter call to avoid this.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(device::BluetoothAdapterFactory::GetAdapter,
-                 base::Bind(&TetherService::OnBluetoothAdapterFetched,
-                            weak_ptr_factory_.GetWeakPtr())));
+  if (base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi)) {
+    if (device_sync_client_->is_ready())
+      OnReady();
+
+    // Wait for OnReady() to be called. If
+    // chromeos::features::kEnableUnifiedMultiDeviceSetup is disabled,
+    // OnReady() will call GetAdapter(). If enabled, OnReady() will indirectly
+    // call OnHostStatusChanged(), which will call GetAdapter().
+    return;
+  }
+
+  GetBluetoothAdapter();
 }
 
 TetherService::~TetherService() {
@@ -192,15 +217,15 @@ void TetherService::StartTetherIfPossible() {
   PA_LOG(INFO) << "Starting up TetherComponent.";
   tether_component_ =
       chromeos::tether::TetherComponentImpl::Factory::NewInstance(
-          cryptauth_service_, tether_host_fetcher_.get(),
-          notification_presenter_.get(),
+          cryptauth_service_, device_sync_client_, secure_channel_client_,
+          tether_host_fetcher_.get(), notification_presenter_.get(),
           gms_core_notifications_state_tracker_.get(), profile_->GetPrefs(),
           network_state_handler_,
           chromeos::NetworkHandler::Get()
               ->managed_network_configuration_handler(),
           chromeos::NetworkConnect::Get(),
           chromeos::NetworkHandler::Get()->network_connection_handler(),
-          adapter_);
+          adapter_, session_manager_);
 }
 
 chromeos::tether::GmsCoreNotificationsStateTracker*
@@ -243,6 +268,10 @@ void TetherService::StopTetherIfNecessary() {
       shutdown_reason = chromeos::tether::TetherComponent::ShutdownReason::
           BLUETOOTH_CONTROLLER_DISAPPEARED;
       break;
+    case MULTIDEVICE_HOST_UNVERIFIED:
+      shutdown_reason = chromeos::tether::TetherComponent::ShutdownReason::
+          MULTIDEVICE_HOST_UNVERIFIED;
+      break;
     default:
       PA_LOG(ERROR) << "Unexpected shutdown reason. FeatureState is "
                     << GetTetherFeatureState() << ".";
@@ -266,6 +295,14 @@ void TetherService::Shutdown() {
   tether_host_fetcher_->RemoveObserver(this);
   power_manager_client_->RemoveObserver(this);
   network_state_handler_->RemoveObserver(this, FROM_HERE);
+  if (base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi)) {
+    device_sync_client_->RemoveObserver(this);
+
+    if (base::FeatureList::IsEnabled(
+            chromeos::features::kEnableUnifiedMultiDeviceSetup)) {
+      multidevice_setup_client_->RemoveObserver(this);
+    }
+  }
   if (adapter_)
     adapter_->RemoveObserver(this);
   registrar_.RemoveAll();
@@ -334,7 +371,7 @@ void TetherService::DevicePropertiesUpdated(
 }
 
 void TetherService::UpdateEnabledState() {
-  bool was_pref_enabled = IsEnabledbyPreference();
+  bool was_pref_enabled = IsEnabledByPreference();
   chromeos::NetworkStateHandler::TechnologyState tether_technology_state =
       network_state_handler_->GetTechnologyState(
           chromeos::NetworkTypePattern::Tether());
@@ -356,8 +393,9 @@ void TetherService::UpdateEnabledState() {
   }
 
   if (is_enabled != was_pref_enabled) {
-    profile_->GetPrefs()->SetBoolean(prefs::kInstantTetheringEnabled,
-                                     is_enabled);
+    profile_->GetPrefs()->SetBoolean(
+        chromeos::multidevice_setup::kInstantTetheringFeatureEnabledPrefName,
+        is_enabled);
     UMA_HISTOGRAM_BOOLEAN("InstantTethering.UserPreference.OnToggle",
                           is_enabled);
     PA_LOG(INFO) << "Tether user preference changed. New value: " << is_enabled;
@@ -377,6 +415,30 @@ void TetherService::OnShutdownComplete() {
   // restart TetherComponent.
   if (!shut_down_)
     StartTetherIfPossible();
+}
+
+void TetherService::OnReady() {
+  if (shut_down_)
+    return;
+
+  if (base::FeatureList::IsEnabled(
+          chromeos::features::kEnableUnifiedMultiDeviceSetup)) {
+    multidevice_setup_client_->GetHostStatus(base::BindOnce(
+        &TetherService::OnHostStatusChanged, weak_ptr_factory_.GetWeakPtr()));
+  } else {
+    GetBluetoothAdapter();
+  }
+}
+
+void TetherService::OnHostStatusChanged(
+    chromeos::multidevice_setup::mojom::HostStatus host_status,
+    const base::Optional<cryptauth::RemoteDeviceRef>& host_device) {
+  host_status_ = host_status;
+
+  if (adapter_)
+    UpdateTetherTechnologyState();
+  else
+    GetBluetoothAdapter();
 }
 
 void TetherService::OnPrefsChanged() {
@@ -434,6 +496,7 @@ TetherService::GetTetherTechnologyState() {
     case WIFI_NOT_PRESENT:
     case NO_AVAILABLE_HOSTS:
     case CELLULAR_DISABLED:
+    case MULTIDEVICE_HOST_UNVERIFIED:
       return chromeos::NetworkStateHandler::TechnologyState::
           TECHNOLOGY_UNAVAILABLE;
 
@@ -456,6 +519,18 @@ TetherService::GetTetherTechnologyState() {
       return chromeos::NetworkStateHandler::TechnologyState::
           TECHNOLOGY_UNAVAILABLE;
   }
+}
+
+void TetherService::GetBluetoothAdapter() {
+  // In the case that this is indirectly called from the constructor,
+  // GetAdapter() may call OnBluetoothAdapterFetched immediately which can cause
+  // problems with the Fake implementation since the class is not fully
+  // constructed yet. Post the GetAdapter call to avoid this.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(device::BluetoothAdapterFactory::GetAdapter,
+                                base::BindRepeating(
+                                    &TetherService::OnBluetoothAdapterFetched,
+                                    weak_ptr_factory_.GetWeakPtr())));
 }
 
 void TetherService::OnBluetoothAdapterFetched(
@@ -535,11 +610,13 @@ bool TetherService::IsCellularAvailableButNotEnabled() const {
 }
 
 bool TetherService::IsAllowedByPolicy() const {
-  return profile_->GetPrefs()->GetBoolean(prefs::kInstantTetheringAllowed);
+  return profile_->GetPrefs()->GetBoolean(
+      chromeos::multidevice_setup::kInstantTetheringFeatureAllowedPrefName);
 }
 
-bool TetherService::IsEnabledbyPreference() const {
-  return profile_->GetPrefs()->GetBoolean(prefs::kInstantTetheringEnabled);
+bool TetherService::IsEnabledByPreference() const {
+  return profile_->GetPrefs()->GetBoolean(
+      chromeos::multidevice_setup::kInstantTetheringFeatureEnabledPrefName);
 }
 
 TetherService::TetherFeatureState TetherService::GetTetherFeatureState() {
@@ -573,8 +650,16 @@ TetherService::TetherFeatureState TetherService::GetTetherFeatureState() {
   if (!IsBluetoothPowered())
     return BLUETOOTH_DISABLED;
 
-  if (!IsEnabledbyPreference())
+  if (!IsEnabledByPreference())
     return USER_PREFERENCE_DISABLED;
+
+  if (base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi) &&
+      base::FeatureList::IsEnabled(
+          chromeos::features::kEnableUnifiedMultiDeviceSetup) &&
+      host_status_ !=
+          chromeos::multidevice_setup::mojom::HostStatus::kHostVerified) {
+    return MULTIDEVICE_HOST_UNVERIFIED;
+  }
 
   return ENABLED;
 }
@@ -642,8 +727,8 @@ bool TetherService::HandleFeatureStateMetricIfUninitialized() {
   // metric value is actually correct.
   timer_->Start(FROM_HERE,
                 base::TimeDelta::FromSeconds(kMetricFalsePositiveSeconds),
-                base::Bind(&TetherService::RecordTetherFeatureState,
-                           weak_ptr_factory_.GetWeakPtr()));
+                base::BindRepeating(&TetherService::RecordTetherFeatureState,
+                                    weak_ptr_factory_.GetWeakPtr()));
 
   return true;
 }
@@ -651,7 +736,7 @@ bool TetherService::HandleFeatureStateMetricIfUninitialized() {
 void TetherService::SetTestDoubles(
     std::unique_ptr<chromeos::tether::NotificationPresenter>
         notification_presenter,
-    std::unique_ptr<base::Timer> timer) {
+    std::unique_ptr<base::OneShotTimer> timer) {
   notification_presenter_ = std::move(notification_presenter);
   timer_ = std::move(timer);
 }

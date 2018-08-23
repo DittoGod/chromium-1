@@ -90,13 +90,13 @@ bool ClientPaintTypefaceTransferCacheEntry::SerializeInternal(
       writer->WriteSimple(typeface_.ttc_index());
       break;
     case PaintTypeface::Type::kFilenameAndTtcIndex:
-      writer->WriteSimple(typeface_.filename().size());
+      writer->template WriteSimple<uint64_t>(typeface_.filename().size());
       writer->WriteData(typeface_.filename().size(),
                         typeface_.filename().data());
       writer->WriteSimple(typeface_.ttc_index());
       break;
     case PaintTypeface::Type::kFamilyNameAndFontStyle:
-      writer->WriteSimple(typeface_.family_name().size());
+      writer->template WriteSimple<uint64_t>(typeface_.family_name().size());
       writer->WriteData(typeface_.family_name().size(),
                         typeface_.family_name().data());
       writer->WriteSimple(typeface_.font_style().weight());
@@ -118,7 +118,7 @@ size_t ServicePaintTypefaceTransferCacheEntry::CachedSize() const {
 
 bool ServicePaintTypefaceTransferCacheEntry::Deserialize(
     GrContext* context,
-    base::span<uint8_t> data) {
+    base::span<const uint8_t> data) {
   data_ = data;
   size_t initial_size = data_.size();
 
@@ -151,7 +151,7 @@ bool ServicePaintTypefaceTransferCacheEntry::Deserialize(
     }
     case PaintTypeface::Type::kFilenameAndTtcIndex: {
       size_t size;
-      ReadSimple(&size);
+      ReadSize(&size);
       if (!valid_ || size > kMaxFilenameSize) {
         valid_ = false;
         return false;
@@ -170,7 +170,7 @@ bool ServicePaintTypefaceTransferCacheEntry::Deserialize(
     }
     case PaintTypeface::Type::kFamilyNameAndFontStyle: {
       size_t size;
-      ReadSimple(&size);
+      ReadSize(&size);
       if (!valid_ || size > kMaxFamilyNameSize) {
         valid_ = false;
         return false;
@@ -198,7 +198,7 @@ bool ServicePaintTypefaceTransferCacheEntry::Deserialize(
 
   // Set the size to however much data we read.
   size_ = initial_size - data_.size();
-  data_ = base::span<uint8_t>(nullptr);
+  data_ = base::span<uint8_t>();
   return valid_;
 }
 
@@ -208,8 +208,14 @@ void ServicePaintTypefaceTransferCacheEntry::ReadSimple(T* val) {
     valid_ = false;
   if (!valid_)
     return;
-  *val = *reinterpret_cast<T*>(data_.data());
+  *val = *reinterpret_cast<const T*>(data_.data());
   data_ = data_.subspan(sizeof(T));
+}
+
+void ServicePaintTypefaceTransferCacheEntry::ReadSize(size_t* size) {
+  uint64_t size64;
+  ReadSimple(&size64);
+  *size = size64;
 }
 
 void ServicePaintTypefaceTransferCacheEntry::ReadData(size_t bytes,

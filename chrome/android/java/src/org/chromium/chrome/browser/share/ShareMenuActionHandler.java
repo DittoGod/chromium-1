@@ -14,14 +14,11 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
-import org.chromium.chrome.browser.physicalweb.PhysicalWebShareActivity;
 import org.chromium.chrome.browser.printing.PrintShareActivity;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.util.ChromeFileProvider;
 import org.chromium.components.ui_metrics.CanonicalURLResult;
-import org.chromium.content_public.browser.ContentBitmapCallback;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.browser.readback_types.ReadbackResponse;
 import org.chromium.net.GURLUtils;
 
 import java.util.ArrayList;
@@ -73,9 +70,6 @@ public class ShareMenuActionHandler {
 
         if (PrintShareActivity.featureIsAvailable(currentTab)) {
             classesToEnable.add(PrintShareActivity.class);
-        }
-        if (PhysicalWebShareActivity.featureIsAvailable()) {
-            classesToEnable.add(PhysicalWebShareActivity.class);
         }
 
         if (!classesToEnable.isEmpty()) {
@@ -149,12 +143,8 @@ public class ShareMenuActionHandler {
 
     private void triggerShare(final Activity activity, final Tab currentTab,
             final boolean shareDirectly, boolean isIncognito) {
-        boolean isOfflinePage = OfflinePageUtils.isOfflinePage(currentTab);
-        RecordHistogram.recordBooleanHistogram("OfflinePages.SharedPageWasOffline", isOfflinePage);
-
-        if (isOfflinePage
-                && OfflinePageUtils.maybeShareOfflinePage(
-                           activity, currentTab, (ShareParams p) -> mDelegate.share(p))) {
+        if (OfflinePageUtils.maybeShareOfflinePage(
+                    activity, currentTab, (ShareParams p) -> mDelegate.share(p))) {
             return;
         }
 
@@ -201,16 +191,14 @@ public class ShareMenuActionHandler {
         if (blockingUri == null) return;
 
         // Start screenshot capture and notify the provider when it is ready.
-        ContentBitmapCallback callback = (bitmap, response) -> ShareHelper.saveScreenshotToDisk(
-                bitmap, mainActivity,
-                result -> {
-                    // Unblock the file once it is saved to disk.
-                    ChromeFileProvider.notifyFileReady(blockingUri, result);
-                });
+        Callback<Uri> callback = (saveFile) -> {
+            // Unblock the file once it is saved to disk.
+            ChromeFileProvider.notifyFileReady(blockingUri, saveFile);
+        };
         if (sScreenshotCaptureSkippedForTesting) {
-            callback.onFinishGetBitmap(null, ReadbackResponse.SURFACE_UNAVAILABLE);
+            callback.onResult(null);
         } else {
-            webContents.getContentBitmapAsync(0, 0, callback);
+            ShareHelper.captureScreenshotForContents(webContents, 0, 0, callback);
         }
     }
 

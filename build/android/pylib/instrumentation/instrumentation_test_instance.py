@@ -35,8 +35,8 @@ _COMMAND_LINE_PARAMETER = 'cmdlinearg-parameter'
 _DEFAULT_ANNOTATIONS = [
     'SmallTest', 'MediumTest', 'LargeTest', 'EnormousTest', 'IntegrationTest']
 _EXCLUDE_UNLESS_REQUESTED_ANNOTATIONS = [
-    'DisabledTest', 'FlakyTest']
-_VALID_ANNOTATIONS = set(['Manual'] + _DEFAULT_ANNOTATIONS +
+    'DisabledTest', 'FlakyTest', 'Manual']
+_VALID_ANNOTATIONS = set(_DEFAULT_ANNOTATIONS +
                          _EXCLUDE_UNLESS_REQUESTED_ANNOTATIONS)
 
 # These test methods are inherited from android.test base test class and
@@ -568,15 +568,15 @@ class InstrumentationTestInstance(test_instance.TestInstance):
     self._test_package = self._test_apk.GetPackageName()
     all_instrumentations = self._test_apk.GetAllInstrumentations()
     all_junit3_runner_classes = [
-        x for x in all_instrumentations if ('0xffffffff' not in x.get(
-            'chromium-junit4', ''))]
-    all_junit4_test_runner_classes = [
         x for x in all_instrumentations if ('0xffffffff' in x.get(
-            'chromium-junit4', ''))]
+            'chromium-junit3', ''))]
+    all_junit4_runner_classes = [
+        x for x in all_instrumentations if ('0xffffffff' not in x.get(
+            'chromium-junit3', ''))]
 
     if len(all_junit3_runner_classes) > 1:
       logging.warning('This test apk has more than one JUnit3 instrumentation')
-    if len(all_junit4_test_runner_classes) > 1:
+    if len(all_junit4_runner_classes) > 1:
       logging.warning('This test apk has more than one JUnit4 instrumentation')
 
     self._junit3_runner_class = (
@@ -584,8 +584,8 @@ class InstrumentationTestInstance(test_instance.TestInstance):
       if all_junit3_runner_classes else self.test_apk.GetInstrumentationName())
 
     self._junit4_runner_class = (
-      all_junit4_test_runner_classes[0]['android:name']
-      if all_junit4_test_runner_classes else None)
+      all_junit4_runner_classes[0]['android:name']
+      if all_junit4_runner_classes else None)
 
     if self._junit4_runner_class:
       if self._test_apk_incremental_install_json:
@@ -676,7 +676,6 @@ class InstrumentationTestInstance(test_instance.TestInstance):
   def _initializeTestControlAttributes(self, args):
     self._screenshot_dir = args.screenshot_dir
     self._timeout_scale = args.timeout_scale or 1
-    self._ui_screenshot_dir = args.ui_screenshot_dir
     self._wait_for_java_debugger = args.wait_for_java_debugger
 
   def _initializeTestCoverageAttributes(self, args):
@@ -686,8 +685,7 @@ class InstrumentationTestInstance(test_instance.TestInstance):
     self._enable_java_deobfuscation = args.enable_java_deobfuscation
     self._store_tombstones = args.store_tombstones
     self._symbolizer = stack_symbolizer.Symbolizer(
-        self.apk_under_test.path if self.apk_under_test else None,
-        args.non_native_packed_relocations)
+        self.apk_under_test.path if self.apk_under_test else None)
 
   def _initializeEditPrefsAttributes(self, args):
     if not hasattr(args, 'shared_prefs_file') or not args.shared_prefs_file:
@@ -807,10 +805,6 @@ class InstrumentationTestInstance(test_instance.TestInstance):
   @property
   def total_external_shards(self):
     return self._total_external_shards
-
-  @property
-  def ui_screenshot_dir(self):
-    return self._ui_screenshot_dir
 
   @property
   def wait_for_java_debugger(self):

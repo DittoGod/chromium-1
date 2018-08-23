@@ -21,6 +21,9 @@ namespace chromeos {
 // and the user of this class can raise a fake mouse events.
 class CHROMEOS_EXPORT FakeCrosDisksClient : public CrosDisksClient {
  public:
+  using CustomMountPointCallback =
+      base::RepeatingCallback<base::FilePath(const std::string&,
+                                             const std::vector<std::string>&)>;
   FakeCrosDisksClient();
   ~FakeCrosDisksClient() override;
 
@@ -35,6 +38,7 @@ class CHROMEOS_EXPORT FakeCrosDisksClient : public CrosDisksClient {
   void Mount(const std::string& source_path,
              const std::string& source_format,
              const std::string& mount_label,
+             const std::vector<std::string>& mount_options,
              MountAccessMode access_mode,
              RemountOption remount,
              VoidDBusMethodCallback callback) override;
@@ -42,10 +46,7 @@ class CHROMEOS_EXPORT FakeCrosDisksClient : public CrosDisksClient {
   // Deletes the directory created in Mount().
   void Unmount(const std::string& device_path,
                UnmountOptions options,
-               VoidDBusMethodCallback callback) override;
-  void EnumerateAutoMountableDevices(
-      const EnumerateDevicesCallback& callback,
-      const base::Closure& error_callback) override;
+               UnmountCallback callback) override;
   void EnumerateDevices(const EnumerateDevicesCallback& callback,
                         const base::Closure& error_callback) override;
   void EnumerateMountEntries(const EnumerateMountEntriesCallback& callback,
@@ -71,6 +72,12 @@ class CHROMEOS_EXPORT FakeCrosDisksClient : public CrosDisksClient {
   void NotifyRenameCompleted(RenameError error_code,
                              const std::string& device_path);
 
+  // Add a callback to be executed when a Mount call is made to a URI
+  // source_path. The mount point from the first non empty result will be used
+  // in the order added.
+  void AddCustomMountPointCallback(
+      CustomMountPointCallback custom_mount_point_callback);
+
   // Returns how many times Unmount() was called.
   int unmount_call_count() const {
     return unmount_call_count_;
@@ -87,9 +94,7 @@ class CHROMEOS_EXPORT FakeCrosDisksClient : public CrosDisksClient {
   }
 
   // Makes the subsequent Unmount() calls fail. Unmount() succeeds by default.
-  void MakeUnmountFail() {
-    unmount_success_ = false;
-  }
+  void MakeUnmountFail(MountError error_code) { unmount_error_ = error_code; }
 
   // Sets a listener callbackif the following Unmount() call is success or not.
   // Unmount() calls the corresponding callback given as a parameter.
@@ -141,11 +146,11 @@ class CHROMEOS_EXPORT FakeCrosDisksClient : public CrosDisksClient {
                 VoidDBusMethodCallback callback,
                 MountError mount_error);
 
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
   int unmount_call_count_;
   std::string last_unmount_device_path_;
   UnmountOptions last_unmount_options_;
-  bool unmount_success_;
+  MountError unmount_error_;
   base::Closure unmount_listener_;
   int format_call_count_;
   std::string last_format_device_path_;
@@ -156,6 +161,7 @@ class CHROMEOS_EXPORT FakeCrosDisksClient : public CrosDisksClient {
   std::string last_rename_volume_name_;
   bool rename_success_;
   std::set<base::FilePath> mounted_paths_;
+  std::vector<CustomMountPointCallback> custom_mount_point_callbacks_;
 
   base::WeakPtrFactory<FakeCrosDisksClient> weak_ptr_factory_;
 

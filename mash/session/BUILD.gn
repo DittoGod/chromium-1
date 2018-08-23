@@ -17,7 +17,6 @@ source_set("lib") {
   deps = [
     "//base",
     "//mash/common",
-    "//mojo/common",
     "//mojo/public/cpp/bindings",
     "//services/service_manager/public/cpp",
   ]
@@ -27,7 +26,7 @@ source_set("lib") {
 
     data_deps = [
       "//ash:ash_service",
-      "//ash/components/quick_launch",
+      "//ash/components/quick_launch:quick_launch_app",
     ]
   }
 }
@@ -42,7 +41,6 @@ service("session") {
   deps = [
     ":lib",
     "//base",
-    "//mojo/common",
     "//mojo/public/cpp/bindings",
     "//services/service_manager/public/cpp",
   ]

@@ -142,7 +142,9 @@ public class VideoCaptureCamera
     private class CrErrorCallback implements android.hardware.Camera.ErrorCallback {
         @Override
         public void onError(int error, android.hardware.Camera camera) {
-            nativeOnError(mNativeVideoCaptureDeviceAndroid, "Error id: " + error);
+            nativeOnError(mNativeVideoCaptureDeviceAndroid,
+                    AndroidVideoCaptureError.ANDROID_API_1_CAMERA_ERROR_CALLBACK_RECEIVED,
+                    "Error id: " + error);
 
             synchronized (mPhotoTakenCallbackLock) {
                 if (mPhotoTakenCallbackId == 0) return;
@@ -186,6 +188,22 @@ public class VideoCaptureCamera
             return VideoCaptureApi.UNKNOWN;
         }
         return VideoCaptureApi.ANDROID_API1;
+    }
+
+    static int getFacingMode(int id) {
+        android.hardware.Camera.CameraInfo cameraInfo = VideoCaptureCamera.getCameraInfo(id);
+        if (cameraInfo == null) {
+            return VideoFacingMode.MEDIA_VIDEO_FACING_NONE;
+        }
+
+        switch (cameraInfo.facing) {
+            case android.hardware.Camera.CameraInfo.CAMERA_FACING_FRONT:
+                return VideoFacingMode.MEDIA_VIDEO_FACING_USER;
+            case android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK:
+                return VideoFacingMode.MEDIA_VIDEO_FACING_ENVIRONMENT;
+            default:
+                return VideoFacingMode.MEDIA_VIDEO_FACING_NONE;
+        }
     }
 
     static String getName(int id) {
@@ -598,8 +616,8 @@ public class VideoCaptureCamera
         if (flashModes != null) {
             builder.setSupportsTorch(
                     flashModes.contains(android.hardware.Camera.Parameters.FLASH_MODE_TORCH));
-            builder.setTorch(parameters.getFlashMode()
-                    == android.hardware.Camera.Parameters.FLASH_MODE_TORCH);
+            builder.setTorch(android.hardware.Camera.Parameters.FLASH_MODE_TORCH.equals(
+                    parameters.getFlashMode()));
 
             builder.setRedEyeReduction(
                     flashModes.contains(android.hardware.Camera.Parameters.FLASH_MODE_RED_EYE));

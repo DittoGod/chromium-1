@@ -75,6 +75,7 @@ message DynamicInterstitial {
     ERR_CERT_NO_REVOCATION_MECHANISM = 12;
     ERR_CERT_NON_UNIQUE_NAME = 13;
     ERR_CERTIFICATE_TRANSPARENCY_REQUIRED = 14;
+    ERR_CERT_SYMANTEC_LEGACY = 15;
   };
 
   // Sha256 hashes of the certificate's public key. If this field is not
@@ -105,6 +106,10 @@ message DynamicInterstitial {
 
   // The support URL that will be displayed on the interstitial.
   optional string support_url = 7;
+
+  // If true, dynamic interstitials will be displayed only for non-overridable
+  // errors.
+  optional bool show_only_for_nonoverridable_errors = 8;
 }
 
 message SSLErrorAssistantConfig {

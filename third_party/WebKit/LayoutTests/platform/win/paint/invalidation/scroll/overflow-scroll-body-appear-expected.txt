@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -28,12 +29,12 @@
         },
         {
           "object": "InlineTextBox 'You should see both vertical and horizontal scrollbars.'",
-          "rect": [8, 16, 324, 19],
+          "rect": [8, 16, 323, 19],
           "reason": "appeared"
         },
         {
           "object": "InlineTextBox 'You should see both vertical and horizontal scrollbars.'",
-          "rect": [8, 16, 324, 19],
+          "rect": [8, 16, 323, 19],
           "reason": "disappeared"
         },
         {
@@ -57,72 +58,6 @@
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow P",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'You should see both vertical and horizontal scrollbars.'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow P",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'This is the test for '",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'Bug 36461 - No vertical scrollbar after the CSS class change'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox '.'",
-      "reason": "geometry"
     }
   ]
 }

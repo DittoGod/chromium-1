@@ -31,6 +31,47 @@ namespace http://www.w3.org/1999/xhtml
     property animate
     property append
     property appendChild
+    property ariaActiveDescendant
+    property ariaAtomic
+    property ariaAutoComplete
+    property ariaBusy
+    property ariaChecked
+    property ariaColCount
+    property ariaColIndex
+    property ariaColSpan
+    property ariaControls
+    property ariaCurrent
+    property ariaDescribedBy
+    property ariaDetails
+    property ariaDisabled
+    property ariaExpanded
+    property ariaHasPopup
+    property ariaHidden
+    property ariaLabel
+    property ariaLabelledBy
+    property ariaLevel
+    property ariaLive
+    property ariaModal
+    property ariaMultiLine
+    property ariaMultiSelectable
+    property ariaOrientation
+    property ariaOwns
+    property ariaPlaceholder
+    property ariaPosInSet
+    property ariaPressed
+    property ariaReadOnly
+    property ariaRelevant
+    property ariaRequired
+    property ariaRoleDescription
+    property ariaRowCount
+    property ariaRowIndex
+    property ariaRowSpan
+    property ariaSelected
+    property ariaSort
+    property ariaValueMax
+    property ariaValueMin
+    property ariaValueNow
+    property ariaValueText
     property assignedSlot
     property attachShadow
     property attributeStyleMap
@@ -93,6 +134,7 @@ namespace http://www.w3.org/1999/xhtml
     property insertAdjacentHTML
     property insertAdjacentText
     property insertBefore
+    property invisible
     property isConnected
     property isContentEditable
     property isDefaultNamespace
@@ -119,6 +161,7 @@ namespace http://www.w3.org/1999/xhtml
     property offsetTop
     property offsetWidth
     property onabort
+    property onactivateinvisible
     property onauxclick
     property onbeforecopy
     property onbeforecut
@@ -147,6 +190,7 @@ namespace http://www.w3.org/1999/xhtml
     property onended
     property onerror
     property onfocus
+    property onformdata
     property onfullscreenchange
     property onfullscreenerror
     property ongotpointercapture
@@ -226,6 +270,7 @@ namespace http://www.w3.org/1999/xhtml
     property replaceWith
     property requestFullscreen
     property requestPointerLock
+    property role
     property scroll
     property scrollBy
     property scrollHeight
@@ -249,6 +294,7 @@ namespace http://www.w3.org/1999/xhtml
     property textContent
     property title
     property toString
+    property toggleAttribute
     property translate
     property webkitMatchesSelector
     property webkitRequestFullScreen
@@ -282,7 +328,6 @@ html element a
 html element abbr
 html element acronym
 html element address
-html element applet
 html element area
     property alt
     property coords
@@ -368,7 +413,6 @@ html element base
 html element basefont
 html element bdi
 html element bdo
-html element bgsound
 html element big
 html element blockquote
     property cite
@@ -380,7 +424,6 @@ html element body
     property onafterprint
     property onbeforeprint
     property onbeforeunload
-    property onfreeze
     property onhashchange
     property onlanguagechange
     property onmessage
@@ -391,7 +434,6 @@ html element body
     property onpageshow
     property onpopstate
     property onrejectionhandled
-    property onresume
     property onstorage
     property onunhandledrejection
     property onunload
@@ -420,6 +462,7 @@ html element button
     property willValidate
 html element canvas
     property captureStream
+    property convertToBlob
     property getContext
     property height
     property toBlob
@@ -445,7 +488,6 @@ html element colgroup
     property span
     property vAlign
     property width
-html element command
 html element content
     property getDistributedNodes
     property select
@@ -533,7 +575,6 @@ html element frameset
     property onafterprint
     property onbeforeprint
     property onbeforeunload
-    property onfreeze
     property onhashchange
     property onlanguagechange
     property onmessage
@@ -544,7 +585,6 @@ html element frameset
     property onpageshow
     property onpopstate
     property onrejectionhandled
-    property onresume
     property onstorage
     property onunhandledrejection
     property onunload
@@ -595,7 +635,6 @@ html element iframe
     property src
     property srcdoc
     property width
-html element image
 html element img
     property align
     property alt
@@ -607,6 +646,7 @@ html element img
     property decoding
     property height
     property hspace
+    property importance
     property isMap
     property longDesc
     property lowsrc
@@ -684,7 +724,6 @@ html element ins
     property cite
     property dateTime
 html element kbd
-html element keygen
 html element label
     property control
     property form
@@ -704,6 +743,7 @@ html element link
     property href
     property hreflang
     property import
+    property importance
     property integrity
     property media
     property referrerPolicy
@@ -823,6 +863,7 @@ html element param
     property valueType
 html element picture
 html element plaintext
+html element portal
 html element pre
     property width
 html element progress
@@ -848,6 +889,7 @@ html element script
     property htmlFor
     property integrity
     property noModule
+    property referrerPolicy
     property src
     property text
     property type
@@ -880,6 +922,7 @@ html element select
 html element shadow
     property getDistributedNodes
 html element slot
+    property assign
     property assignedElements
     property assignedNodes
     property name
@@ -1086,6 +1129,7 @@ html element video
     property onencrypted
     property onenterpictureinpicture
     property onleavepictureinpicture
+    property onpictureinpicturecontrolclick
     property onwaitingforkey
     property pause
     property paused
@@ -1100,6 +1144,7 @@ html element video
     property seekable
     property seeking
     property setMediaKeys
+    property setPictureInPictureControls
     property setSinkId
     property sinkId
     property src
@@ -1150,6 +1195,47 @@ namespace http://www.w3.org/2000/svg
     property animate
     property append
     property appendChild
+    property ariaActiveDescendant
+    property ariaAtomic
+    property ariaAutoComplete
+    property ariaBusy
+    property ariaChecked
+    property ariaColCount
+    property ariaColIndex
+    property ariaColSpan
+    property ariaControls
+    property ariaCurrent
+    property ariaDescribedBy
+    property ariaDetails
+    property ariaDisabled
+    property ariaExpanded
+    property ariaHasPopup
+    property ariaHidden
+    property ariaLabel
+    property ariaLabelledBy
+    property ariaLevel
+    property ariaLive
+    property ariaModal
+    property ariaMultiLine
+    property ariaMultiSelectable
+    property ariaOrientation
+    property ariaOwns
+    property ariaPlaceholder
+    property ariaPosInSet
+    property ariaPressed
+    property ariaReadOnly
+    property ariaRelevant
+    property ariaRequired
+    property ariaRoleDescription
+    property ariaRowCount
+    property ariaRowIndex
+    property ariaRowSpan
+    property ariaSelected
+    property ariaSort
+    property ariaValueMax
+    property ariaValueMin
+    property ariaValueNow
+    property ariaValueText
     property assignedSlot
     property attachShadow
     property attributeStyleMap
@@ -1203,6 +1289,7 @@ namespace http://www.w3.org/2000/svg
     property insertAdjacentHTML
     property insertAdjacentText
     property insertBefore
+    property invisible
     property isConnected
     property isDefaultNamespace
     property isEqualNode
@@ -1222,6 +1309,7 @@ namespace http://www.w3.org/2000/svg
     property nonce
     property normalize
     property onabort
+    property onactivateinvisible
     property onauxclick
     property onbeforecopy
     property onbeforecut
@@ -1250,6 +1338,7 @@ namespace http://www.w3.org/2000/svg
     property onended
     property onerror
     property onfocus
+    property onformdata
     property onfullscreenchange
     property onfullscreenerror
     property ongotpointercapture
@@ -1329,6 +1418,7 @@ namespace http://www.w3.org/2000/svg
     property replaceWith
     property requestFullscreen
     property requestPointerLock
+    property role
     property scroll
     property scrollBy
     property scrollHeight
@@ -1349,6 +1439,7 @@ namespace http://www.w3.org/2000/svg
     property tabIndex
     property tagName
     property textContent
+    property toggleAttribute
     property viewportElement
     property webkitMatchesSelector
     property webkitRequestFullScreen

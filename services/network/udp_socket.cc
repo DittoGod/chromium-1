@@ -8,14 +8,12 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/checked_math.h"
+#include "base/numerics/ranges.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/optional.h"
-#include "base/rand_util.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
-#include "net/base/rand_callback.h"
 #include "net/log/net_log.h"
 #include "net/socket/udp_socket.h"
 
@@ -28,13 +26,19 @@ const uint32_t kMaxReadSize = 64 * 1024;
 // IPv6.
 const uint32_t kMaxPacketSize = kMaxReadSize - 1;
 
+int ClampBufferSize(int requested_buffer_size) {
+  constexpr int kMinBufferSize = 0;
+  constexpr int kMaxBufferSize = 128 * 1024;
+  return base::ClampToRange(requested_buffer_size, kMinBufferSize,
+                            kMaxBufferSize);
+}
+
 class SocketWrapperImpl : public UDPSocket::SocketWrapper {
  public:
   SocketWrapperImpl(net::DatagramSocket::BindType bind_type,
-                    const net::RandIntCallback& rand_int_cb,
                     net::NetLog* net_log,
                     const net::NetLogSource& source)
-      : socket_(bind_type, rand_int_cb, net_log, source) {}
+      : socket_(bind_type, net_log, source) {}
   ~SocketWrapperImpl() override {}
 
   int Connect(const net::IPEndPoint& remote_addr,
@@ -71,12 +75,18 @@ class SocketWrapperImpl : public UDPSocket::SocketWrapper {
       net::IOBuffer* buf,
       int buf_len,
       const net::IPEndPoint& dest_addr,
-      const net::CompletionCallback& callback,
+      net::CompletionOnceCallback callback,
       const net::NetworkTrafficAnnotationTag& traffic_annotation) override {
-    return socket_.SendTo(buf, buf_len, dest_addr, callback);
+    return socket_.SendTo(buf, buf_len, dest_addr, std::move(callback));
   }
   int SetBroadcast(bool broadcast) override {
     return socket_.SetBroadcast(broadcast);
+  }
+  int SetSendBufferSize(int send_buffer_size) override {
+    return socket_.SetSendBufferSize(ClampBufferSize(send_buffer_size));
+  }
+  int SetReceiveBufferSize(int receive_buffer_size) override {
+    return socket_.SetReceiveBufferSize(ClampBufferSize(receive_buffer_size));
   }
   int JoinGroup(const net::IPAddress& group_address) override {
     return socket_.JoinGroup(group_address);
@@ -87,15 +97,15 @@ class SocketWrapperImpl : public UDPSocket::SocketWrapper {
   int Write(
       net::IOBuffer* buf,
       int buf_len,
-      const net::CompletionCallback& callback,
+      net::CompletionOnceCallback callback,
       const net::NetworkTrafficAnnotationTag& traffic_annotation) override {
-    return socket_.Write(buf, buf_len, callback, traffic_annotation);
+    return socket_.Write(buf, buf_len, std::move(callback), traffic_annotation);
   }
   int RecvFrom(net::IOBuffer* buf,
                int buf_len,
                net::IPEndPoint* address,
-               const net::CompletionCallback& callback) override {
-    return socket_.RecvFrom(buf, buf_len, address, callback);
+               net::CompletionOnceCallback callback) override {
+    return socket_.RecvFrom(buf, buf_len, address, std::move(callback));
   }
 
  private:
@@ -117,11 +127,11 @@ class SocketWrapperImpl : public UDPSocket::SocketWrapper {
     }
     if (result == net::OK && options->receive_buffer_size != 0) {
       result = socket_.SetReceiveBufferSize(
-          base::saturated_cast<int32_t>(options->receive_buffer_size));
+          ClampBufferSize(options->receive_buffer_size));
     }
     if (result == net::OK && options->send_buffer_size != 0) {
-      result = socket_.SetSendBufferSize(
-          base::saturated_cast<int32_t>(options->send_buffer_size));
+      result =
+          socket_.SetSendBufferSize(ClampBufferSize(options->send_buffer_size));
     }
     return result;
   }
@@ -137,21 +147,14 @@ UDPSocket::PendingSendRequest::PendingSendRequest() {}
 
 UDPSocket::PendingSendRequest::~PendingSendRequest() {}
 
-UDPSocket::UDPSocket(mojom::UDPSocketRequest request,
-                     mojom::UDPSocketReceiverPtr receiver)
-    : is_bound_(false),
+UDPSocket::UDPSocket(mojom::UDPSocketReceiverPtr receiver, net::NetLog* net_log)
+    : net_log_(net_log),
+      is_bound_(false),
       is_connected_(false),
       receiver_(std::move(receiver)),
-      remaining_recv_slots_(0),
-      binding_(this) {
-  binding_.Bind(std::move(request));
-}
+      remaining_recv_slots_(0) {}
 
 UDPSocket::~UDPSocket() {}
-
-void UDPSocket::set_connection_error_handler(base::OnceClosure handler) {
-  binding_.set_connection_error_handler(std::move(handler));
-}
 
 void UDPSocket::Connect(const net::IPEndPoint& remote_addr,
                         mojom::UDPSocketOptionsPtr options,
@@ -201,6 +204,26 @@ void UDPSocket::SetBroadcast(bool broadcast, SetBroadcastCallback callback) {
     return;
   }
   int net_result = wrapped_socket_->SetBroadcast(broadcast);
+  std::move(callback).Run(net_result);
+}
+
+void UDPSocket::SetSendBufferSize(int32_t send_buffer_size,
+                                  SetSendBufferSizeCallback callback) {
+  if (!is_bound_) {
+    std::move(callback).Run(net::ERR_UNEXPECTED);
+    return;
+  }
+  int net_result = wrapped_socket_->SetSendBufferSize(send_buffer_size);
+  std::move(callback).Run(net_result);
+}
+
+void UDPSocket::SetReceiveBufferSize(int32_t receive_buffer_size,
+                                     SetSendBufferSizeCallback callback) {
+  if (!is_bound_) {
+    std::move(callback).Run(net::ERR_UNEXPECTED);
+    return;
+  }
+  int net_result = wrapped_socket_->SetReceiveBufferSize(receive_buffer_size);
   std::move(callback).Run(net_result);
 }
 
@@ -293,9 +316,8 @@ void UDPSocket::Close() {
 
 std::unique_ptr<UDPSocket::SocketWrapper> UDPSocket::CreateSocketWrapper()
     const {
-  return std::make_unique<SocketWrapperImpl>(
-      net::DatagramSocket::RANDOM_BIND, base::BindRepeating(&base::RandInt),
-      nullptr, net::NetLogSource());
+  return std::make_unique<SocketWrapperImpl>(net::DatagramSocket::RANDOM_BIND,
+                                             nullptr, net::NetLogSource());
 }
 
 bool UDPSocket::IsConnectedOrBound() const {

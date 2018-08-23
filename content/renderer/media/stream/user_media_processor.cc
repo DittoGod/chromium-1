@@ -7,18 +7,18 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <map>
 #include <utility>
 
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_runner.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/common/media/media_stream_controls.h"
-#include "content/public/renderer/render_frame.h"
+#include "content/public/common/media_stream_request.h"
 #include "content/renderer/media/stream/local_media_stream_audio_source.h"
 #include "content/renderer/media/stream/media_stream_audio_processor.h"
 #include "content/renderer/media/stream/media_stream_audio_source.h"
@@ -34,35 +34,85 @@
 #include "content/renderer/media/webrtc/peer_connection_dependency_factory.h"
 #include "content/renderer/media/webrtc/webrtc_uma_histograms.h"
 #include "content/renderer/media/webrtc_logging.h"
+#include "content/renderer/render_frame_impl.h"
+#include "content/renderer/render_widget.h"
 #include "media/base/audio_parameters.h"
 #include "media/capture/video_capture_types.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/WebKit/public/platform/WebMediaConstraints.h"
-#include "third_party/WebKit/public/platform/WebMediaStream.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/web_media_constraints.h"
+#include "third_party/blink/public/platform/web_media_stream.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "ui/gfx/geometry/size.h"
 #include "url/origin.h"
 
 namespace content {
+
+using blink::WebMediaStreamSource;
+using EchoCancellationType = AudioProcessingProperties::EchoCancellationType;
+
 namespace {
 
-void CopyFirstString(const blink::StringConstraint& constraint,
-                     std::string* destination) {
-  if (!constraint.Exact().IsEmpty())
-    *destination = constraint.Exact()[0].Utf8();
-}
-
-bool IsDeviceSource(const std::string& source) {
-  return source.empty();
-}
-
-void InitializeTrackControls(const blink::WebMediaConstraints& constraints,
-                             TrackControls* track_controls) {
+void InitializeAudioTrackControls(const blink::WebUserMediaRequest& web_request,
+                                  TrackControls* track_controls) {
+  const blink::WebMediaConstraints& constraints =
+      web_request.AudioConstraints();
   DCHECK(!constraints.IsNull());
   track_controls->requested = true;
-  CopyFirstString(constraints.Basic().media_stream_source,
-                  &track_controls->stream_source);
+
+  MediaStreamType* stream_type = &track_controls->stream_type;
+  *stream_type = MEDIA_NO_SERVICE;
+
+  std::string source_constraint =
+      constraints.Basic().media_stream_source.Exact().IsEmpty()
+          ? std::string()
+          : constraints.Basic().media_stream_source.Exact()[0].Utf8();
+  if (!source_constraint.empty()) {
+    if (source_constraint == kMediaStreamSourceTab) {
+      *stream_type = MEDIA_GUM_TAB_AUDIO_CAPTURE;
+    } else if (source_constraint == kMediaStreamSourceDesktop ||
+               source_constraint == kMediaStreamSourceSystem) {
+      *stream_type = MEDIA_GUM_DESKTOP_AUDIO_CAPTURE;
+    }
+  } else {
+    *stream_type = MEDIA_DEVICE_AUDIO_CAPTURE;
+  }
+}
+
+void InitializeVideoTrackControls(const blink::WebUserMediaRequest& web_request,
+                                  TrackControls* track_controls) {
+  if (web_request.MediaRequestType() ==
+      blink::WebUserMediaRequest::MediaType::kDisplayMedia) {
+    track_controls->requested = true;
+    track_controls->stream_type = MEDIA_DISPLAY_VIDEO_CAPTURE;
+    return;
+  }
+
+  DCHECK_EQ(blink::WebUserMediaRequest::MediaType::kUserMedia,
+            web_request.MediaRequestType());
+  const blink::WebMediaConstraints& constraints =
+      web_request.VideoConstraints();
+  DCHECK(!constraints.IsNull());
+  track_controls->requested = true;
+
+  MediaStreamType* stream_type = &track_controls->stream_type;
+  *stream_type = MEDIA_NO_SERVICE;
+
+  std::string source_constraint =
+      constraints.Basic().media_stream_source.Exact().IsEmpty()
+          ? std::string()
+          : constraints.Basic().media_stream_source.Exact()[0].Utf8();
+  if (!source_constraint.empty()) {
+    if (source_constraint == kMediaStreamSourceTab) {
+      *stream_type = MEDIA_GUM_TAB_VIDEO_CAPTURE;
+    } else if (source_constraint == kMediaStreamSourceDesktop ||
+               source_constraint == kMediaStreamSourceScreen) {
+      *stream_type = MEDIA_GUM_DESKTOP_VIDEO_CAPTURE;
+    }
+  } else {
+    *stream_type = MEDIA_DEVICE_VIDEO_CAPTURE;
+  }
 }
 
 bool IsSameDevice(const MediaStreamDevice& device,
@@ -84,26 +134,51 @@ bool IsSameSource(const blink::WebMediaStreamSource& source,
   return IsSameDevice(device, other_device);
 }
 
-bool IsValidAudioContentSource(const std::string& source) {
-  return source == kMediaStreamSourceTab ||
-         source == kMediaStreamSourceDesktop ||
-         source == kMediaStreamSourceSystem;
-}
-
-bool IsValidVideoContentSource(const std::string& source) {
-  return source == kMediaStreamSourceTab ||
-         source == kMediaStreamSourceDesktop ||
-         source == kMediaStreamSourceScreen;
-}
-
-void SurfaceHardwareEchoCancellationSetting(
-    blink::WebMediaStreamSource* source) {
+void SurfaceAudioProcessingSettings(blink::WebMediaStreamSource* source) {
   MediaStreamAudioSource* source_impl =
       static_cast<MediaStreamAudioSource*>(source->GetExtraData());
-  media::AudioParameters params = source_impl->GetAudioParameters();
-  if (params.IsValid() &&
-      (params.effects() & media::AudioParameters::ECHO_CANCELLER))
-    source->SetEchoCancellation(true);
+
+  // If the source is a processed source, get the properties from it.
+  if (ProcessedLocalAudioSource* processed_source =
+          ProcessedLocalAudioSource::From(source_impl)) {
+    AudioProcessingProperties properties =
+        processed_source->audio_processing_properties();
+    WebMediaStreamSource::EchoCancellationMode echo_cancellation_mode;
+
+    switch (properties.echo_cancellation_type) {
+      case EchoCancellationType::kEchoCancellationDisabled:
+        echo_cancellation_mode =
+            WebMediaStreamSource::EchoCancellationMode::kDisabled;
+        break;
+      case EchoCancellationType::kEchoCancellationAec2:
+        echo_cancellation_mode =
+            WebMediaStreamSource::EchoCancellationMode::kBrowser;
+        break;
+      case EchoCancellationType::kEchoCancellationAec3:
+        echo_cancellation_mode =
+            WebMediaStreamSource::EchoCancellationMode::kAec3;
+        break;
+      case EchoCancellationType::kEchoCancellationSystem:
+        echo_cancellation_mode =
+            WebMediaStreamSource::EchoCancellationMode::kSystem;
+        break;
+    }
+
+    source->SetAudioProcessingProperties(echo_cancellation_mode,
+                                         properties.goog_auto_gain_control,
+                                         properties.goog_noise_suppression);
+  } else {
+    // If the source is not a processed source, it could still support system
+    // echo cancellation. Surface that if it does.
+    media::AudioParameters params = source_impl->GetAudioParameters();
+    const WebMediaStreamSource::EchoCancellationMode echo_cancellation_mode =
+        params.IsValid() &&
+                (params.effects() & media::AudioParameters::ECHO_CANCELLER)
+            ? WebMediaStreamSource::EchoCancellationMode::kSystem
+            : WebMediaStreamSource::EchoCancellationMode::kDisabled;
+
+    source->SetAudioProcessingProperties(echo_cancellation_mode, false, false);
+  }
 }
 
 }  // namespace
@@ -141,8 +216,6 @@ class UserMediaProcessor::RequestInfo
   // successfully started, or a source has failed to start.
   void CallbackOnTracksStarted(const ResourcesReady& callback);
 
-  bool HasPendingSources() const;
-
   // Called when a local audio source has finished (or failed) initializing.
   void OnAudioSourceStarted(MediaStreamSource* source,
                             MediaStreamRequestResult result,
@@ -157,12 +230,6 @@ class UserMediaProcessor::RequestInfo
   const AudioCaptureSettings& audio_capture_settings() const {
     return audio_capture_settings_;
   }
-  bool is_audio_content_capture() const {
-    return audio_capture_settings_.HasValue() && is_audio_content_capture_;
-  }
-  bool is_audio_device_capture() const {
-    return audio_capture_settings_.HasValue() && !is_audio_content_capture_;
-  }
   void SetAudioCaptureSettings(const AudioCaptureSettings& settings,
                                bool is_content_capture) {
     DCHECK(settings.HasValue());
@@ -172,11 +239,43 @@ class UserMediaProcessor::RequestInfo
   const VideoCaptureSettings& video_capture_settings() const {
     return video_capture_settings_;
   }
+  bool is_video_content_capture() const {
+    return video_capture_settings_.HasValue() && is_video_content_capture_;
+  }
+  bool is_video_device_capture() const {
+    return video_capture_settings_.HasValue() && !is_video_content_capture_;
+  }
   void SetVideoCaptureSettings(const VideoCaptureSettings& settings,
                                bool is_content_capture) {
     DCHECK(settings.HasValue());
     is_video_content_capture_ = is_content_capture;
     video_capture_settings_ = settings;
+  }
+
+  void SetDevices(MediaStreamDevices audio_devices,
+                  MediaStreamDevices video_devices) {
+    audio_devices_ = std::move(audio_devices);
+    video_devices_ = std::move(video_devices);
+  }
+
+  void AddNativeVideoFormats(const std::string& device_id,
+                             media::VideoCaptureFormats formats) {
+    video_formats_map_[device_id] = std::move(formats);
+  }
+
+  // Do not store or delete the returned pointer.
+  media::VideoCaptureFormats* GetNativeVideoFormats(
+      const std::string& device_id) {
+    auto it = video_formats_map_.find(device_id);
+    CHECK(it != video_formats_map_.end());
+    return &it->second;
+  }
+
+  const MediaStreamDevices& audio_devices() const { return audio_devices_; }
+  const MediaStreamDevices& video_devices() const { return video_devices_; }
+
+  bool CanStartTracks() const {
+    return video_formats_map_.size() == video_devices_.size();
   }
 
   blink::WebMediaStream* web_stream() { return &web_stream_; }
@@ -218,6 +317,9 @@ class UserMediaProcessor::RequestInfo
   // Sources used in this request.
   std::vector<blink::WebMediaStreamSource> sources_;
   std::vector<MediaStreamSource*> sources_waiting_for_callback_;
+  std::map<std::string, media::VideoCaptureFormats> video_formats_map_;
+  MediaStreamDevices audio_devices_;
+  MediaStreamDevices video_devices_;
 };
 
 // TODO(guidou): Initialize request_result_name_ as a null blink::WebString.
@@ -303,10 +405,6 @@ void UserMediaProcessor::RequestInfo::CheckAllTracksStarted() {
   }
 }
 
-bool UserMediaProcessor::RequestInfo::HasPendingSources() const {
-  return !sources_waiting_for_callback_.empty();
-}
-
 void UserMediaProcessor::RequestInfo::OnAudioSourceStarted(
     MediaStreamSource* source,
     MediaStreamRequestResult result,
@@ -320,7 +418,7 @@ void UserMediaProcessor::RequestInfo::OnAudioSourceStarted(
 }
 
 UserMediaProcessor::UserMediaProcessor(
-    RenderFrame* render_frame,
+    RenderFrameImpl* render_frame,
     PeerConnectionDependencyFactory* dependency_factory,
     std::unique_ptr<MediaStreamDeviceObserver> media_stream_device_observer,
     MediaDevicesDispatcherCallback media_devices_dispatcher_cb)
@@ -366,14 +464,14 @@ void UserMediaProcessor::SetupAudioInput() {
   DCHECK(current_request_info_->web_request().Audio());
 
   auto& audio_controls = current_request_info_->stream_controls()->audio;
-  InitializeTrackControls(
-      current_request_info_->web_request().AudioConstraints(), &audio_controls);
-  if (IsDeviceSource(audio_controls.stream_source)) {
+  InitializeAudioTrackControls(current_request_info_->web_request(),
+                               &audio_controls);
+  if (IsDeviceMediaType(audio_controls.stream_type)) {
     GetMediaDevicesDispatcher()->GetAudioInputCapabilities(base::BindOnce(
         &UserMediaProcessor::SelectAudioDeviceSettings,
         weak_factory_.GetWeakPtr(), current_request_info_->web_request()));
   } else {
-    if (!IsValidAudioContentSource(audio_controls.stream_source)) {
+    if (!IsAudioInputMediaType(audio_controls.stream_type)) {
       blink::WebString failed_constraint_name =
           blink::WebString::FromASCII(current_request_info_->web_request()
                                           .AudioConstraints()
@@ -407,10 +505,12 @@ void UserMediaProcessor::SelectAudioDeviceSettings(
       if (source->device().type == MEDIA_DEVICE_AUDIO_CAPTURE)
         audio_source = static_cast<MediaStreamAudioSource*>(source);
     }
-    if (audio_source)
+    if (audio_source) {
       capabilities.emplace_back(audio_source);
-    else
-      capabilities.emplace_back(device->device_id, device->parameters);
+    } else {
+      capabilities.emplace_back(device->device_id, device->group_id,
+                                device->parameters);
+    }
   }
 
   SelectAudioSettings(web_request, capabilities);
@@ -448,8 +548,8 @@ void UserMediaProcessor::SelectAudioSettings(
       settings.hotword_enabled();
   current_request_info_->SetAudioCaptureSettings(
       settings,
-      !IsDeviceSource(
-          current_request_info_->stream_controls()->audio.stream_source));
+      !IsDeviceMediaType(
+          current_request_info_->stream_controls()->audio.stream_type));
 
   // No further audio setup required. Continue with video.
   SetupVideoInput();
@@ -463,15 +563,22 @@ void UserMediaProcessor::SetupVideoInput() {
     GenerateStreamForCurrentRequestInfo();
     return;
   }
+
   auto& video_controls = current_request_info_->stream_controls()->video;
-  InitializeTrackControls(
-      current_request_info_->web_request().VideoConstraints(), &video_controls);
-  if (IsDeviceSource(video_controls.stream_source)) {
+  InitializeVideoTrackControls(current_request_info_->web_request(),
+                               &video_controls);
+
+  if (video_controls.stream_type == MEDIA_DISPLAY_VIDEO_CAPTURE) {
+    SelectVideoContentSettings(false /* allow_device_id_constraint */);
+    return;
+  }
+
+  if (IsDeviceMediaType(video_controls.stream_type)) {
     GetMediaDevicesDispatcher()->GetVideoInputCapabilities(base::BindOnce(
         &UserMediaProcessor::SelectVideoDeviceSettings,
         weak_factory_.GetWeakPtr(), current_request_info_->web_request()));
   } else {
-    if (!IsValidVideoContentSource(video_controls.stream_source)) {
+    if (!IsVideoInputMediaType(video_controls.stream_type)) {
       blink::WebString failed_constraint_name =
           blink::WebString::FromASCII(current_request_info_->web_request()
                                           .VideoConstraints()
@@ -481,7 +588,7 @@ void UserMediaProcessor::SetupVideoInput() {
       GetUserMediaRequestFailed(result, failed_constraint_name);
       return;
     }
-    SelectVideoContentSettings();
+    SelectVideoContentSettings(true /* allow_device_id_constraint */);
   }
 }
 
@@ -497,8 +604,8 @@ void UserMediaProcessor::SelectVideoDeviceSettings(
     return;
 
   DCHECK(current_request_info_->stream_controls()->video.requested);
-  DCHECK(IsDeviceSource(
-      current_request_info_->stream_controls()->video.stream_source));
+  DCHECK(IsDeviceMediaType(
+      current_request_info_->stream_controls()->video.stream_type));
 
   VideoDeviceCaptureCapabilities capabilities;
   capabilities.device_capabilities = std::move(video_input_capabilities);
@@ -531,12 +638,15 @@ void UserMediaProcessor::SelectVideoDeviceSettings(
   GenerateStreamForCurrentRequestInfo();
 }
 
-void UserMediaProcessor::SelectVideoContentSettings() {
+void UserMediaProcessor::SelectVideoContentSettings(
+    bool allow_device_id_constraint) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(current_request_info_);
+  gfx::Size screen_size = GetScreenSize();
   VideoCaptureSettings settings = SelectSettingsVideoContentCapture(
       current_request_info_->web_request().VideoConstraints(),
-      current_request_info_->stream_controls()->video.stream_source);
+      current_request_info_->stream_controls()->video.stream_type,
+      screen_size.width(), screen_size.height());
   if (!settings.HasValue()) {
     blink::WebString failed_constraint_name =
         blink::WebString::FromASCII(settings.failed_constraint_name());
@@ -545,8 +655,10 @@ void UserMediaProcessor::SelectVideoContentSettings() {
                               failed_constraint_name);
     return;
   }
-  current_request_info_->stream_controls()->video.device_id =
-      settings.device_id();
+  if (allow_device_id_constraint) {
+    current_request_info_->stream_controls()->video.device_id =
+        settings.device_id();
+  }
   current_request_info_->SetVideoCaptureSettings(settings,
                                                  true /* is_content_capture */);
   GenerateStreamForCurrentRequestInfo();
@@ -594,9 +706,6 @@ void UserMediaProcessor::OnStreamGenerated(
     return;
   }
 
-  media_stream_device_observer_->AddStream(label, audio_devices, video_devices,
-                                           weak_factory_.GetWeakPtr());
-
   current_request_info_->set_state(RequestInfo::State::GENERATED);
 
   for (const auto* devices : {&audio_devices, &video_devices}) {
@@ -608,24 +717,61 @@ void UserMediaProcessor::OnStreamGenerated(
     }
   }
 
-  DCHECK(!current_request_info_->web_request().IsNull());
-  blink::WebVector<blink::WebMediaStreamTrack> audio_track_vector(
-      audio_devices.size());
-  CreateAudioTracks(audio_devices,
-                    &audio_track_vector);
+  current_request_info_->SetDevices(audio_devices, video_devices);
 
-  blink::WebVector<blink::WebMediaStreamTrack> video_track_vector(
-      video_devices.size());
-  CreateVideoTracks(video_devices, &video_track_vector);
+  if (video_devices.empty()) {
+    StartTracks(label);
+    return;
+  }
 
-  blink::WebString blink_id = blink::WebString::FromUTF8(label);
-  current_request_info_->web_stream()->Initialize(blink_id, audio_track_vector,
-                                                  video_track_vector);
+  if (current_request_info_->is_video_content_capture()) {
+    media::VideoCaptureFormat format =
+        current_request_info_->video_capture_settings().Format();
+    for (const auto& video_device : video_devices) {
+      current_request_info_->AddNativeVideoFormats(
+          video_device.id,
+          {media::VideoCaptureFormat(GetScreenSize(), format.frame_rate,
+                                     format.pixel_format)});
+    }
+    StartTracks(label);
+    return;
+  }
 
-  // Wait for the tracks to be started successfully or to fail.
-  current_request_info_->CallbackOnTracksStarted(
-      base::Bind(&UserMediaProcessor::OnCreateNativeTracksCompleted,
-                 weak_factory_.GetWeakPtr(), label));
+  for (const auto& video_device : video_devices) {
+    GetMediaDevicesDispatcher()->GetAllVideoInputDeviceFormats(
+        video_device.id,
+        base::BindOnce(&UserMediaProcessor::GotAllVideoInputFormatsForDevice,
+                       weak_factory_.GetWeakPtr(),
+                       current_request_info_->web_request(), label,
+                       video_device.id));
+  }
+}
+
+void UserMediaProcessor::GotAllVideoInputFormatsForDevice(
+    const blink::WebUserMediaRequest& web_request,
+    const std::string& label,
+    const std::string& device_id,
+    const media::VideoCaptureFormats& formats) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  // The frame might reload or |web_request| might be cancelled while video
+  // formats are queried. Do nothing if a different request is being processed
+  // at this point.
+  if (!IsCurrentRequestInfo(web_request))
+    return;
+
+  current_request_info_->AddNativeVideoFormats(device_id, formats);
+  if (current_request_info_->CanStartTracks())
+    StartTracks(label);
+}
+
+gfx::Size UserMediaProcessor::GetScreenSize() {
+  gfx::Size screen_size(kDefaultScreenCastWidth, kDefaultScreenCastHeight);
+  if (render_frame_) {  // Can be null in tests.
+    blink::WebScreenInfo info =
+        render_frame_->GetRenderWidget()->GetScreenInfo();
+    screen_size = gfx::Size(info.rect.width, info.rect.height);
+  }
+  return screen_size;
 }
 
 void UserMediaProcessor::OnStreamGeneratedForCancelledRequest(
@@ -731,6 +877,11 @@ blink::WebMediaStreamSource UserMediaProcessor::InitializeVideoSourceObject(
     source.SetExtraData(CreateVideoSource(
         device, base::Bind(&UserMediaProcessor::OnLocalSourceStopped,
                            weak_factory_.GetWeakPtr())));
+    source.SetCapabilities(ComputeCapabilitiesForVideoSource(
+        blink::WebString::FromUTF8(device.id),
+        *current_request_info_->GetNativeVideoFormats(device.id),
+        device.video_facing, current_request_info_->is_video_device_capture(),
+        device.group_id));
     local_sources_.push_back(source);
   }
   return source;
@@ -765,34 +916,38 @@ blink::WebMediaStreamSource UserMediaProcessor::InitializeAudioSourceObject(
       &UserMediaProcessor::OnAudioSourceStartedOnAudioThread,
       base::ThreadTaskRunnerHandle::Get(), weak_factory_.GetWeakPtr());
 
-  bool has_sw_echo_cancellation = false;
   MediaStreamAudioSource* const audio_source =
-      CreateAudioSource(device, source_ready, &has_sw_echo_cancellation);
+      CreateAudioSource(device, std::move(source_ready));
   audio_source->SetStopCallback(base::Bind(
       &UserMediaProcessor::OnLocalSourceStopped, weak_factory_.GetWeakPtr()));
 
-  std::vector<bool> echo_cancellation;
-  echo_cancellation.push_back(true);
-  echo_cancellation.push_back(false);
   blink::WebMediaStreamSource::Capabilities capabilities;
-  capabilities.echo_cancellation = echo_cancellation;
+  capabilities.echo_cancellation = {true, false};
+  capabilities.echo_cancellation_type.reserve(3);
+  capabilities.echo_cancellation_type.emplace_back(
+      blink::WebString::FromASCII(blink::kEchoCancellationTypeBrowser));
+  capabilities.echo_cancellation_type.emplace_back(
+      blink::WebString::FromASCII(blink::kEchoCancellationTypeAec3));
+  if (device.input.effects() &
+      (media::AudioParameters::ECHO_CANCELLER |
+       media::AudioParameters::EXPERIMENTAL_ECHO_CANCELLER)) {
+    capabilities.echo_cancellation_type.emplace_back(
+        blink::WebString::FromASCII(blink::kEchoCancellationTypeSystem));
+  }
+  capabilities.auto_gain_control = {true, false};
+  capabilities.noise_suppression = {true, false};
   capabilities.device_id = blink::WebString::FromUTF8(device.id);
+  if (device.group_id)
+    capabilities.group_id = blink::WebString::FromUTF8(*device.group_id);
 
   source.SetExtraData(audio_source);  // Takes ownership.
   source.SetCapabilities(capabilities);
-  // At this point it is known if software echo cancellation will be used, but
-  // final audio parameters for the source are not set yet, so it is not yet
-  // known if hardware echo cancellation will actually be used. That information
-  // is known and surfaced in CreateAudioTracks(), after the track is connected
-  // to the source.
-  source.SetEchoCancellation(has_sw_echo_cancellation);
   return source;
 }
 
 MediaStreamAudioSource* UserMediaProcessor::CreateAudioSource(
     const MediaStreamDevice& device,
-    const MediaStreamSource::ConstraintsCallback& source_ready,
-    bool* has_sw_echo_cancellation) {
+    const MediaStreamSource::ConstraintsCallback& source_ready) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(current_request_info_);
 
@@ -806,7 +961,6 @@ MediaStreamAudioSource* UserMediaProcessor::CreateAudioSource(
   if (IsScreenCaptureMediaType(device.type) ||
       !MediaStreamAudioProcessor::WouldModifyAudio(
           audio_processing_properties)) {
-    *has_sw_echo_cancellation = false;
     return new LocalMediaStreamAudioSource(
         render_frame_->GetRoutingID(), device, stream_controls->hotword_enabled,
         stream_controls->disable_local_echo, source_ready);
@@ -814,8 +968,6 @@ MediaStreamAudioSource* UserMediaProcessor::CreateAudioSource(
 
   // The audio device is not associated with screen capture and also requires
   // processing.
-  *has_sw_echo_cancellation =
-      audio_processing_properties.enable_sw_echo_cancellation;
   return new ProcessedLocalAudioSource(
       render_frame_->GetRoutingID(), device, stream_controls->hotword_enabled,
       stream_controls->disable_local_echo, audio_processing_properties,
@@ -832,6 +984,30 @@ MediaStreamVideoSource* UserMediaProcessor::CreateVideoSource(
   return new MediaStreamVideoCapturerSource(
       render_frame_->GetRoutingID(), stop_callback, device,
       current_request_info_->video_capture_settings().capture_params());
+}
+
+void UserMediaProcessor::StartTracks(const std::string& label) {
+  DCHECK(!current_request_info_->web_request().IsNull());
+  media_stream_device_observer_->AddStream(
+      label, current_request_info_->audio_devices(),
+      current_request_info_->video_devices(), weak_factory_.GetWeakPtr());
+
+  blink::WebVector<blink::WebMediaStreamTrack> audio_tracks(
+      current_request_info_->audio_devices().size());
+  CreateAudioTracks(current_request_info_->audio_devices(), &audio_tracks);
+
+  blink::WebVector<blink::WebMediaStreamTrack> video_tracks(
+      current_request_info_->video_devices().size());
+  CreateVideoTracks(current_request_info_->video_devices(), &video_tracks);
+
+  blink::WebString blink_id = blink::WebString::FromUTF8(label);
+  current_request_info_->web_stream()->Initialize(blink_id, audio_tracks,
+                                                  video_tracks);
+
+  // Wait for the tracks to be started successfully or to fail.
+  current_request_info_->CallbackOnTracksStarted(
+      base::BindRepeating(&UserMediaProcessor::OnCreateNativeTracksCompleted,
+                          weak_factory_.GetWeakPtr(), label));
 }
 
 void UserMediaProcessor::CreateVideoTracks(
@@ -876,9 +1052,9 @@ void UserMediaProcessor::CreateAudioTracks(
     (*webkit_tracks)[i].Initialize(source);
     current_request_info_->StartAudioTrack((*webkit_tracks)[i], is_pending);
     // At this point the source has started, and its audio parameters have been
-    // set. From the parameters, it is known if hardware echo cancellation is
-    // being used. If this is the case, let |source| know.
-    SurfaceHardwareEchoCancellationSetting(&source);
+    // set. Thus, all audio processing properties are known and can be surfaced
+    // to |source|.
+    SurfaceAudioProcessingSettings(&source);
   }
 }
 
@@ -895,15 +1071,13 @@ void UserMediaProcessor::OnCreateNativeTracksCompleted(
   } else {
     GetUserMediaRequestFailed(result, constraint_name);
 
-    blink::WebVector<blink::WebMediaStreamTrack> tracks;
-    request_info->web_stream()->AudioTracks(tracks);
-    for (auto& web_track : tracks) {
+    for (auto& web_track : request_info->web_stream()->AudioTracks()) {
       MediaStreamTrack* track = MediaStreamTrack::GetTrack(web_track);
       if (track)
         track->Stop();
     }
-    request_info->web_stream()->VideoTracks(tracks);
-    for (auto& web_track : tracks) {
+
+    for (auto& web_track : request_info->web_stream()->VideoTracks()) {
       MediaStreamTrack* track = MediaStreamTrack::GetTrack(web_track);
       if (track)
         track->Stop();
@@ -1069,6 +1243,8 @@ blink::WebMediaStreamSource UserMediaProcessor::FindOrInitializeSourceObject(
   source.Initialize(blink::WebString::FromUTF8(device.id), type,
                     blink::WebString::FromUTF8(device.name),
                     false /* remote */);
+  if (device.group_id)
+    source.SetGroupId(blink::WebString::FromUTF8(*device.group_id));
 
   DVLOG(1) << "Initialize source object :"
            << "id = " << source.Id().Utf8()
@@ -1138,22 +1314,22 @@ bool UserMediaProcessor::DeleteWebRequest(
 
 void UserMediaProcessor::StopAllProcessing() {
   if (current_request_info_) {
-    // If the request is not generated, it means that a request has been sent to
-    // the MediaStreamDispatcherHost to generate a stream but
-    // MediaStreamDispatcherHost has not yet responded and we need to cancel the
-    // request.
-    if (current_request_info_->state() == RequestInfo::State::GENERATED) {
-      DCHECK(current_request_info_->HasPendingSources());
-      LogUserMediaRequestWithNoResult(
-          MEDIA_STREAM_REQUEST_PENDING_MEDIA_TRACKS);
-    } else {
-      DCHECK(!current_request_info_->HasPendingSources());
-      if (current_request_info_->state() ==
-          RequestInfo::State::SENT_FOR_GENERATION) {
+    switch (current_request_info_->state()) {
+      case RequestInfo::State::SENT_FOR_GENERATION:
+        // Let the browser process know that the previously sent request must be
+        // canceled.
         GetMediaStreamDispatcherHost()->CancelRequest(
             current_request_info_->request_id());
-      }
-      LogUserMediaRequestWithNoResult(MEDIA_STREAM_REQUEST_NOT_GENERATED);
+        FALLTHROUGH;
+
+      case RequestInfo::State::NOT_SENT_FOR_GENERATION:
+        LogUserMediaRequestWithNoResult(MEDIA_STREAM_REQUEST_NOT_GENERATED);
+        break;
+
+      case RequestInfo::State::GENERATED:
+        LogUserMediaRequestWithNoResult(
+            MEDIA_STREAM_REQUEST_PENDING_MEDIA_TRACKS);
+        break;
     }
     current_request_info_.reset();
   }

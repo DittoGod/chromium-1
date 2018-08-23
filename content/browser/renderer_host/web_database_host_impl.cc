@@ -9,6 +9,7 @@
 
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "content/browser/child_process_security_policy_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/origin_util.h"
@@ -18,8 +19,9 @@
 #include "storage/browser/quota/quota_manager.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/common/database/database_identifier.h"
-#include "third_party/WebKit/common/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "third_party/sqlite/sqlite3.h"
+#include "url/origin.h"
 
 using storage::DatabaseUtil;
 using storage::VfsBackend;
@@ -32,15 +34,6 @@ namespace {
 const int kNumDeleteRetries = 2;
 // The delay between each retry to delete the SQLite database.
 const int kDelayDeleteRetryMs = 100;
-
-bool ValidateOrigin(const url::Origin& origin) {
-  if (origin.unique()) {
-    mojo::ReportBadMessage("Invalid Origin.");
-    return false;
-  }
-  return true;
-}
-
 }  // namespace
 
 WebDatabaseHostImpl::WebDatabaseHostImpl(
@@ -79,6 +72,9 @@ void WebDatabaseHostImpl::OpenFile(const base::string16& vfs_file_name,
                                    int32_t desired_flags,
                                    OpenFileCallback callback) {
   DCHECK(db_tracker_->task_runner()->RunsTasksInCurrentSequence());
+  if (!ValidateOrigin(vfs_file_name))
+    return;
+
   base::File file;
   const base::File* tracked_file = nullptr;
   std::string origin_identifier;
@@ -90,8 +86,8 @@ void WebDatabaseHostImpl::OpenFile(const base::string16& vfs_file_name,
   // open handles to them in the database tracker to make sure they're
   // around for as long as needed.
   if (vfs_file_name.empty()) {
-    file = VfsBackend::OpenTempFileInDirectory(db_tracker_->DatabaseDirectory(),
-                                               desired_flags);
+    file = VfsBackend::OpenTempFileInDirectory(
+        db_tracker_->database_directory(), desired_flags);
   } else if (DatabaseUtil::CrackVfsFileName(vfs_file_name, &origin_identifier,
                                             &database_name, nullptr) &&
              !db_tracker_->IsDatabaseScheduledForDeletion(origin_identifier,
@@ -129,6 +125,9 @@ void WebDatabaseHostImpl::DeleteFile(const base::string16& vfs_file_name,
                                      bool sync_dir,
                                      DeleteFileCallback callback) {
   DCHECK(db_tracker_->task_runner()->RunsTasksInCurrentSequence());
+  if (!ValidateOrigin(vfs_file_name))
+    return;
+
   DatabaseDeleteFile(vfs_file_name, sync_dir, std::move(callback),
                      kNumDeleteRetries);
 }
@@ -137,6 +136,9 @@ void WebDatabaseHostImpl::GetFileAttributes(
     const base::string16& vfs_file_name,
     GetFileAttributesCallback callback) {
   DCHECK(db_tracker_->task_runner()->RunsTasksInCurrentSequence());
+  if (!ValidateOrigin(vfs_file_name))
+    return;
+
   int32_t attributes = -1;
   base::FilePath db_file =
       DatabaseUtil::GetFullFilePathForVfsFile(db_tracker_.get(), vfs_file_name);
@@ -149,6 +151,9 @@ void WebDatabaseHostImpl::GetFileAttributes(
 void WebDatabaseHostImpl::GetFileSize(const base::string16& vfs_file_name,
                                       GetFileSizeCallback callback) {
   DCHECK(db_tracker_->task_runner()->RunsTasksInCurrentSequence());
+  if (!ValidateOrigin(vfs_file_name))
+    return;
+
   int64_t size = 0LL;
   base::FilePath db_file =
       DatabaseUtil::GetFullFilePathForVfsFile(db_tracker_.get(), vfs_file_name);
@@ -162,6 +167,9 @@ void WebDatabaseHostImpl::SetFileSize(const base::string16& vfs_file_name,
                                       int64_t expected_size,
                                       SetFileSizeCallback callback) {
   DCHECK(db_tracker_->task_runner()->RunsTasksInCurrentSequence());
+  if (!ValidateOrigin(vfs_file_name))
+    return;
+
   bool success = false;
   base::FilePath db_file =
       DatabaseUtil::GetFullFilePathForVfsFile(db_tracker_.get(), vfs_file_name);
@@ -176,17 +184,15 @@ void WebDatabaseHostImpl::GetSpaceAvailable(
     GetSpaceAvailableCallback callback) {
   // QuotaManager is only available on the IO thread.
   DCHECK(db_tracker_->task_runner()->RunsTasksInCurrentSequence());
-  DCHECK(db_tracker_->quota_manager_proxy());
 
   if (!ValidateOrigin(origin)) {
-    std::move(callback).Run(0);
     return;
   }
 
+  DCHECK(db_tracker_->quota_manager_proxy());
   db_tracker_->quota_manager_proxy()->GetUsageAndQuota(
-      db_tracker_->task_runner(), origin.GetURL(),
-      blink::mojom::StorageType::kTemporary,
-      base::Bind(
+      db_tracker_->task_runner(), origin, blink::mojom::StorageType::kTemporary,
+      base::BindOnce(
           [](GetSpaceAvailableCallback callback,
              blink::mojom::QuotaStatusCode status, int64_t usage,
              int64_t quota) {
@@ -197,7 +203,7 @@ void WebDatabaseHostImpl::GetSpaceAvailable(
             }
             std::move(callback).Run(available);
           },
-          base::Passed(std::move(callback))));
+          std::move(callback)));
 }
 
 void WebDatabaseHostImpl::DatabaseDeleteFile(
@@ -263,11 +269,10 @@ void WebDatabaseHostImpl::Opened(const url::Origin& origin,
     return;
   }
 
-  GURL origin_url(origin.Serialize());
-  UMA_HISTOGRAM_BOOLEAN("websql.OpenDatabase", IsOriginSecure(origin_url));
+  UMA_HISTOGRAM_BOOLEAN("websql.OpenDatabase", IsOriginSecure(origin.GetURL()));
 
   int64_t database_size = 0;
-  std::string origin_identifier(storage::GetIdentifierFromOrigin(origin_url));
+  std::string origin_identifier(storage::GetIdentifierFromOrigin(origin));
   db_tracker_->DatabaseOpened(origin_identifier, database_name,
                               database_description, estimated_size,
                               &database_size);
@@ -285,8 +290,7 @@ void WebDatabaseHostImpl::Modified(const url::Origin& origin,
     return;
   }
 
-  std::string origin_identifier(
-      storage::GetIdentifierFromOrigin(origin.GetURL()));
+  std::string origin_identifier(storage::GetIdentifierFromOrigin(origin));
   if (!database_connections_.IsDatabaseOpened(origin_identifier,
                                               database_name)) {
     mojo::ReportBadMessage("Database not opened on modify");
@@ -304,8 +308,7 @@ void WebDatabaseHostImpl::Closed(const url::Origin& origin,
     return;
   }
 
-  std::string origin_identifier(
-      storage::GetIdentifierFromOrigin(origin.GetURL()));
+  std::string origin_identifier(storage::GetIdentifierFromOrigin(origin));
   if (!database_connections_.IsDatabaseOpened(origin_identifier,
                                               database_name)) {
     mojo::ReportBadMessage("Database not opened on close");
@@ -324,8 +327,8 @@ void WebDatabaseHostImpl::HandleSqliteError(const url::Origin& origin,
     return;
   }
 
-  db_tracker_->HandleSqliteError(
-      storage::GetIdentifierFromOrigin(origin.GetURL()), database_name, error);
+  db_tracker_->HandleSqliteError(storage::GetIdentifierFromOrigin(origin),
+                                 database_name, error);
 }
 
 void WebDatabaseHostImpl::OnDatabaseSizeChanged(
@@ -338,8 +341,8 @@ void WebDatabaseHostImpl::OnDatabaseSizeChanged(
   }
 
   GetWebDatabase().UpdateSize(
-      url::Origin::Create(storage::GetOriginFromIdentifier(origin_identifier)),
-      database_name, database_size);
+      storage::GetOriginFromIdentifier(origin_identifier), database_name,
+      database_size);
 }
 
 void WebDatabaseHostImpl::OnDatabaseScheduledForDeletion(
@@ -348,8 +351,7 @@ void WebDatabaseHostImpl::OnDatabaseScheduledForDeletion(
   DCHECK(db_tracker_->task_runner()->RunsTasksInCurrentSequence());
 
   GetWebDatabase().CloseImmediately(
-      url::Origin::Create(storage::GetOriginFromIdentifier(origin_identifier)),
-      database_name);
+      storage::GetOriginFromIdentifier(origin_identifier), database_name);
 }
 
 blink::mojom::WebDatabase& WebDatabaseHostImpl::GetWebDatabase() {
@@ -369,6 +371,39 @@ blink::mojom::WebDatabase& WebDatabaseHostImpl::GetWebDatabase() {
             process_id_, mojo::MakeRequest(&database_provider_)));
   }
   return *database_provider_;
+}
+
+bool WebDatabaseHostImpl::ValidateOrigin(const url::Origin& origin) {
+  if (origin.unique()) {
+    mojo::ReportBadMessage("Invalid origin.");
+    return false;
+  }
+
+  if (!ChildProcessSecurityPolicyImpl::GetInstance()->CanAccessDataForOrigin(
+          process_id_, origin.GetURL())) {
+    mojo::ReportBadMessage("Unauthorized origin.");
+    return false;
+  }
+  return true;
+}
+
+bool WebDatabaseHostImpl::ValidateOrigin(const base::string16& vfs_file_name) {
+  std::string origin_identifier;
+  if (vfs_file_name.empty())
+    return true;
+
+  if (!DatabaseUtil::CrackVfsFileName(vfs_file_name, &origin_identifier,
+                                      nullptr, nullptr)) {
+    return true;
+  }
+
+  if (!ChildProcessSecurityPolicyImpl::GetInstance()->CanAccessDataForOrigin(
+          process_id_,
+          storage::GetOriginURLFromIdentifier(origin_identifier))) {
+    mojo::ReportBadMessage("Unauthorized origin.");
+    return false;
+  }
+  return true;
 }
 
 }  // namespace content

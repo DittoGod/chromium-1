@@ -24,8 +24,10 @@ enum class TransferCacheEntryType : uint32_t {
   kImage,
   kPaintTypeface,
   kColorSpace,
+  kPath,
+  kShader,
   // Add new entries above this line, make sure to update kLast.
-  kLast = kColorSpace,
+  kLast = kShader,
 };
 
 // An interface used on the client to serialize a transfer cache entry
@@ -82,7 +84,8 @@ class CC_PAINT_EXPORT ServiceTransferCacheEntry {
 
   // Deserialize the cache entry from the given span of memory with the given
   // context.
-  virtual bool Deserialize(GrContext* context, base::span<uint8_t> data) = 0;
+  virtual bool Deserialize(GrContext* context,
+                           base::span<const uint8_t> data) = 0;
 };
 
 // Helpers to simplify subclassing.

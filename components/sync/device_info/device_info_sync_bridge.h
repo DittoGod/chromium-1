@@ -34,9 +34,10 @@ namespace syncer {
 class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
                              public DeviceInfoTracker {
  public:
-  DeviceInfoSyncBridge(LocalDeviceInfoProvider* local_device_info_provider,
-                       OnceModelTypeStoreFactory store_factory,
-                       const ChangeProcessorFactory& change_processor_factory);
+  DeviceInfoSyncBridge(
+      LocalDeviceInfoProvider* local_device_info_provider,
+      OnceModelTypeStoreFactory store_factory,
+      std::unique_ptr<ModelTypeChangeProcessor> change_processor);
   ~DeviceInfoSyncBridge() override;
 
   // ModelTypeSyncBridge implementation.
@@ -48,10 +49,11 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
       std::unique_ptr<MetadataChangeList> metadata_change_list,
       EntityChangeList entity_changes) override;
   void GetData(StorageKeyList storage_keys, DataCallback callback) override;
-  void GetAllData(DataCallback callback) override;
+  void GetAllDataForDebugging(DataCallback callback) override;
   std::string GetClientTag(const EntityData& entity_data) override;
   std::string GetStorageKey(const EntityData& entity_data) override;
-  void DisableSync() override;
+  StopSyncResponse ApplyStopSyncChanges(
+      std::unique_ptr<MetadataChangeList> delete_metadata_change_list) override;
 
   // DeviceInfoTracker implementation.
   bool IsSyncing() const override;
@@ -62,9 +64,13 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
   void RemoveObserver(Observer* observer) override;
   int CountActiveDevices() const override;
 
- private:
-  friend class DeviceInfoSyncBridgeTest;
+  // For testing only.
+  static std::unique_ptr<ModelTypeStore> DestroyAndStealStoreForTest(
+      std::unique_ptr<DeviceInfoSyncBridge> bridge);
+  bool IsPulseTimerRunningForTest() const;
+  void ForcePulseForTest();
 
+ private:
   // Cache of all syncable and local data, stored by device cache guid.
   using ClientIdToSpecifics =
       std::map<std::string, std::unique_ptr<sync_pb::DeviceInfoSpecifics>>;
@@ -122,7 +128,7 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
   ClientIdToSpecifics all_data_;
 
   // Registered observers, not owned.
-  base::ObserverList<Observer, true> observers_;
+  base::ObserverList<Observer, true>::Unchecked observers_;
 
   // Used to listen for provider initialization. If the provider is already
   // initialized during our constructor then the subscription is never used.
@@ -138,6 +144,8 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
 
   // Used to update our local device info once every pulse interval.
   base::OneShotTimer pulse_timer_;
+
+  base::WeakPtrFactory<DeviceInfoSyncBridge> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceInfoSyncBridge);
 };

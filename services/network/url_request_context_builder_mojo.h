@@ -37,10 +37,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLRequestContextBuilderMojo
   URLRequestContextBuilderMojo();
   ~URLRequestContextBuilderMojo() override;
 
-  // Overrides default DhcpProxyScriptFetcherFactory. Ignored if no
+  // Overrides default DhcpPacFileFetcherFactory. Ignored if no
   // proxy_resolver::mojom::ProxyResolverFactory is provided.
   void SetDhcpFetcherFactory(
-      std::unique_ptr<net::DhcpProxyScriptFetcherFactory> dhcp_fetcher_factory);
+      std::unique_ptr<net::DhcpPacFileFetcherFactory> dhcp_fetcher_factory);
 
   // Sets Mojo factory used to create ProxyResolvers. If not set, falls back to
   // URLRequestContext's default behavior.
@@ -48,26 +48,15 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLRequestContextBuilderMojo
       proxy_resolver::mojom::ProxyResolverFactoryPtr
           mojo_proxy_resolver_factory);
 
-  // Can be used to create a URLRequestContext from this consumer-configured
-  // URLRequestContextBuilder, which |params| will then be applied to. The
-  // results URLRequestContext will be returned along with other state that it
-  // depends on. The URLRequestContext can be further modified before first use.
-  //
-  // This method is intended to ease the transition to an out-of-process
-  // NetworkService, and will be removed once that ships.
-  URLRequestContextOwner Create(mojom::NetworkContextParams* params,
-                                bool quic_disabled,
-                                net::NetLog* net_log);
-
  private:
-  std::unique_ptr<net::ProxyResolutionService> CreateProxyService(
+  std::unique_ptr<net::ProxyResolutionService> CreateProxyResolutionService(
       std::unique_ptr<net::ProxyConfigService> proxy_config_service,
       net::URLRequestContext* url_request_context,
       net::HostResolver* host_resolver,
       net::NetworkDelegate* network_delegate,
       net::NetLog* net_log) override;
 
-  std::unique_ptr<net::DhcpProxyScriptFetcherFactory> dhcp_fetcher_factory_;
+  std::unique_ptr<net::DhcpPacFileFetcherFactory> dhcp_fetcher_factory_;
 
   proxy_resolver::mojom::ProxyResolverFactoryPtr mojo_proxy_resolver_factory_;
 

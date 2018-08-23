@@ -16,7 +16,7 @@
 #include "content/public/test/find_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/dns/mock_host_resolver.h"
-#include "third_party/WebKit/public/web/WebFindOptions.h"
+#include "third_party/blink/public/web/web_find_options.h"
 
 namespace content {
 
@@ -88,6 +88,7 @@ IN_PROC_BROWSER_TEST_F(ChromeFindRequestManagerTest, FindInPDF) {
   ASSERT_TRUE(pdf_extension_test_util::EnsurePDFHasLoaded(contents()));
 
   blink::WebFindOptions options;
+  options.run_synchronously_for_testing = true;
   Find("result", options);
   options.find_next = true;
   Find("result", options);
@@ -113,6 +114,7 @@ IN_PROC_BROWSER_TEST_F(ChromeFindRequestManagerTest,
   ASSERT_TRUE(pdf_extension_test_util::EnsurePDFHasLoaded(contents()));
 
   blink::WebFindOptions options;
+  options.find_next = true;
   Find("result", options);
   options.find_next = true;
   options.forward = false;

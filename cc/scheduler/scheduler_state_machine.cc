@@ -323,6 +323,10 @@ bool SchedulerStateMachine::ShouldDraw() const {
   if (did_draw_)
     return false;
 
+  // Don't draw if an early check determined the frame does not have damage.
+  if (skip_draw_)
+    return false;
+
   // Don't draw if we are waiting on the first commit after a surface.
   if (layer_tree_frame_sink_state_ != LayerTreeFrameSinkState::ACTIVE)
     return false;
@@ -561,6 +565,10 @@ bool SchedulerStateMachine::ShouldInvalidateLayerTreeFrameSink() const {
   if (begin_impl_frame_state_ != BeginImplFrameState::INSIDE_BEGIN_FRAME)
     return false;
 
+  // Don't invalidate if we cannnot draw.
+  if (PendingDrawsShouldBeAborted())
+    return false;
+
   // TODO(sunnyps): needs_prepare_tiles_ is needed here because PrepareTiles is
   // called only inside the deadline / draw phase. We could remove this if we
   // allowed PrepareTiles to happen in OnBeginImplFrame.
@@ -597,6 +605,9 @@ SchedulerStateMachine::Action SchedulerStateMachine::NextAction() const {
 }
 
 bool SchedulerStateMachine::ShouldPerformImplSideInvalidation() const {
+  if (begin_frame_is_animate_only_)
+    return false;
+
   if (!needs_impl_side_invalidation_)
     return false;
 
@@ -813,7 +824,6 @@ void SchedulerStateMachine::WillDrawInternal() {
 
   did_draw_ = true;
   active_tree_needs_first_draw_ = false;
-  did_draw_in_last_frame_ = true;
   last_frame_number_draw_performed_ = current_frame_number_;
 
   if (forced_redraw_state_ == ForcedRedrawOnTimeoutState::WAITING_FOR_DRAW)
@@ -860,6 +870,10 @@ void SchedulerStateMachine::DidDrawInternal(DrawResult draw_result) {
 void SchedulerStateMachine::WillDraw() {
   DCHECK(!did_draw_);
   WillDrawInternal();
+  // Set this to true to proactively request a new BeginFrame. We can't set this
+  // in WillDrawInternal because AbortDraw calls WillDrawInternal but shouldn't
+  // request another frame.
+  did_draw_in_last_frame_ = true;
 }
 
 void SchedulerStateMachine::DidDraw(DrawResult draw_result) {
@@ -907,11 +921,6 @@ void SchedulerStateMachine::WillInvalidateLayerTreeFrameSink() {
   did_invalidate_layer_tree_frame_sink_ = true;
   last_frame_number_invalidate_layer_tree_frame_sink_performed_ =
       current_frame_number_;
-
-  // The synchronous compositor makes no guarantees about a draw coming in after
-  // an invalidate so clear any flags that would cause the compositor's pipeline
-  // to stall.
-  active_tree_needs_first_draw_ = false;  // blocks commit if true
 }
 
 void SchedulerStateMachine::SetSkipNextBeginMainFrameToReduceLatency(
@@ -930,6 +939,14 @@ bool SchedulerStateMachine::BeginFrameNeeded() const {
   // TODO(brianderson): Support output surface creation inside a BeginFrame.
   if (!HasInitializedLayerTreeFrameSink())
     return false;
+
+  // The propagation of the needsBeginFrame signal to viz is inherently racy
+  // with issuing the next BeginFrame. In full-pipe mode, it is important we
+  // don't miss a BeginFrame because our needsBeginFrames signal propagated to
+  // viz too slowly. To avoid the race, we simply always request BeginFrames
+  // from viz.
+  if (settings_.wait_for_all_pipeline_stages_before_draw)
+    return true;
 
   // If we are not visible, we don't need BeginFrame messages.
   if (!visible_)
@@ -1006,9 +1023,11 @@ bool SchedulerStateMachine::ProactiveBeginFrameWanted() const {
 }
 
 void SchedulerStateMachine::OnBeginImplFrame(uint64_t source_id,
-                                             uint64_t sequence_number) {
+                                             uint64_t sequence_number,
+                                             bool animate_only) {
   begin_impl_frame_state_ = BeginImplFrameState::INSIDE_BEGIN_FRAME;
   current_frame_number_++;
+  begin_frame_is_animate_only_ = animate_only;
 
   // Cache the values from the previous impl frame before reseting them for this
   // frame.
@@ -1061,12 +1080,18 @@ void SchedulerStateMachine::OnBeginImplFrameIdle() {
 
 SchedulerStateMachine::BeginImplFrameDeadlineMode
 SchedulerStateMachine::CurrentBeginImplFrameDeadlineMode() const {
-  if (settings_.using_synchronous_renderer_compositor) {
-    // No deadline for synchronous compositor.
+  const bool outside_begin_frame =
+      begin_impl_frame_state_ != BeginImplFrameState::INSIDE_BEGIN_FRAME;
+  if (settings_.using_synchronous_renderer_compositor || outside_begin_frame) {
+    // No deadline for synchronous compositor, or when outside the begin frame.
     return BeginImplFrameDeadlineMode::NONE;
   } else if (ShouldBlockDeadlineIndefinitely()) {
+    // We do not want to wait for a deadline because we're waiting for full
+    // pipeline to be flushed for headless.
     return BeginImplFrameDeadlineMode::BLOCKED;
   } else if (ShouldTriggerBeginImplFrameDeadlineImmediately()) {
+    // We are ready to draw a new active tree immediately because there's no
+    // commit expected or we're prioritizing active tree latency.
     return BeginImplFrameDeadlineMode::IMMEDIATE;
   } else if (needs_redraw_) {
     // We have an animation or fast input path on the impl thread that wants
@@ -1074,7 +1099,7 @@ SchedulerStateMachine::CurrentBeginImplFrameDeadlineMode() const {
     return BeginImplFrameDeadlineMode::REGULAR;
   } else {
     // The impl thread doesn't have anything it wants to draw and we are just
-    // waiting for a new active tree. In short we are blocked.
+    // waiting for a new active tree.
     return BeginImplFrameDeadlineMode::LATE;
   }
 }
@@ -1097,9 +1122,6 @@ bool SchedulerStateMachine::ShouldTriggerBeginImplFrameDeadlineImmediately()
 
   if (active_tree_needs_first_draw_)
     return true;
-
-  if (!needs_redraw_)
-    return false;
 
   // This is used to prioritize impl-thread draws when the main thread isn't
   // producing anything, e.g., after an aborted commit. We also check that we
@@ -1188,6 +1210,10 @@ void SchedulerStateMachine::SetResourcelessSoftwareDraw(
 
 void SchedulerStateMachine::SetCanDraw(bool can_draw) {
   can_draw_ = can_draw;
+}
+
+void SchedulerStateMachine::SetSkipDraw(bool skip_draw) {
+  skip_draw_ = skip_draw;
 }
 
 void SchedulerStateMachine::SetNeedsRedraw() {

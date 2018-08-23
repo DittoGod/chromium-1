@@ -9,14 +9,9 @@
 #include "components/cbor/cbor_values.h"
 #include "components/cbor/cbor_writer.h"
 #include "device/fido/attestation_statement.h"
+#include "device/fido/fido_constants.h"
 
 namespace device {
-
-namespace {
-constexpr char kAuthDataKey[] = "authData";
-constexpr char kFormatKey[] = "fmt";
-constexpr char kAttestationKey[] = "attStmt";
-}  // namespace
 
 AttestationObject::AttestationObject(
     AuthenticatorData data,
@@ -30,20 +25,37 @@ AttestationObject& AttestationObject::operator=(AttestationObject&& other) =
 
 AttestationObject::~AttestationObject() = default;
 
-void AttestationObject::EraseAttestationStatement() {
-  attestation_statement_.reset(new NoneAttestationStatement);
+std::vector<uint8_t> AttestationObject::GetCredentialId() const {
+  return authenticator_data_.GetCredentialId();
+}
 
-#if !defined(NDEBUG)
-  std::vector<uint8_t> auth_data = authenticator_data_.SerializeToByteArray();
-  // See diagram at https://w3c.github.io/webauthn/#sctn-attestation
-  constexpr size_t kAAGUIDOffset =
-      32 /* RP ID hash */ + 1 /* flags */ + 4 /* signature counter */;
-  constexpr size_t kAAGUIDSize = 16;
-  DCHECK(auth_data.size() >= kAAGUIDOffset + kAAGUIDSize);
-  DCHECK(std::all_of(&auth_data[kAAGUIDOffset],
-                     &auth_data[kAAGUIDOffset + kAAGUIDSize],
-                     [](uint8_t v) { return v == 0; }));
+void AttestationObject::EraseAttestationStatement() {
+  attestation_statement_ = std::make_unique<NoneAttestationStatement>();
+  authenticator_data_.DeleteDeviceAaguid();
+
+// Attested credential data is optional section within authenticator data. But
+// if present, the first 16 bytes of it represents a device AAGUID which must
+// be set to zeros for none attestation statement format.
+#if DCHECK_IS_ON()
+  if (!authenticator_data_.attested_data())
+    return;
+  DCHECK(authenticator_data_.attested_data()->IsAaguidZero());
 #endif
+}
+
+bool AttestationObject::IsSelfAttestation() {
+  if (!attestation_statement_->IsSelfAttestation()) {
+    return false;
+  }
+  // Self-attestation also requires that the AAGUID be zero. See
+  // https://www.w3.org/TR/webauthn/#createCredential.
+  return !authenticator_data_.attested_data() ||
+         authenticator_data_.attested_data()->IsAaguidZero();
+}
+
+bool AttestationObject::IsAttestationCertificateInappropriatelyIdentifying() {
+  return attestation_statement_
+      ->IsAttestationCertificateInappropriatelyIdentifying();
 }
 
 std::vector<uint8_t> AttestationObject::SerializeToCBOREncodedBytes() const {
@@ -52,10 +64,21 @@ std::vector<uint8_t> AttestationObject::SerializeToCBOREncodedBytes() const {
       cbor::CBORValue(attestation_statement_->format_name());
   map[cbor::CBORValue(kAuthDataKey)] =
       cbor::CBORValue(authenticator_data_.SerializeToByteArray());
-  map[cbor::CBORValue(kAttestationKey)] =
+  map[cbor::CBORValue(kAttestationStatementKey)] =
       cbor::CBORValue(attestation_statement_->GetAsCBORMap());
   return cbor::CBORWriter::Write(cbor::CBORValue(std::move(map)))
       .value_or(std::vector<uint8_t>());
+}
+
+std::vector<uint8_t> SerializeToCtapStyleCborEncodedBytes(
+    const AttestationObject& object) {
+  cbor::CBORValue::MapValue map;
+  map.emplace(1, object.attestation_statement().format_name());
+  map.emplace(2, object.authenticator_data().SerializeToByteArray());
+  map.emplace(3, object.attestation_statement().GetAsCBORMap());
+  auto encoded_bytes = cbor::CBORWriter::Write(cbor::CBORValue(std::move(map)));
+  DCHECK(encoded_bytes);
+  return std::move(*encoded_bytes);
 }
 
 }  // namespace device

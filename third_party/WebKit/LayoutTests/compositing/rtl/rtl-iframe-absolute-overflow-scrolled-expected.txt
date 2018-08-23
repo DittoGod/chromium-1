@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -23,15 +24,18 @@
     {
       "name": "LayoutView #document",
       "bounds": [400, 400],
+      "drawsContent": false,
       "backgroundColor": "#FF0000"
     },
     {
       "name": "Scrolling Layer",
+      "position": [15, 0],
       "bounds": [385, 385],
       "drawsContent": false
     },
     {
       "name": "Scrolling Contents Layer",
+      "position": [15, 0],
       "bounds": [1000, 1000],
       "backgroundColor": "#FF0000",
       "transform": 1
@@ -50,19 +54,18 @@
     },
     {
       "name": "Horizontal Scrollbar Layer",
-      "position": [0, 385],
+      "position": [15, 385],
       "bounds": [385, 15],
       "drawsContent": false
     },
     {
       "name": "Vertical Scrollbar Layer",
-      "position": [385, 0],
       "bounds": [15, 385],
       "drawsContent": false
     },
     {
       "name": "Scroll Corner Layer",
-      "position": [385, 385],
+      "position": [0, 385],
       "bounds": [15, 15]
     }
   ],
@@ -84,7 +87,7 @@
         [1, 0, 0, 0],
         [0, 1, 0, 0],
         [0, 0, 1, 0],
-        [51, 50, 0, 1]
+        [66, 50, 0, 1]
       ]
     }
   ]

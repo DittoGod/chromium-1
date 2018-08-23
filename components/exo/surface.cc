@@ -42,6 +42,7 @@
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/path.h"
+#include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/transform_util.h"
 #include "ui/views/widget/widget.h"
 
@@ -115,7 +116,11 @@ class CustomWindowDelegate : public aura::WindowDelegate {
   void OnBoundsChanged(const gfx::Rect& old_bounds,
                        const gfx::Rect& new_bounds) override {}
   gfx::NativeCursor GetCursor(const gfx::Point& point) override {
-    return surface_->GetCursor();
+    views::Widget* widget =
+        views::Widget::GetTopLevelWidgetForNativeView(surface_->window());
+    if (widget)
+      return widget->GetNativeWindow()->GetCursor(point /* not used */);
+    return ui::CursorType::kNull;
   }
   int GetNonClientComponent(const gfx::Point& point) const override {
     return HTNOWHERE;
@@ -187,8 +192,10 @@ class CustomWindowTargeter : public aura::WindowTargeter {
 ////////////////////////////////////////////////////////////////////////////////
 // Surface, public:
 
-Surface::Surface() : window_(new aura::Window(new CustomWindowDelegate(this))) {
-  window_->SetType(aura::client::WINDOW_TYPE_CONTROL);
+Surface::Surface()
+    : window_(std::make_unique<aura::Window>(new CustomWindowDelegate(this),
+                                             aura::client::WINDOW_TYPE_CONTROL,
+                                             WMHelper::GetInstance()->env())) {
   window_->SetName("ExoSurface");
   window_->SetProperty(kSurfaceKey, this);
   window_->Init(ui::LAYER_NOT_DRAWN);
@@ -211,7 +218,7 @@ Surface::~Surface() {
   presentation_callbacks_.splice(presentation_callbacks_.end(),
                                  pending_presentation_callbacks_);
   for (const auto& presentation_callback : presentation_callbacks_)
-    presentation_callback.Run(base::TimeTicks(), base::TimeDelta(), 0);
+    presentation_callback.Run(gfx::PresentationFeedback());
 
   WMHelper::GetInstance()->ResetDragDropDelegate(window_.get());
 }
@@ -443,6 +450,21 @@ void Surface::SetFrameColors(SkColor active_color, SkColor inactive_color) {
     delegate_->OnSetFrameColors(active_color, inactive_color);
 }
 
+void Surface::SetStartupId(const char* startup_id) {
+  TRACE_EVENT1("exo", "Surface::SetStartupId", "startup_id", startup_id);
+
+  if (delegate_)
+    delegate_->OnSetStartupId(startup_id);
+}
+
+void Surface::SetApplicationId(const char* application_id) {
+  TRACE_EVENT1("exo", "Surface::SetApplicationId", "application_id",
+               application_id);
+
+  if (delegate_)
+    delegate_->OnSetApplicationId(application_id);
+}
+
 void Surface::SetParent(Surface* parent, const gfx::Point& position) {
   TRACE_EVENT2("exo", "Surface::SetParent", "parent", !!parent, "position",
                position.ToString());
@@ -557,8 +579,9 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
   if (state_.input_region) {
     hit_test_region_ = *state_.input_region;
     hit_test_region_.Intersect(surface_hierarchy_content_bounds_);
-  } else
+  } else {
     hit_test_region_ = surface_hierarchy_content_bounds_;
+  }
 
   int outset = state_.input_outset;
   if (outset > 0) {
@@ -652,25 +675,6 @@ Surface::GetHitTestShapeRects() const {
   return rects;
 }
 
-void Surface::RegisterCursorProvider(Pointer* provider) {
-  cursor_providers_.insert(provider);
-}
-
-void Surface::UnregisterCursorProvider(Pointer* provider) {
-  cursor_providers_.erase(provider);
-}
-
-gfx::NativeCursor Surface::GetCursor() {
-  // What cursor we display when we have multiple cursor providers is not
-  // important. Return the first non-null cursor.
-  for (auto* cursor_provider : cursor_providers_) {
-    gfx::NativeCursor cursor = cursor_provider->GetCursor();
-    if (cursor != ui::CursorType::kNull)
-      return cursor;
-  }
-  return ui::CursorType::kNull;
-}
-
 void Surface::SetSurfaceDelegate(SurfaceDelegate* delegate) {
   DCHECK(!delegate_ || !delegate);
   delegate_ = delegate;
@@ -727,7 +731,7 @@ Surface::State::State() {}
 
 Surface::State::~State() = default;
 
-bool Surface::State::operator==(const State& other) {
+bool Surface::State::operator==(const State& other) const {
   return other.opaque_region == opaque_region &&
          other.input_region == input_region &&
          other.buffer_scale == buffer_scale &&
@@ -842,9 +846,6 @@ void Surface::AppendContentsToFrame(const gfx::Point& origin,
     render_pass->damage_rect.Union(
         gfx::ConvertRectToPixel(device_scale_factor, damage_rect));
   }
-
-  render_pass->output_rect.Union(
-      gfx::ConvertRectToPixel(device_scale_factor, output_rect));
 
   // Compute the total transformation from post-transform buffer coordinates to
   // target coordinates.

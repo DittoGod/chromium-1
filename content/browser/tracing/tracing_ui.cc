@@ -168,10 +168,10 @@ TracingUI::TracingUI(WebUI* web_ui)
       weak_factory_(this) {
   web_ui->RegisterMessageCallback(
       "doUpload",
-      base::Bind(&TracingUI::DoUpload, base::Unretained(this)));
+      base::BindRepeating(&TracingUI::DoUpload, base::Unretained(this)));
   web_ui->RegisterMessageCallback(
-      "doUploadBase64",
-      base::Bind(&TracingUI::DoUploadBase64Encoded, base::Unretained(this)));
+      "doUploadBase64", base::BindRepeating(&TracingUI::DoUploadBase64Encoded,
+                                            base::Unretained(this)));
 
   // Set up the chrome://tracing/ source.
   BrowserContext* browser_context =
@@ -237,17 +237,17 @@ void TracingUI::DoUploadInternal(const std::string& file_contents,
   TraceUploader::UploadProgressCallback progress_callback =
       base::Bind(&TracingUI::OnTraceUploadProgress,
       weak_factory_.GetWeakPtr());
-  TraceUploader::UploadDoneCallback done_callback =
-      base::Bind(&TracingUI::OnTraceUploadComplete,
-      weak_factory_.GetWeakPtr());
+  TraceUploader::UploadDoneCallback done_callback = base::BindOnce(
+      &TracingUI::OnTraceUploadComplete, weak_factory_.GetWeakPtr());
 
   trace_uploader_ = delegate_->GetTraceUploader(
       BrowserContext::GetDefaultStoragePartition(
-          web_ui()->GetWebContents()->GetBrowserContext())->
-              GetURLRequestContext());
+          web_ui()->GetWebContents()->GetBrowserContext())
+          ->GetURLLoaderFactoryForBrowserProcess());
   DCHECK(trace_uploader_);
   trace_uploader_->DoUpload(file_contents, upload_mode, nullptr,
-                            progress_callback, done_callback);
+                            std::move(progress_callback),
+                            std::move(done_callback));
   // TODO(mmandlis): Add support for stopping the upload in progress.
 }
 

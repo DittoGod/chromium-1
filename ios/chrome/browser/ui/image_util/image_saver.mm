@@ -6,11 +6,11 @@
 
 #import <Photos/Photos.h>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/format_macros.h"
-#include "base/mac/bind_objc_block.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "components/image_fetcher/ios/ios_image_data_fetcher_wrapper.h"
 #include "components/strings/grit/components_strings.h"
@@ -120,9 +120,9 @@
            completion:(void (^)(BOOL, NSError*))completion {
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindBlockArc(^{
+      base::BindOnce(^{
         base::AssertBlockingAllowed();
 
         NSString* fileName = [[[NSProcessInfo processInfo] globallyUniqueString]
@@ -145,9 +145,9 @@
             completionHandler:^(BOOL success, NSError* error) {
               base::PostTaskWithTraits(
                   FROM_HERE,
-                  {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                  {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
                    base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-                  base::BindBlockArc(^{
+                  base::BindOnce(^{
                     base::AssertBlockingAllowed();
                     if (completion)
                       completion(success, error);

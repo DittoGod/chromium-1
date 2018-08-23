@@ -6,11 +6,15 @@
 #define CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_CONTENT_BROWSER_CLIENT_H_
 
 #include "content/shell/browser/shell_content_browser_client.h"
+#include "content/shell/common/layout_test/fake_bluetooth_chooser.mojom.h"
+#include "third_party/blink/public/mojom/clipboard/clipboard.mojom.h"
 
 namespace content {
 
+class FakeBluetoothChooser;
 class LayoutTestBrowserContext;
-class LayoutTestNotificationManager;
+class MockClipboardHost;
+class MockPlatformNotificationService;
 
 class LayoutTestContentBrowserClient : public ShellContentBrowserClient {
  public:
@@ -22,9 +26,10 @@ class LayoutTestContentBrowserClient : public ShellContentBrowserClient {
 
   LayoutTestBrowserContext* GetLayoutTestBrowserContext();
   void SetPopupBlockingEnabled(bool block_popups_);
+  void ResetMockClipboardHost();
 
-  // Implements the PlatformNotificationService interface.
-  LayoutTestNotificationManager* GetLayoutTestNotificationManager();
+  // Retrieves the last created FakeBluetoothChooser instance.
+  std::unique_ptr<FakeBluetoothChooser> GetNextFakeBluetoothChooser();
 
   // ContentBrowserClient overrides.
   void RenderProcessWillLaunch(
@@ -36,7 +41,6 @@ class LayoutTestContentBrowserClient : public ShellContentBrowserClient {
       RenderProcessHost* render_process_host) override;
   void OverrideWebkitPrefs(RenderViewHost* render_view_host,
                            WebPreferences* prefs) override;
-  void ResourceDispatcherHostCreated() override;
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
                                       int child_process_id) override;
   BrowserMainParts* CreateBrowserMainParts(
@@ -47,6 +51,8 @@ class LayoutTestContentBrowserClient : public ShellContentBrowserClient {
       storage::OptionalQuotaSettingsCallback callback) override;
   bool DoesSiteRequireDedicatedProcess(BrowserContext* browser_context,
                                        const GURL& effective_site_url) override;
+  std::unique_ptr<OverlayWindow> CreateWindowForPictureInPicture(
+      PictureInPictureWindowController* controller) override;
 
   PlatformNotificationService* GetPlatformNotificationService() override;
 
@@ -63,16 +69,35 @@ class LayoutTestContentBrowserClient : public ShellContentBrowserClient {
                        bool user_gesture,
                        bool opener_suppressed,
                        bool* no_javascript_access) override;
+  bool ShouldEnableStrictSiteIsolation() override;
 
   // ShellContentBrowserClient overrides.
   void ExposeInterfacesToFrame(
       service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
           registry) override;
+  scoped_refptr<LoginDelegate> CreateLoginDelegate(
+      net::AuthChallengeInfo* auth_info,
+      content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+      const content::GlobalRequestID& request_id,
+      bool is_main_frame,
+      const GURL& url,
+      scoped_refptr<net::HttpResponseHeaders> response_headers,
+      bool first_auth_attempt,
+      LoginAuthRequiredCallback auth_required_callback) override;
 
  private:
-  std::unique_ptr<LayoutTestNotificationManager>
-      layout_test_notification_manager_;
+  // Creates and stores a FakeBluetoothChooser instance.
+  void CreateFakeBluetoothChooser(mojom::FakeBluetoothChooserRequest request);
+  void BindClipboardHost(blink::mojom::ClipboardHostRequest request);
+
+  std::unique_ptr<MockPlatformNotificationService>
+      mock_platform_notification_service_;
   bool block_popups_ = false;
+
+  // Stores the next instance of FakeBluetoothChooser that is to be returned
+  // when GetNextFakeBluetoothChooser is called.
+  std::unique_ptr<FakeBluetoothChooser> next_fake_bluetooth_chooser_;
+  std::unique_ptr<MockClipboardHost> mock_clipboard_host_;
 };
 
 }  // content

@@ -10,6 +10,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/buffer_format_util.h"
+#include "ui/gfx/gpu_fence.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_enums.h"
@@ -39,35 +40,6 @@ bool ValidInternalFormat(unsigned internalformat) {
   }
 }
 
-bool ValidFormat(gfx::BufferFormat format) {
-  switch (format) {
-    case gfx::BufferFormat::ATC:
-    case gfx::BufferFormat::ATCIA:
-    case gfx::BufferFormat::DXT1:
-    case gfx::BufferFormat::DXT5:
-    case gfx::BufferFormat::ETC1:
-    case gfx::BufferFormat::R_8:
-    case gfx::BufferFormat::R_16:
-    case gfx::BufferFormat::RG_88:
-    case gfx::BufferFormat::BGR_565:
-    case gfx::BufferFormat::RGBA_4444:
-    case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::RGBA_8888:
-    case gfx::BufferFormat::BGRX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
-    case gfx::BufferFormat::BGRA_8888:
-    case gfx::BufferFormat::RGBA_F16:
-      return true;
-    case gfx::BufferFormat::YVU_420:
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-    case gfx::BufferFormat::UYVY_422:
-      return false;
-  }
-
-  NOTREACHED();
-  return false;
-}
-
 bool IsCompressedFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::ATC:
@@ -85,6 +57,7 @@ bool IsCompressedFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::RGBA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::RGBA_F16:
       return false;
@@ -128,6 +101,7 @@ GLenum TextureFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::BGRX_8888:
       return GL_RGB;
     case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
       // Technically speaking we should use an opaque format, but neither
       // OpenGLES nor OpenGL supports the hypothetical GL_RGB10_EXT.
       return GL_RGB10_A2_EXT;
@@ -145,6 +119,7 @@ GLenum TextureFormat(gfx::BufferFormat format) {
 GLenum DataFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::RGBX_8888:
+    case gfx::BufferFormat::RGBX_1010102:
       return GL_RGBA;
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::BGRX_1010102:
@@ -192,6 +167,7 @@ GLenum DataType(gfx::BufferFormat format) {
     case gfx::BufferFormat::RGBA_F16:
       return GL_HALF_FLOAT_OES;
     case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
       return GL_UNSIGNED_INT_2_10_10_10_REV;
     case gfx::BufferFormat::ATC:
     case gfx::BufferFormat::ATCIA:
@@ -220,6 +196,7 @@ GLint DataRowLength(size_t stride, gfx::BufferFormat format) {
     case gfx::BufferFormat::RGBA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
     case gfx::BufferFormat::BGRA_8888:
       return base::checked_cast<GLint>(stride) / 4;
     case gfx::BufferFormat::RGBA_F16:
@@ -337,6 +314,7 @@ std::unique_ptr<uint8_t[]> GLES2Data(const gfx::Size& size,
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBA_8888:
     case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::RGBA_F16:
     case gfx::BufferFormat::R_8:
@@ -521,11 +499,14 @@ bool GLImageMemory::CopyTexSubImage(unsigned target,
   return true;
 }
 
-bool GLImageMemory::ScheduleOverlayPlane(gfx::AcceleratedWidget widget,
-                                         int z_order,
-                                         gfx::OverlayTransform transform,
-                                         const gfx::Rect& bounds_rect,
-                                         const gfx::RectF& crop_rect) {
+bool GLImageMemory::ScheduleOverlayPlane(
+    gfx::AcceleratedWidget widget,
+    int z_order,
+    gfx::OverlayTransform transform,
+    const gfx::Rect& bounds_rect,
+    const gfx::RectF& crop_rect,
+    bool enable_blend,
+    std::unique_ptr<gfx::GpuFence> gpu_fence) {
   return false;
 }
 
@@ -537,6 +518,37 @@ GLImageMemory::Type GLImageMemory::GetType() const {
 unsigned GLImageMemory::GetInternalFormatForTesting(gfx::BufferFormat format) {
   DCHECK(ValidFormat(format));
   return TextureFormat(format);
+}
+
+// static
+bool GLImageMemory::ValidFormat(gfx::BufferFormat format) {
+  switch (format) {
+    case gfx::BufferFormat::ATC:
+    case gfx::BufferFormat::ATCIA:
+    case gfx::BufferFormat::DXT1:
+    case gfx::BufferFormat::DXT5:
+    case gfx::BufferFormat::ETC1:
+    case gfx::BufferFormat::R_8:
+    case gfx::BufferFormat::R_16:
+    case gfx::BufferFormat::RG_88:
+    case gfx::BufferFormat::BGR_565:
+    case gfx::BufferFormat::RGBA_4444:
+    case gfx::BufferFormat::RGBX_8888:
+    case gfx::BufferFormat::RGBA_8888:
+    case gfx::BufferFormat::BGRX_8888:
+    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
+    case gfx::BufferFormat::BGRA_8888:
+    case gfx::BufferFormat::RGBA_F16:
+      return true;
+    case gfx::BufferFormat::YVU_420:
+    case gfx::BufferFormat::YUV_420_BIPLANAR:
+    case gfx::BufferFormat::UYVY_422:
+      return false;
+  }
+
+  NOTREACHED();
+  return false;
 }
 
 }  // namespace gl

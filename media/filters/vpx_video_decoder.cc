@@ -26,30 +26,23 @@
 #include "media/base/decoder_buffer.h"
 #include "media/base/media_switches.h"
 #include "media/filters/frame_buffer_pool.h"
-
-// Include libvpx header files.
-// VPX_CODEC_DISABLE_COMPAT excludes parts of the libvpx API that provide
-// backwards compatibility for legacy applications using the library.
-#define VPX_CODEC_DISABLE_COMPAT 1
-extern "C" {
 #include "third_party/libvpx/source/libvpx/vpx/vp8dx.h"
 #include "third_party/libvpx/source/libvpx/vpx/vpx_decoder.h"
 #include "third_party/libvpx/source/libvpx/vpx/vpx_frame_buffer.h"
-}
 
 #include "third_party/libyuv/include/libyuv/convert.h"
 #include "third_party/libyuv/include/libyuv/planar_functions.h"
 
 namespace media {
 
-// Always try to use three threads for video decoding.  There is little reason
-// not to since current day CPUs tend to be multi-core and we measured
-// performance benefits on older machines such as P4s with hyperthreading.
-static const int kDecodeThreads = 2;
-static const int kMaxDecodeThreads = 32;
-
 // Returns the number of threads.
-static int GetThreadCount(const VideoDecoderConfig& config) {
+static int GetVpxVideoDecoderThreadCount(const VideoDecoderConfig& config) {
+  // Always try to use at least two threads for video decoding.  There is little
+  // reason not to since current day CPUs tend to be multi-core and we measured
+  // performance benefits on older machines such as P4s with hyperthreading.
+  constexpr int kDecodeThreads = 2;
+  constexpr int kMaxDecodeThreads = 32;
+
   // Refer to http://crbug.com/93932 for tsan suppressions on decoding.
   int decode_threads = kDecodeThreads;
 
@@ -87,7 +80,7 @@ static std::unique_ptr<vpx_codec_ctx> InitializeVpxContext(
   vpx_codec_dec_cfg_t vpx_config = {0};
   vpx_config.w = config.coded_size().width();
   vpx_config.h = config.coded_size().height();
-  vpx_config.threads = GetThreadCount(config);
+  vpx_config.threads = GetVpxVideoDecoderThreadCount(config);
 
   vpx_codec_err_t status = vpx_codec_dec_init(
       context.get(),
@@ -138,11 +131,13 @@ std::string VpxVideoDecoder::GetDisplayName() const {
   return "VpxVideoDecoder";
 }
 
-void VpxVideoDecoder::Initialize(const VideoDecoderConfig& config,
-                                 bool /* low_delay */,
-                                 CdmContext* /* cdm_context */,
-                                 const InitCB& init_cb,
-                                 const OutputCB& output_cb) {
+void VpxVideoDecoder::Initialize(
+    const VideoDecoderConfig& config,
+    bool /* low_delay */,
+    CdmContext* /* cdm_context */,
+    const InitCB& init_cb,
+    const OutputCB& output_cb,
+    const WaitingForDecryptionKeyCB& /* waiting_for_decryption_key_cb */) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(config.IsValidConfig());
 
@@ -161,8 +156,9 @@ void VpxVideoDecoder::Initialize(const VideoDecoderConfig& config,
   bound_init_cb.Run(true);
 }
 
-void VpxVideoDecoder::Decode(const scoped_refptr<DecoderBuffer>& buffer,
+void VpxVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                              const DecodeCB& decode_cb) {
+  DVLOG(3) << __func__ << ": " << buffer->AsHumanReadableString();
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(buffer);
   DCHECK(!decode_cb.is_null());
@@ -379,7 +375,7 @@ bool VpxVideoDecoder::VpxDecode(const DecoderBuffer* buffer,
       ->metadata()
       ->SetInteger(VideoFrameMetadata::COLOR_SPACE, color_space);
 
-  if (config_.color_space_info() != VideoColorSpace()) {
+  if (config_.color_space_info().IsSpecified()) {
     // config_.color_space_info() comes from the color tag which is
     // more expressive than the bitstream, so prefer it over the
     // bitstream data below.
@@ -601,26 +597,18 @@ bool VpxVideoDecoder::CopyVpxImageToVideoFrame(
     return true;
   }
 
-  DCHECK(codec_format == PIXEL_FORMAT_I420 ||
-         codec_format == PIXEL_FORMAT_I420A);
-
   *video_frame = frame_pool_.CreateFrame(codec_format, visible_size,
                                          gfx::Rect(visible_size),
                                          config_.natural_size(), kNoTimestamp);
   if (!(*video_frame))
     return false;
 
-  libyuv::I420Copy(
-      vpx_image->planes[VPX_PLANE_Y], vpx_image->stride[VPX_PLANE_Y],
-      vpx_image->planes[VPX_PLANE_U], vpx_image->stride[VPX_PLANE_U],
-      vpx_image->planes[VPX_PLANE_V], vpx_image->stride[VPX_PLANE_V],
-      (*video_frame)->visible_data(VideoFrame::kYPlane),
-      (*video_frame)->stride(VideoFrame::kYPlane),
-      (*video_frame)->visible_data(VideoFrame::kUPlane),
-      (*video_frame)->stride(VideoFrame::kUPlane),
-      (*video_frame)->visible_data(VideoFrame::kVPlane),
-      (*video_frame)->stride(VideoFrame::kVPlane), coded_size.width(),
-      coded_size.height());
+  for (int plane = 0; plane < 3; plane++) {
+    libyuv::CopyPlane(
+        vpx_image->planes[plane], vpx_image->stride[plane],
+        (*video_frame)->visible_data(plane), (*video_frame)->stride(plane),
+        (*video_frame)->row_bytes(plane), (*video_frame)->rows(plane));
+  }
 
   return true;
 }

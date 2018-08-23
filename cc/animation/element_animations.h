@@ -37,8 +37,9 @@ enum class UpdateTickingType { NORMAL, FORCE };
 // An ElementAnimations owns a list of all KeyframeEffects attached to a single
 // target (represented by an ElementId).
 //
-// This is a CC counterpart for blink::ElementAnimations (in 1:1 relationship).
-// No pointer to/from respective blink::ElementAnimations object for now.
+// Note that a particular target may not actually be an element in the web sense
+// of the word; this naming is a legacy leftover. A target is just an amorphous
+// blob that has properties that can be animated.
 class CC_ANIMATION_EXPORT ElementAnimations
     : public AnimationTarget,
       public base::RefCounted<ElementAnimations> {
@@ -63,7 +64,7 @@ class CC_ANIMATION_EXPORT ElementAnimations
   void RemoveKeyframeEffect(KeyframeEffect* keyframe_effect);
   bool IsEmpty() const;
 
-  typedef base::ObserverList<KeyframeEffect> KeyframeEffectsList;
+  typedef base::ObserverList<KeyframeEffect>::Unchecked KeyframeEffectsList;
   const KeyframeEffectsList& keyframe_effects_list() const {
     return keyframe_effects_list_;
   }
@@ -147,6 +148,12 @@ class CC_ANIMATION_EXPORT ElementAnimations
   void NotifyClientFilterAnimated(const FilterOperations& filter,
                                   int target_property_id,
                                   KeyframeModel* keyframe_model) override;
+  void NotifyClientSizeAnimated(const gfx::SizeF& size,
+                                int target_property_id,
+                                KeyframeModel* keyframe_model) override{};
+  void NotifyClientColorAnimated(SkColor color,
+                                 int target_property_id,
+                                 KeyframeModel* keyframe_model) override{};
   void NotifyClientTransformOperationsAnimated(
       const TransformOperations& operations,
       int target_property_id,

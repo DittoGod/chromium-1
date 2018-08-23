@@ -6,7 +6,6 @@ import("//build/config/compiler/compiler.gni")
 import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//chrome/process_version_rc_template.gni")
-import("//chrome/test/mini_installer/mini_installer_test.gni")
 import("//components/nacl/features.gni")
 import("//third_party/icu/config.gni")
 import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
@@ -20,9 +19,6 @@ declare_args() {
   # cycles.
   skip_archive_compression = !is_official_build || is_component_build
 }
-
-assert(skip_archive_compression || !is_component_build,
-       "Archive compression is not supported in component build.")
 
 config("mini_installer_compiler_flags") {
   # Disable buffer security checking.
@@ -57,15 +53,6 @@ source_set("lib") {
   }
 
   configs += [ ":mini_installer_compiler_flags" ]
-
-  # This input dependency on the mini installer test Python files will force a
-  # recompilation when any of the Python files have changed. This will then
-  # invalidate the build and trigger running the test on the bots even when
-  # no other Chrome files have changed. These have to be inputs rather than a
-  # dependency because a dependency won't actually trigger recompiles in
-  # incremental build cases unless a source file actually references one of the
-  # dependency outputs.
-  inputs = mini_installer_test_files
 }
 
 process_version_rc_template("version") {
@@ -273,19 +260,30 @@ template("generate_mini_installer") {
       "/NXCOMPAT",
     ]
 
-    if (!is_asan) {
-      ldflags += [ "/ENTRY:MainEntryPoint" ]
-    }
-
     libs = [ "setupapi.lib" ]
 
     deps = [
       ":$archive_name",
       ":lib",
       ":version",
-      "//build/config:exe_and_shlib_deps",
       "//build/win:default_exe_manifest",
     ]
+
+    # In general, mini_installer tries to avoid depending on the C++ standard
+    # library for size reasons. This is achieved by:
+    #   1. setting a custom entry point which avoids pulling in the standard
+    #      library via a link dependency.
+    #   2. setting no_default_deps=true to avoid including the implicit
+    #      dependency on //buildtools/third_party/libc++ in builds that set
+    #      use_custom_libcxx=true.
+    #
+    # But in asan builds we need to link against the asan runtime library, which
+    # in turn depends on the standard library and relies on it to run
+    # initializers.
+    if (!is_asan) {
+      no_default_deps = true
+      ldflags += [ "/ENTRY:MainEntryPoint" ]
+    }
   }
 }
 
@@ -295,19 +293,13 @@ generate_mini_installer("mini_installer") {
   chrome_dll_target = "//chrome:main_dll"
 }
 
-if (is_syzyasan) {
-  generate_mini_installer("mini_installer_syzygy") {
-    out_dir = "$root_out_dir/syzygy/"
-    chrome_dll_file = "$root_out_dir/syzygy/chrome.dll"
-    chrome_dll_target = "//chrome/tools/build/win/syzygy:chrome_dll_syzygy"
-  }
-}
-
-# next_version_mini_installer.exe can't be generated in an x86 Debug component
-# build because it requires too much memory.
-if (!(is_component_build && is_debug && target_cpu == "x86")) {
-  action("next_version_mini_installer") {
-    script = "generate_next_version_mini_installer.py"
+# previous_version_mini_installer.exe can't be generated in an x86 Debug
+# component build because it requires too much memory.
+# TODO(thakis): Enable this in cross builds, https://crbug.com/799827
+if (!(is_component_build && is_debug && target_cpu == "x86") &&
+    host_os == "win") {
+  action("previous_version_mini_installer") {
+    script = "generate_previous_version_mini_installer.py"
     testonly = true
     inputs = [
       "$root_out_dir/alternate_version_generator.exe",

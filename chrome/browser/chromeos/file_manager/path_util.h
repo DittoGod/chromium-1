@@ -20,6 +20,9 @@ namespace util {
 // be used by tests.
 extern const base::FilePath::CharType kRemovableMediaPath[];
 
+// Absolute path for the folder containing Android files.
+extern const base::FilePath::CharType kAndroidFilesPath[];
+
 // Gets the absolute path for the 'Downloads' folder for the |profile|.
 base::FilePath GetDownloadsFolderForProfile(Profile* profile);
 
@@ -43,20 +46,49 @@ bool MigratePathFromOldFormat(Profile* profile,
 // The canonical mount point name for "Downloads" folder.
 std::string GetDownloadsMountPointName(Profile* profile);
 
-// DEPRECATED. Use |ConvertToContentUrl| instead.
+// The canonical mount point name for crostini "Linux files" folder.
+std::string GetCrostiniMountPointName(Profile* profile);
+
+// The actual directory the crostini "Linux files" folder is mounted.
+base::FilePath GetCrostiniMountDirectory(Profile* profile);
+
+// The sshfs mount options for crostini "Linux files" mount.
+std::vector<std::string> GetCrostiniMountOptions(
+    const std::string& hostname,
+    const std::string& host_private_key,
+    const std::string& container_public_key);
+
+// Convert a cracked url to a path inside the Crostini VM.
+std::string ConvertFileSystemURLToPathInsideCrostini(
+    Profile* profile,
+    const storage::FileSystemURL& file_system_url);
+
+// DEPRECATED. Use |ConvertToContentUrls| instead.
 // While this function can convert paths under Downloads, /media/removable
 // and /special/drive, this CANNOT convert paths under ARC media directories
 // (/special/arc-documents-provider).
 // TODO(crbug.com/811679): Migrate all callers and remove this.
 bool ConvertPathToArcUrl(const base::FilePath& path, GURL* arc_url_out);
 
-using ConvertToContentUrlCallback =
-    base::OnceCallback<void(const GURL& content_url)>;
+using ConvertToContentUrlsCallback =
+    base::OnceCallback<void(const std::vector<GURL>& content_urls)>;
 
-// Asynchronously converts a Chrome OS file system URL to a content:// URL.
-// Returns an empty GURL if |file_system_url| is not convertible.
-void ConvertToContentUrl(const storage::FileSystemURL& file_system_url,
-                         ConvertToContentUrlCallback callback);
+// Asynchronously converts Chrome OS file system URLs to content:// URLs.
+// Always returns a vector of the same size as |file_system_urls|.
+// Empty GURLs are filled in the vector if conversion fails.
+void ConvertToContentUrls(
+    const std::vector<storage::FileSystemURL>& file_system_urls,
+    ConvertToContentUrlsCallback callback);
+
+// Convert download location path into a string suitable for display.
+// Replacements:
+// * /home/chronos/user/Downloads                => Downloads
+// * /home/chronos/u-<hash>/Downloads            => Downloads
+// * /special/drive-<hash>/root                  => Google Drive
+// * /run/arc/sdcard/write/emulated/0            => Play files
+// * /media/fuse/crostini_<hash>_termina_penguin => Linux files
+// * '/' with ' \u203a ' (angled quote sign) for display purposes.
+std::string GetDownloadLocationText(Profile* profile, const std::string& path);
 
 }  // namespace util
 }  // namespace file_manager

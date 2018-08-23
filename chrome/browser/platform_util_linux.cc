@@ -11,7 +11,7 @@
 #include "base/process/launch.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/version.h"
 #include "chrome/browser/platform_util_internal.h"
 #include "content/public/browser/browser_thread.h"
@@ -54,7 +54,7 @@ void RunCommand(const std::string& command,
 
   base::Process process = base::LaunchProcess(argv, options);
   if (process.IsValid())
-    base::EnsureProcessGetsReaped(process.Pid());
+    base::EnsureProcessGetsReaped(std::move(process));
 }
 
 void XDGOpen(const base::FilePath& working_directory, const std::string& path) {

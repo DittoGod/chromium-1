@@ -24,6 +24,10 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
+namespace content {
+class ResourceContext;
+}  // namespace content
+
 namespace net {
 class HttpResponseHeaders;
 class URLRequest;
@@ -34,6 +38,8 @@ struct ResourceResponseHead;
 }
 
 namespace extensions {
+
+class ExtensionNavigationUIData;
 
 // A URL request representation used by WebRequest API internals. This structure
 // carries information about an in-progress request.
@@ -66,9 +72,11 @@ struct WebRequestInfo {
   WebRequestInfo(uint64_t request_id,
                  int render_process_id,
                  int render_frame_id,
-                 bool is_navigation,
+                 std::unique_ptr<ExtensionNavigationUIData> navigation_ui_data,
                  int32_t routing_id,
-                 const network::ResourceRequest& request);
+                 content::ResourceContext* resource_context,
+                 const network::ResourceRequest& request,
+                 bool is_async);
 
   ~WebRequestInfo();
 
@@ -163,7 +171,13 @@ struct WebRequestInfo {
   // of Logger above. This is always non-null.
   std::unique_ptr<Logger> logger;
 
+  // The ResourceContext associated with this request. May be null.
+  content::ResourceContext* resource_context = nullptr;
+
  private:
+  void InitializeWebViewAndFrameData(
+      const ExtensionNavigationUIData* navigation_ui_data);
+
   DISALLOW_COPY_AND_ASSIGN(WebRequestInfo);
 };
 

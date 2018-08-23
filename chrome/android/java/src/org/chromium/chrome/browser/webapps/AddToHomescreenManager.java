@@ -17,8 +17,8 @@ import org.chromium.content_public.browser.WebContents;
  * a dialog prompting the user to confirm the action (and potentially supply a title).
  */
 public class AddToHomescreenManager implements AddToHomescreenDialog.Delegate {
-    private final Activity mActivity;
-    private final Tab mTab;
+    protected final Activity mActivity;
+    protected final Tab mTab;
 
     protected AddToHomescreenDialog mDialog;
     private long mNativeAddToHomescreenManager;
@@ -63,6 +63,12 @@ public class AddToHomescreenManager implements AddToHomescreenDialog.Delegate {
     }
 
     @Override
+    public void onNativeAppDetailsRequested() {
+        // This should never be called.
+        assert false;
+    }
+
+    @Override
     /**
      * Destroys this object once the dialog has been dismissed.
      */
@@ -75,13 +81,15 @@ public class AddToHomescreenManager implements AddToHomescreenDialog.Delegate {
      */
     @CalledByNative
     public void showDialog() {
-        mDialog = new AddToHomescreenDialog(this);
-        mDialog.show(mActivity);
+        mDialog = new AddToHomescreenDialog(mActivity, this);
+        mDialog.show();
     }
 
     @CalledByNative
-    private void onUserTitleAvailable(String title, String url, boolean isTitleEditable) {
-        mDialog.onUserTitleAvailable(title, url, isTitleEditable);
+    private void onUserTitleAvailable(String title, String url, boolean isWebapp) {
+        // Users may edit the title of bookmark shortcuts, but we respect web app names and do not
+        // let users change them.
+        mDialog.onUserTitleAvailable(title, url, isWebapp);
     }
 
     @CalledByNative

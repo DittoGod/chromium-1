@@ -6,12 +6,15 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "chrome/browser/media/android/remote/flinging_controller_bridge.h"
 #include "chrome/browser/media/android/router/media_router_android.h"
 #include "jni/ChromeMediaRouter_jni.h"
+#include "media/base/media_controller.h"
 
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaRef;
+using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
 using base::android::AttachCurrentThread;
 
@@ -115,6 +118,24 @@ void MediaRouterAndroidBridge::StopObservingMediaSinks(
       base::android::ConvertUTF8ToJavaString(env, source_id);
   Java_ChromeMediaRouter_stopObservingMediaSinks(env, java_media_router_,
                                                  jsource_id);
+}
+
+std::unique_ptr<media::FlingingController>
+MediaRouterAndroidBridge::GetFlingingController(
+    const MediaRoute::Id& route_id) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jstring> jroute_id =
+      base::android::ConvertUTF8ToJavaString(env, route_id);
+
+  ScopedJavaGlobalRef<jobject> flinging_controller;
+
+  flinging_controller.Reset(Java_ChromeMediaRouter_getFlingingControllerBridge(
+      env, java_media_router_, jroute_id));
+
+  if (flinging_controller.is_null())
+    return nullptr;
+
+  return std::make_unique<FlingingControllerBridge>(flinging_controller);
 }
 
 void MediaRouterAndroidBridge::OnSinksReceived(

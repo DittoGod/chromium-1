@@ -102,6 +102,7 @@ class MessageListViewTest : public AshTestBase,
     AshTestBase::SetUp();
 
     message_list_view_.reset(new MessageListView());
+    message_list_view_->SetBorderPadding();
     message_list_view_->AddObserver(this);
     message_list_view_->set_owned_by_client();
 
@@ -109,6 +110,7 @@ class MessageListViewTest : public AshTestBase,
     views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
     params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.bounds = gfx::Rect(50, 50, 650, 650);
+    params.context = CurrentContext();
     widget_->Init(params);
     views::View* root = widget_->GetRootView();
     root->AddChildView(message_list_view_.get());

@@ -9,7 +9,6 @@
 #include "ash/public/interfaces/window_state_type.mojom.h"
 #include "base/macros.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/ash/tablet_mode_client.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
@@ -25,6 +24,7 @@
 #include "ui/aura/mus/property_converter.h"
 #include "ui/aura/mus/window_port_mus.h"
 #include "ui/aura/window.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/paint_context.h"
 #include "ui/compositor/paint_recorder.h"
@@ -111,18 +111,30 @@ void ImmersiveModeControllerAsh::Init(BrowserView* browser_view) {
   browser_view_ = browser_view;
   controller_->Init(this, browser_view_->frame(),
       browser_view_->top_container());
+
+  observed_windows_.Add(
+      !features::IsUsingWindowService()
+          ? browser_view_->GetNativeWindow()
+          : browser_view_->GetNativeWindow()->GetRootWindow());
 }
 
 void ImmersiveModeControllerAsh::SetEnabled(bool enabled) {
   if (controller_->IsEnabled() == enabled)
     return;
 
-  EnableWindowObservers(enabled);
+  if (registrar_.IsEmpty()) {
+    content::Source<FullscreenController> source(
+        browser_view_->browser()
+            ->exclusive_access_manager()
+            ->fullscreen_controller());
+    registrar_.Add(this, chrome::NOTIFICATION_FULLSCREEN_CHANGED, source);
+  }
 
-  controller_->SetEnabled(browser_view_->browser()->is_app() ?
-          ash::ImmersiveFullscreenController::WINDOW_TYPE_HOSTED_APP :
-          ash::ImmersiveFullscreenController::WINDOW_TYPE_BROWSER
-      , enabled);
+  controller_->SetEnabled(
+      browser_view_->browser()->is_app()
+          ? ash::ImmersiveFullscreenController::WINDOW_TYPE_HOSTED_APP
+          : ash::ImmersiveFullscreenController::WINDOW_TYPE_BROWSER,
+      enabled);
 }
 
 bool ImmersiveModeControllerAsh::IsEnabled() const {
@@ -158,13 +170,8 @@ void ImmersiveModeControllerAsh::OnFindBarVisibleBoundsChanged(
 }
 
 bool ImmersiveModeControllerAsh::ShouldStayImmersiveAfterExitingFullscreen() {
-  // TODO(crbug.com/760811): Support tablet mode in mash.
-  if (ash_util::IsRunningInMash())
-    return false;
-
   return !browser_view_->IsBrowserTypeNormal() &&
-         TabletModeClient::Get()->tablet_mode_enabled() &&
-         TabletModeClient::Get()->auto_hide_title_bars();
+         TabletModeClient::Get()->tablet_mode_enabled();
 }
 
 views::Widget* ImmersiveModeControllerAsh::GetRevealWidget() {
@@ -177,12 +184,8 @@ void ImmersiveModeControllerAsh::OnWidgetActivationChanged(
   if (browser_view_->IsBrowserTypeNormal())
     return;
 
-  // TODO(crbug.com/760811): Support tablet mode in mash.
-  if (ash_util::IsRunningInMash() ||
-      !(TabletModeClient::Get()->tablet_mode_enabled() &&
-        TabletModeClient::Get()->auto_hide_title_bars())) {
+  if (!TabletModeClient::Get()->tablet_mode_enabled())
     return;
-  }
 
   // Enable immersive mode if the widget is activated. Do not disable immersive
   // mode if the widget deactivates, but is not minimized.
@@ -191,28 +194,6 @@ void ImmersiveModeControllerAsh::OnWidgetActivationChanged(
           ? ash::ImmersiveFullscreenController::WINDOW_TYPE_HOSTED_APP
           : ash::ImmersiveFullscreenController::WINDOW_TYPE_BROWSER,
       active || !widget->IsMinimized());
-}
-
-void ImmersiveModeControllerAsh::EnableWindowObservers(bool enable) {
-  if (observers_enabled_ == enable)
-    return;
-  observers_enabled_ = enable;
-
-  aura::Window* native_window = browser_view_->GetNativeWindow();
-  aura::Window* target_window = ash_util::IsRunningInMash()
-                                    ? native_window->GetRootWindow()
-                                    : native_window;
-
-  content::Source<FullscreenController> source(browser_view_->browser()
-                                                   ->exclusive_access_manager()
-                                                   ->fullscreen_controller());
-  if (enable) {
-    target_window->AddObserver(this);
-    registrar_.Add(this, chrome::NOTIFICATION_FULLSCREEN_CHANGED, source);
-  } else {
-    target_window->RemoveObserver(this);
-    registrar_.Remove(this, chrome::NOTIFICATION_FULLSCREEN_CHANGED, source);
-  }
 }
 
 void ImmersiveModeControllerAsh::LayoutBrowserRootView() {
@@ -225,7 +206,7 @@ void ImmersiveModeControllerAsh::LayoutBrowserRootView() {
 }
 
 void ImmersiveModeControllerAsh::CreateMashRevealWidget() {
-  if (!ash_util::IsRunningInMash())
+  if (!features::IsUsingWindowService())
     return;
 
   DCHECK(!mash_reveal_widget_);
@@ -284,10 +265,14 @@ void ImmersiveModeControllerAsh::OnImmersiveRevealEnded() {
     observer.OnImmersiveRevealEnded();
 }
 
+void ImmersiveModeControllerAsh::OnImmersiveFullscreenEntered() {}
+
 void ImmersiveModeControllerAsh::OnImmersiveFullscreenExited() {
   DestroyMashRevealWidget();
   browser_view_->top_container()->DestroyLayer();
   LayoutBrowserRootView();
+  for (Observer& observer : observers_)
+    observer.OnImmersiveFullscreenExited();
 }
 
 void ImmersiveModeControllerAsh::SetVisibleFraction(double visible_fraction) {
@@ -342,20 +327,19 @@ void ImmersiveModeControllerAsh::Observe(
 void ImmersiveModeControllerAsh::OnWindowPropertyChanged(aura::Window* window,
                                                          const void* key,
                                                          intptr_t old) {
-  if (key == ash::kWindowStateTypeKey) {
-    ash::mojom::WindowStateType new_state =
-        window->GetProperty(ash::kWindowStateTypeKey);
-    ash::mojom::WindowStateType old_state = ash::mojom::WindowStateType(old);
+  if (key == aura::client::kShowStateKey) {
+    ui::WindowShowState new_state =
+        window->GetProperty(aura::client::kShowStateKey);
+    auto old_state = static_cast<ui::WindowShowState>(old);
 
-    // Disable immersive fullscreen when the user exits fullscreen without going
-    // through FullscreenController::ToggleBrowserFullscreenMode(). This is the
-    // case if the user exits fullscreen via the restore button.
-    if (controller_->IsEnabled() &&
-        new_state != ash::mojom::WindowStateType::FULLSCREEN &&
-        new_state != ash::mojom::WindowStateType::PINNED &&
-        new_state != ash::mojom::WindowStateType::TRUSTED_PINNED &&
-        new_state != ash::mojom::WindowStateType::MINIMIZED &&
-        old_state == ash::mojom::WindowStateType::FULLSCREEN) {
+    // Make sure the browser stays up to date with the window's state. This is
+    // necessary in classic Ash if the user exits fullscreen with the restore
+    // button, and it's necessary in OopAsh if the window manager initiates a
+    // fullscreen mode change (e.g. due to a WM shortcut).
+    if (new_state == ui::SHOW_STATE_FULLSCREEN ||
+        old_state == ui::SHOW_STATE_FULLSCREEN) {
+      // If the browser view initiated this state change,
+      // BrowserView::ProcessFullscreen will no-op, so this call is harmless.
       browser_view_->FullscreenStateChanged();
     }
   }
@@ -364,5 +348,6 @@ void ImmersiveModeControllerAsh::OnWindowPropertyChanged(aura::Window* window,
 void ImmersiveModeControllerAsh::OnWindowDestroying(aura::Window* window) {
   // Clean up observers here rather than in the destructor because the owning
   // BrowserView has already destroyed the aura::Window.
-  EnableWindowObservers(false);
+  observed_windows_.Remove(window);
+  DCHECK(!observed_windows_.IsObservingSources());
 }

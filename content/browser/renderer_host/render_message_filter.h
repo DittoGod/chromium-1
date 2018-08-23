@@ -18,15 +18,14 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "components/viz/common/resources/shared_bitmap_manager.h"
-#include "content/common/cache_storage/cache_storage_types.h"
 #include "content/common/render_message_filter.mojom.h"
 #include "content/public/browser/browser_associated_interface.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/browser_thread.h"
 #include "gpu/config/gpu_info.h"
 #include "ipc/message_filter.h"
-#include "third_party/WebKit/public/platform/modules/cache_storage/cache_storage.mojom.h"
-#include "third_party/WebKit/public/web/WebPopupType.h"
+#include "third_party/blink/public/platform/modules/cache_storage/cache_storage.mojom.h"
+#include "third_party/blink/public/web/web_popup_type.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/native_widget_types.h"
@@ -55,11 +54,11 @@ namespace content {
 class BrowserContext;
 class CacheStorageContextImpl;
 class CacheStorageCacheHandle;
-class DOMStorageContextWrapper;
 class MediaInternals;
 class RenderWidgetHelper;
 class ResourceContext;
 class ResourceDispatcherHostImpl;
+class GeneratedCodeCacheContext;
 
 // This class filters out incoming IPC messages for the renderer process on the
 // IPC thread.
@@ -74,8 +73,8 @@ class CONTENT_EXPORT RenderMessageFilter
                       net::URLRequestContextGetter* request_context,
                       RenderWidgetHelper* render_widget_helper,
                       MediaInternals* media_internals,
-                      DOMStorageContextWrapper* dom_storage_context,
-                      CacheStorageContextImpl* cache_storage_context);
+                      CacheStorageContextImpl* cache_storage_context,
+                      GeneratedCodeCacheContext* generated_code_cache_context);
 
   // BrowserMessageFilter methods:
   bool OnMessageReceived(const IPC::Message& message) override;
@@ -106,6 +105,8 @@ class CONTENT_EXPORT RenderMessageFilter
   void DidGenerateCacheableMetadata(const GURL& url,
                                     base::Time expected_response_time,
                                     const std::vector<uint8_t>& data) override;
+  void FetchCachedCode(const GURL& url, FetchCachedCodeCallback) override;
+  void ClearCodeCacheEntry(const GURL& url) override;
   void DidGenerateCacheableMetadataInCacheStorage(
       const GURL& url,
       base::Time expected_response_time,
@@ -113,12 +114,10 @@ class CONTENT_EXPORT RenderMessageFilter
       const url::Origin& cache_storage_origin,
       const std::string& cache_storage_cache_name) override;
   void HasGpuProcess(HasGpuProcessCallback callback) override;
+#if defined(OS_LINUX)
   void SetThreadPriority(int32_t ns_tid,
                          base::ThreadPriority priority) override;
-  // Messages for OOP font loading.  Only used for MACOSX.
-  void LoadFont(const base::string16& font_to_load,
-                float font_point_size,
-                LoadFontCallback callback) override;
+#endif
 
   void OnResolveProxy(const GURL& url, IPC::Message* reply_msg);
 
@@ -127,6 +126,9 @@ class CONTENT_EXPORT RenderMessageFilter
                                      base::ThreadPriority priority);
 #endif
 
+  void OnReceiveCachedCode(FetchCachedCodeCallback callback,
+                           const base::Time& response_time,
+                           const std::vector<uint8_t>& data);
   void OnCacheStorageOpenCallback(const GURL& url,
                                   base::Time expected_response_time,
                                   scoped_refptr<net::IOBuffer> buf,
@@ -151,12 +153,14 @@ class CONTENT_EXPORT RenderMessageFilter
 
   scoped_refptr<RenderWidgetHelper> render_widget_helper_;
 
-  scoped_refptr<DOMStorageContextWrapper> dom_storage_context_;
-
   int render_process_id_;
 
   MediaInternals* media_internals_;
   CacheStorageContextImpl* cache_storage_context_;
+
+  // TODO(crbug.com/867347): Consider registering its own Mojo interface rather
+  // than going through RenderMessageFilter.
+  GeneratedCodeCacheContext* generated_code_cache_context_;
 
   base::WeakPtrFactory<RenderMessageFilter> weak_ptr_factory_;
 

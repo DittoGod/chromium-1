@@ -11,7 +11,7 @@
 #include "base/files/file_util.h"
 #include "base/nix/xdg_util.h"
 #include "base/process/launch.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/tab_contents/tab_util.h"
@@ -81,7 +81,7 @@ bool StartProxyConfigUtil(const char* const command[]) {
     LOG(ERROR) << "StartProxyConfigUtil failed to start " << command[0];
     return false;
   }
-  base::EnsureProcessGetsReaped(process.Pid());
+  base::EnsureProcessGetsReaped(std::move(process));
   return true;
 }
 

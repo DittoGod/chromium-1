@@ -29,9 +29,7 @@
 #include "sql/transaction.h"
 #include "url/gurl.h"
 
-using base::Callback;
 using base::FilePath;
-using base::Time;
 using base::Unretained;
 using content::BrowserThread;
 
@@ -58,7 +56,7 @@ FullStreamUIPolicy::FullStreamUIPolicy(Profile* profile)
 
 FullStreamUIPolicy::~FullStreamUIPolicy() {}
 
-bool FullStreamUIPolicy::InitDatabase(sql::Connection* db) {
+bool FullStreamUIPolicy::InitDatabase(sql::Database* db) {
   // Create the unified activity log entry table.
   return ActivityDatabase::InitializeTable(db,
                                            kTableName,
@@ -67,7 +65,7 @@ bool FullStreamUIPolicy::InitDatabase(sql::Connection* db) {
                                            arraysize(kTableContentFields));
 }
 
-bool FullStreamUIPolicy::FlushDatabase(sql::Connection* db) {
+bool FullStreamUIPolicy::FlushDatabase(sql::Database* db) {
   if (queued_actions_.empty())
     return true;
 
@@ -132,7 +130,7 @@ std::unique_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
   activity_database()->AdviseFlush(ActivityDatabase::kFlushImmediately);
   std::unique_ptr<Action::ActionVector> actions(new Action::ActionVector());
 
-  sql::Connection* db = GetDatabaseConnection();
+  sql::Database* db = GetDatabaseConnection();
   if (!db) {
     return actions;
   }
@@ -227,7 +225,7 @@ void FullStreamUIPolicy::DoRemoveActions(
   if (action_ids.empty())
     return;
 
-  sql::Connection* db = GetDatabaseConnection();
+  sql::Database* db = GetDatabaseConnection();
   if (!db) {
     LOG(ERROR) << "Unable to connect to database";
     return;
@@ -260,7 +258,7 @@ void FullStreamUIPolicy::DoRemoveActions(
 }
 
 void FullStreamUIPolicy::DoRemoveURLs(const std::vector<GURL>& restrict_urls) {
-  sql::Connection* db = GetDatabaseConnection();
+  sql::Database* db = GetDatabaseConnection();
   if (!db) {
     LOG(ERROR) << "Unable to connect to database";
     return;
@@ -326,7 +324,7 @@ void FullStreamUIPolicy::DoRemoveExtensionData(
   if (extension_id.empty())
     return;
 
-  sql::Connection* db = GetDatabaseConnection();
+  sql::Database* db = GetDatabaseConnection();
   if (!db) {
     LOG(ERROR) << "Unable to connect to database";
     return;
@@ -349,7 +347,7 @@ void FullStreamUIPolicy::DoRemoveExtensionData(
 }
 
 void FullStreamUIPolicy::DoDeleteDatabase() {
-  sql::Connection* db = GetDatabaseConnection();
+  sql::Database* db = GetDatabaseConnection();
   if (!db) {
     LOG(ERROR) << "Unable to connect to database";
     return;
@@ -395,14 +393,13 @@ void FullStreamUIPolicy::ReadFilteredData(
     const std::string& page_url,
     const std::string& arg_url,
     const int days_ago,
-    const base::Callback<void(std::unique_ptr<Action::ActionVector>)>&
-        callback) {
+    base::OnceCallback<void(std::unique_ptr<Action::ActionVector>)> callback) {
   base::PostTaskAndReplyWithResult(
       GetActivityLogTaskRunner().get(), FROM_HERE,
-      base::Bind(&FullStreamUIPolicy::DoReadFilteredData,
-                 base::Unretained(this), extension_id, type, api_name, page_url,
-                 arg_url, days_ago),
-      callback);
+      base::BindOnce(&FullStreamUIPolicy::DoReadFilteredData,
+                     base::Unretained(this), extension_id, type, api_name,
+                     page_url, arg_url, days_ago),
+      std::move(callback));
 }
 
 void FullStreamUIPolicy::RemoveActions(const std::vector<int64_t>& action_ids) {

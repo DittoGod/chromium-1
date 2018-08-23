@@ -24,7 +24,7 @@ namespace media {
 class CodecWrapperImpl : public base::RefCountedThreadSafe<CodecWrapperImpl> {
  public:
   CodecWrapperImpl(CodecSurfacePair codec_surface_pair,
-                   base::Closure output_buffer_release_cb);
+                   CodecWrapper::OutputReleasedCB output_buffer_release_cb);
 
   using DequeueStatus = CodecWrapper::DequeueStatus;
   using QueueStatus = CodecWrapper::QueueStatus;
@@ -89,7 +89,11 @@ class CodecWrapperImpl : public base::RefCountedThreadSafe<CodecWrapperImpl> {
 
   // A callback that's called whenever an output buffer is released back to the
   // codec.
-  base::Closure output_buffer_release_cb_;
+  CodecWrapper::OutputReleasedCB output_buffer_release_cb_;
+
+  // Do we owe the client an EOS in DequeueOutput, due to an eos that we elided
+  // while we're already flushed?
+  bool elided_eos_pending_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(CodecWrapperImpl);
 };
@@ -107,8 +111,9 @@ bool CodecOutputBuffer::ReleaseToSurface() {
   return codec_->ReleaseCodecOutputBuffer(id_, true);
 }
 
-CodecWrapperImpl::CodecWrapperImpl(CodecSurfacePair codec_surface_pair,
-                                   base::Closure output_buffer_release_cb)
+CodecWrapperImpl::CodecWrapperImpl(
+    CodecSurfacePair codec_surface_pair,
+    CodecWrapper::OutputReleasedCB output_buffer_release_cb)
     : state_(State::kFlushed),
       codec_(std::move(codec_surface_pair.first)),
       surface_bundle_(std::move(codec_surface_pair.second)),
@@ -182,6 +187,7 @@ bool CodecWrapperImpl::Flush() {
     return false;
   }
   state_ = State::kFlushed;
+  elided_eos_pending_ = false;
   return true;
 }
 
@@ -217,18 +223,24 @@ CodecWrapperImpl::QueueStatus CodecWrapperImpl::QueueInputBuffer(
   // Queue EOS if it's an EOS buffer.
   if (buffer.end_of_stream()) {
     // Some MediaCodecs consider it an error to get an EOS as the first buffer
-    // (http://crbug.com/672268).
-    DCHECK_NE(state_, State::kFlushed);
-    codec_->QueueEOS(input_buffer);
+    // (http://crbug.com/672268).  Just elide it.  We also elide kDrained, since
+    // kFlushed => elided eos => kDrained, and it would still be the first
+    // buffer from MediaCodec's perspective.  While kDrained does not imply that
+    // it's the first buffer in all cases, it's still safe to elide.
+    if (state_ == State::kFlushed || state_ == State::kDrained)
+      elided_eos_pending_ = true;
+    else
+      codec_->QueueEOS(input_buffer);
     state_ = State::kDraining;
     return QueueStatus::kOk;
   }
 
   // Queue a buffer.
   const DecryptConfig* decrypt_config = buffer.decrypt_config();
-  bool encrypted = decrypt_config && decrypt_config->is_encrypted();
   MediaCodecStatus status;
-  if (encrypted) {
+  if (decrypt_config) {
+    // TODO(crbug.com/813845): Use encryption scheme settings from
+    // DecryptConfig.
     status = codec_->QueueSecureInputBuffer(
         input_buffer, buffer.data(), buffer.data_size(),
         decrypt_config->key_id(), decrypt_config->iv(),
@@ -265,6 +277,15 @@ CodecWrapperImpl::DequeueStatus CodecWrapperImpl::DequeueOutputBuffer(
   // If |*codec_buffer| were not null, deleting it would deadlock when its
   // destructor calls ReleaseCodecOutputBuffer().
   DCHECK(!*codec_buffer);
+
+  if (elided_eos_pending_) {
+    // An eos was sent while we were already flushed -- pretend it's ready.
+    elided_eos_pending_ = false;
+    state_ = State::kDrained;
+    if (end_of_stream)
+      *end_of_stream = true;
+    return DequeueStatus::kOk;
+  }
 
   // Dequeue in a loop so we can avoid propagating the uninteresting
   // OUTPUT_FORMAT_CHANGED and OUTPUT_BUFFERS_CHANGED statuses to our caller.
@@ -366,13 +387,15 @@ bool CodecWrapperImpl::ReleaseCodecOutputBuffer(int64_t id, bool render) {
   int index = buffer_it->second;
   codec_->ReleaseOutputBuffer(index, render);
   buffer_ids_.erase(buffer_ids_.begin(), buffer_it + 1);
-  if (output_buffer_release_cb_)
-    output_buffer_release_cb_.Run();
+  if (output_buffer_release_cb_) {
+    output_buffer_release_cb_.Run(state_ == State::kDrained ||
+                                  state_ == State::kDraining);
+  }
   return true;
 }
 
 CodecWrapper::CodecWrapper(CodecSurfacePair codec_surface_pair,
-                           base::Closure output_buffer_release_cb)
+                           OutputReleasedCB output_buffer_release_cb)
     : impl_(new CodecWrapperImpl(std::move(codec_surface_pair),
                                  std::move(output_buffer_release_cb))) {}
 

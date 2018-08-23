@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -27,12 +28,6 @@
       "name": "LayoutTableCell TD",
       "position": [72, 94],
       "bounds": [59, 64]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTableRow TR id='target'",
-      "reason": "style change"
     }
   ]
 }

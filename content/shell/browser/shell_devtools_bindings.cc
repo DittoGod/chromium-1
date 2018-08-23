@@ -8,12 +8,12 @@
 
 #include <utility>
 
+#include "base/base64.h"
 #include "base/guid.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/json/string_escape.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -30,12 +30,16 @@
 #include "content/shell/browser/shell_browser_main_parts.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_response_writer.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/cpp/simple_url_loader_stream_consumer.h"
 
 #if !defined(OS_ANDROID)
 #include "content/public/browser/devtools_frontend_host.h"
@@ -44,6 +48,24 @@
 namespace content {
 
 namespace {
+
+std::unique_ptr<base::DictionaryValue> BuildObjectForResponse(
+    const net::HttpResponseHeaders* rh) {
+  auto response = std::make_unique<base::DictionaryValue>();
+  response->SetInteger("statusCode", rh ? rh->response_code() : 200);
+
+  auto headers = std::make_unique<base::DictionaryValue>();
+  size_t iterator = 0;
+  std::string name;
+  std::string value;
+  // TODO(caseq): this probably needs to handle duplicate header names
+  // correctly by folding them.
+  while (rh && rh->EnumerateHeaderLines(&iterator, &name, &value))
+    headers->SetString(name, value);
+
+  response->Set("headers", std::move(headers));
+  return response;
+}
 
 // ResponseWriter -------------------------------------------------------------
 
@@ -54,11 +76,11 @@ class ResponseWriter : public net::URLFetcherResponseWriter {
   ~ResponseWriter() override;
 
   // URLFetcherResponseWriter overrides:
-  int Initialize(const net::CompletionCallback& callback) override;
+  int Initialize(net::CompletionOnceCallback callback) override;
   int Write(net::IOBuffer* buffer,
             int num_bytes,
-            const net::CompletionCallback& callback) override;
-  int Finish(int net_error, const net::CompletionCallback& callback) override;
+            net::CompletionOnceCallback callback) override;
+  int Finish(int net_error, net::CompletionOnceCallback callback) override;
 
  private:
   base::WeakPtr<ShellDevToolsBindings> devtools_bindings_;
@@ -74,13 +96,13 @@ ResponseWriter::ResponseWriter(
 
 ResponseWriter::~ResponseWriter() {}
 
-int ResponseWriter::Initialize(const net::CompletionCallback& callback) {
+int ResponseWriter::Initialize(net::CompletionOnceCallback callback) {
   return net::OK;
 }
 
 int ResponseWriter::Write(net::IOBuffer* buffer,
                           int num_bytes,
-                          const net::CompletionCallback& callback) {
+                          net::CompletionOnceCallback callback) {
   std::string chunk = std::string(buffer->data(), num_bytes);
   if (!base::IsStringUTF8(chunk))
     return num_bytes;
@@ -97,11 +119,71 @@ int ResponseWriter::Write(net::IOBuffer* buffer,
 }
 
 int ResponseWriter::Finish(int net_error,
-                           const net::CompletionCallback& callback) {
+                           net::CompletionOnceCallback callback) {
   return net::OK;
 }
 
 }  // namespace
+
+class ShellDevToolsBindings::NetworkResourceLoader
+    : public network::SimpleURLLoaderStreamConsumer {
+ public:
+  NetworkResourceLoader(int stream_id,
+                        int request_id,
+                        ShellDevToolsBindings* bindings,
+                        std::unique_ptr<network::SimpleURLLoader> loader,
+                        network::mojom::URLLoaderFactory* url_loader_factory)
+      : stream_id_(stream_id),
+        request_id_(request_id),
+        bindings_(bindings),
+        loader_(std::move(loader)) {
+    loader_->DownloadAsStream(url_loader_factory, this);
+    loader_->SetOnResponseStartedCallback(base::BindOnce(
+        &NetworkResourceLoader::OnResponseStarted, base::Unretained(this)));
+  }
+
+ private:
+  void OnResponseStarted(const GURL& final_url,
+                         const network::ResourceResponseHead& response_head) {
+    response_headers_ = response_head.headers;
+  }
+
+  void OnDataReceived(base::StringPiece chunk,
+                      base::OnceClosure resume) override {
+    base::Value chunkValue;
+
+    bool encoded = !base::IsStringUTF8(chunk);
+    if (encoded) {
+      std::string encoded_string;
+      base::Base64Encode(chunk, &encoded_string);
+      chunkValue = base::Value(std::move(encoded_string));
+    } else {
+      chunkValue = base::Value(chunk);
+    }
+    base::Value id(stream_id_);
+    base::Value encodedValue(encoded);
+
+    bindings_->CallClientFunction("DevToolsAPI.streamWrite", &id, &chunkValue,
+                                  &encodedValue);
+    std::move(resume).Run();
+  }
+
+  void OnComplete(bool success) override {
+    auto response = BuildObjectForResponse(response_headers_.get());
+    bindings_->SendMessageAck(request_id_, response.get());
+    bindings_->loaders_.erase(bindings_->loaders_.find(this));
+  }
+
+  void OnRetry(base::OnceClosure start_retry) override { NOTREACHED(); }
+
+  const int stream_id_;
+  const int request_id_;
+  ShellDevToolsBindings* const bindings_;
+  std::unique_ptr<network::SimpleURLLoader> loader_;
+  scoped_refptr<net::HttpResponseHeaders> response_headers_;
+
+  DISALLOW_COPY_AND_ASSIGN(NetworkResourceLoader);
+};
 
 // This constant should be in sync with
 // the constant at devtools_ui_bindings.cc.
@@ -233,25 +315,44 @@ void ShellDevToolsBindings::HandleMessageFromDevToolsFrontend(
               setting:
                 "It's not possible to disable this feature from settings."
               chrome_policy {
-                DeveloperToolsDisabled {
+                DeveloperToolsAvailability {
                   policy_options {mode: MANDATORY}
-                  DeveloperToolsDisabled: true
+                  DeveloperToolsAvailability: 2
                 }
               }
             })");
-    net::URLFetcher* fetcher =
-        net::URLFetcher::Create(gurl, net::URLFetcher::GET, this,
-                                traffic_annotation)
-            .release();
-    pending_requests_[fetcher] = request_id;
-    fetcher->SetRequestContext(BrowserContext::GetDefaultStoragePartition(
-                                   web_contents()->GetBrowserContext())
-                                   ->GetURLRequestContext());
-    fetcher->SetExtraRequestHeaders(headers);
-    fetcher->SaveResponseWithWriter(
-        std::unique_ptr<net::URLFetcherResponseWriter>(
-            new ResponseWriter(weak_factory_.GetWeakPtr(), stream_id)));
-    fetcher->Start();
+
+    if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+      net::URLFetcher* fetcher =
+          net::URLFetcher::Create(gurl, net::URLFetcher::GET, this,
+                                  traffic_annotation)
+              .release();
+      pending_requests_[fetcher] = request_id;
+      fetcher->SetRequestContext(BrowserContext::GetDefaultStoragePartition(
+                                     web_contents()->GetBrowserContext())
+                                     ->GetURLRequestContext());
+      fetcher->SetExtraRequestHeaders(headers);
+      fetcher->SaveResponseWithWriter(
+          std::unique_ptr<net::URLFetcherResponseWriter>(
+              new ResponseWriter(weak_factory_.GetWeakPtr(), stream_id)));
+      fetcher->Start();
+      return;
+    }
+
+    auto resource_request = std::make_unique<network::ResourceRequest>();
+    resource_request->url = gurl;
+    resource_request->headers.AddHeadersFromString(headers);
+
+    auto* partition = content::BrowserContext::GetStoragePartitionForSite(
+        web_contents()->GetBrowserContext(), gurl);
+    auto factory = partition->GetURLLoaderFactoryForBrowserProcess();
+
+    auto simple_url_loader = network::SimpleURLLoader::Create(
+        std::move(resource_request), traffic_annotation);
+    auto resource_loader = std::make_unique<NetworkResourceLoader>(
+        stream_id, request_id, this, std::move(simple_url_loader),
+        factory.get());
+    loaders_.insert(std::move(resource_loader));
     return;
   } else if (method == "getPreferences") {
     SendMessageAck(request_id, &preferences_);
@@ -317,23 +418,15 @@ void ShellDevToolsBindings::DispatchProtocolMessage(
 void ShellDevToolsBindings::OnURLFetchComplete(const net::URLFetcher* source) {
   // TODO(pfeldman): this is a copy of chrome's devtools_ui_bindings.cc.
   // We should handle some of the commands including this one in content.
+  DCHECK(!base::FeatureList::IsEnabled(network::features::kNetworkService));
+
   DCHECK(source);
   PendingRequestsMap::iterator it = pending_requests_.find(source);
   DCHECK(it != pending_requests_.end());
 
-  base::DictionaryValue response;
-  auto headers = std::make_unique<base::DictionaryValue>();
-  net::HttpResponseHeaders* rh = source->GetResponseHeaders();
-  response.SetInteger("statusCode", rh ? rh->response_code() : 200);
+  auto response = BuildObjectForResponse(source->GetResponseHeaders());
 
-  size_t iterator = 0;
-  std::string name;
-  std::string value;
-  while (rh && rh->EnumerateHeaderLines(&iterator, &name, &value))
-    headers->SetString(name, value);
-  response.Set("headers", std::move(headers));
-
-  SendMessageAck(it->second, &response);
+  SendMessageAck(it->second, response.get());
   pending_requests_.erase(it);
   delete source;
 }

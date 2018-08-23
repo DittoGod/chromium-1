@@ -11,6 +11,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/atomicops.h"
 #include "base/callback.h"
@@ -28,6 +29,7 @@
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_info.h"
+#include "gpu/config/gpu_mode.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "ipc/ipc_sender.h"
 #include "mojo/public/cpp/bindings/binding.h"
@@ -35,21 +37,26 @@
 #include "services/viz/privileged/interfaces/gl/gpu_host.mojom.h"
 #include "services/viz/privileged/interfaces/gl/gpu_service.mojom.h"
 #include "services/viz/privileged/interfaces/viz_main.mojom.h"
-#include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 #include "url/gurl.h"
 
 namespace base {
 class Thread;
 }
 
+namespace gfx {
+struct FontRenderParams;
+}
+
 namespace gpu {
 class ShaderDiskCache;
-struct SyncToken;
 }
 
 namespace content {
 class BrowserChildProcessHostImpl;
+
+#if defined(OS_MACOSX)
+class CATransactionGPUCoordinator;
+#endif
 
 class GpuProcessHost : public BrowserChildProcessHostDelegate,
                        public IPC::Sender,
@@ -70,21 +77,12 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
     SUCCESS
   };
   using EstablishChannelCallback =
-      base::Callback<void(mojo::ScopedMessagePipeHandle channel_handle,
-                          const gpu::GPUInfo&,
-                          const gpu::GpuFeatureInfo&,
-                          EstablishChannelStatus status)>;
+      base::OnceCallback<void(mojo::ScopedMessagePipeHandle channel_handle,
+                              const gpu::GPUInfo&,
+                              const gpu::GpuFeatureInfo&,
+                              EstablishChannelStatus status)>;
 
-  enum class BufferCreationStatus {
-    GPU_HOST_INVALID,
-    SUCCESS,
-  };
-  using CreateGpuMemoryBufferCallback =
-      base::Callback<void(const gfx::GpuMemoryBufferHandle& handle,
-                          BufferCreationStatus status)>;
-
-  using RequestGPUInfoCallback = base::Callback<void(const gpu::GPUInfo&)>;
-  using RequestHDRStatusCallback = base::Callback<void(bool)>;
+  using RequestHDRStatusCallback = base::RepeatingCallback<void(bool)>;
 
   static int GetGpuCrashCount();
 
@@ -110,57 +108,40 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
       bool force_create,
       const base::Callback<void(GpuProcessHost*)>& callback);
 
+  static void InitFontRenderParamsOnIO(const gfx::FontRenderParams& params);
+
   void BindInterface(const std::string& interface_name,
                      mojo::ScopedMessagePipeHandle interface_pipe);
+  void TerminateGpuProcess(const std::string& message);
 
   // Get the GPU process host for the GPU process with the given ID. Returns
   // null if the process no longer exists.
   static GpuProcessHost* FromID(int host_id);
   int host_id() const { return host_id_; }
+  base::ProcessId GetProcessId() const;
 
   // IPC::Sender implementation.
   bool Send(IPC::Message* msg) override;
+
+  // Adds a connection error handler for the GpuService.
+  void AddConnectionErrorHandler(base::OnceClosure handler);
 
   // Tells the GPU process to create a new channel for communication with a
   // client. Once the GPU process responds asynchronously with the IPC handle
   // and GPUInfo, we call the callback.
   void EstablishGpuChannel(int client_id,
                            uint64_t client_tracing_id,
-                           bool preempts,
-                           bool allow_view_command_buffers,
-                           bool allow_real_time_streams,
-                           const EstablishChannelCallback& callback);
-
-  // Tells the GPU process to create a new GPU memory buffer.
-  void CreateGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
-                             const gfx::Size& size,
-                             gfx::BufferFormat format,
-                             gfx::BufferUsage usage,
-                             int client_id,
-                             gpu::SurfaceHandle surface_handle,
-                             const CreateGpuMemoryBufferCallback& callback);
-
-  // Tells the GPU process to destroy GPU memory buffer.
-  void DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
-                              int client_id,
-                              const gpu::SyncToken& sync_token);
+                           bool is_gpu_host,
+                           EstablishChannelCallback callback);
 
   // Connects to FrameSinkManager running in the viz process. In this
   // configuration the display compositor runs in the viz process and the
   // browser must submit CompositorFrames over IPC.
   void ConnectFrameSinkManager(
       viz::mojom::FrameSinkManagerRequest request,
-      viz::mojom::FrameSinkManagerClientPtrInfo client,
-      viz::mojom::CompositingModeWatcherPtrInfo mode_watcher);
+      viz::mojom::FrameSinkManagerClientPtrInfo client);
 
-  void RequestGPUInfo(RequestGPUInfoCallback request_cb);
   void RequestHDRStatus(RequestHDRStatusCallback request_cb);
-
-#if defined(OS_ANDROID)
-  // Tells the GPU process that the given surface is being destroyed so that it
-  // can stop using it.
-  void SendDestroyingVideoSurface(int surface_id, const base::Closure& done_cb);
-#endif
 
   // What kind of GPU process, e.g. sandboxed or unsandboxed.
   GpuProcessKind kind();
@@ -168,7 +149,9 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // Forcefully terminates the GPU process.
   void ForceShutdown();
 
-  void LoadedShader(const std::string& key, const std::string& data);
+  void LoadedShader(int32_t client_id,
+                    const std::string& key,
+                    const std::string& data);
 
   CONTENT_EXPORT viz::mojom::GpuService* gpu_service();
 
@@ -176,12 +159,23 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
     return wake_up_gpu_before_drawing_;
   }
 
+  CONTENT_EXPORT int GetIDForTesting() const;
+
  private:
   class ConnectionFilterImpl;
 
-  enum GpuInitializationStatus { UNKNOWN, SUCCESS, FAILURE };
+  enum class GpuTerminationOrigin {
+    kUnknownOrigin = 0,
+    kOzoneWaylandProxy = 1,
+    kMax = 2,
+  };
 
   static bool ValidateHost(GpuProcessHost* host);
+
+  // Increments |crash_count| by one. Before incrementing |crash_count|, for
+  // each |forgive_minutes| that has passed since the previous crash remove one
+  // old crash.
+  static void IncrementCrashCount(int forgive_minutes, int* crash_count);
 
   GpuProcessHost(int host_id, GpuProcessKind kind);
   ~GpuProcessHost() override;
@@ -200,8 +194,12 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   void OnProcessCrashed(int exit_code) override;
 
   // viz::mojom::GpuHost:
-  void DidInitialize(const gpu::GPUInfo& gpu_info,
-                     const gpu::GpuFeatureInfo& gpu_feature_info) override;
+  void DidInitialize(
+      const gpu::GPUInfo& gpu_info,
+      const gpu::GpuFeatureInfo& gpu_feature_info,
+      const base::Optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
+      const base::Optional<gpu::GpuFeatureInfo>&
+          gpu_feature_info_for_hardware_gpu) override;
   void DidFailInitialize() override;
   void DidCreateContextSuccessfully() override;
   void DidCreateOffscreenContext(const GURL& url) override;
@@ -210,6 +208,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   void DidLoseContext(bool offscreen,
                       gpu::error::ContextLostReason reason,
                       const GURL& active_url) override;
+  void DisableGpuCompositing() override;
   void SetChildSurface(gpu::SurfaceHandle parent,
                        gpu::SurfaceHandle child) override;
   void StoreShaderToDisk(int32_t client_id,
@@ -220,9 +219,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
                         const std::string& message) override;
 
   void OnChannelEstablished(int client_id,
-                            const EstablishChannelCallback& callback,
                             mojo::ScopedMessagePipeHandle channel_handle);
-  void OnGpuMemoryBufferCreated(const gfx::GpuMemoryBufferHandle& handle);
 
   // Message handlers.
 #if defined(OS_ANDROID)
@@ -234,9 +231,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 
   bool LaunchGpuProcess();
 
-  void SendOutstandingReplies(EstablishChannelStatus failure_status);
-
-  void RunRequestGPUInfoCallbacks(const gpu::GPUInfo& gpu_info);
+  void SendOutstandingReplies();
 
   void BlockLiveOffscreenContexts();
 
@@ -248,17 +243,15 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // The serial number of the GpuProcessHost / GpuProcessHostUIShim pair.
   int host_id_;
 
+  // List of connection error handlers for the GpuService.
+  std::vector<base::OnceClosure> connection_error_handlers_;
+
   // These are the channel requests that we have already sent to
   // the GPU process, but haven't heard back about yet.
   base::queue<EstablishChannelCallback> channel_requests_;
 
-  // The pending create gpu memory buffer requests we need to reply to.
-  base::queue<CreateGpuMemoryBufferCallback> create_gpu_memory_buffer_requests_;
-
   // A callback to signal the completion of a SendDestroyingVideoSurface call.
   base::Closure send_destroying_video_surface_done_cb_;
-
-  std::vector<RequestGPUInfoCallback> request_gpu_info_callbacks_;
 
   // Qeueud messages to send when the process launches.
   base::queue<IPC::Message*> queued_messages_;
@@ -270,27 +263,27 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // of a separate GPU process.
   bool in_process_;
 
-  bool swiftshader_rendering_;
   GpuProcessKind kind_;
+
+  gpu::GpuMode mode_ = gpu::GpuMode::UNKNOWN;
 
   // Whether we actually launched a GPU process.
   bool process_launched_;
 
-  GpuInitializationStatus status_;
+  bool initialized_;
+
+  GpuTerminationOrigin termination_origin_ =
+      GpuTerminationOrigin::kUnknownOrigin;
 
   // Time Init started.  Used to log total GPU process startup time to UMA.
   base::TimeTicks init_start_time_;
 
-  // Master switch for enabling/disabling GPU acceleration for the current
-  // browser session.
-  static bool gpu_enabled_;
-
-  static bool hardware_gpu_enabled_;
-
+  // The total number of GPU process crashes.
   static base::subtle::Atomic32 gpu_crash_count_;
-  static int gpu_recent_crash_count_;
   static bool crashed_before_;
-  static int swiftshader_crash_count_;
+  static int hardware_accelerated_recent_crash_count_;
+  static int swiftshader_recent_crash_count_;
+  static int display_compositor_recent_crash_count_;
 
   // Here the bottom-up destruction order matters:
   // The GPU thread depends on its host so stop the host last.
@@ -298,6 +291,10 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // it could crash as it fails to find a message pipe to the host.
   std::unique_ptr<BrowserChildProcessHostImpl> process_;
   std::unique_ptr<base::Thread> in_process_gpu_thread_;
+
+#if defined(OS_MACOSX)
+  scoped_refptr<CATransactionGPUCoordinator> ca_transaction_gpu_coordinator_;
+#endif
 
   // Track the URLs of the pages which have live offscreen contexts,
   // assumed to be associated with untrusted content such as WebGL.

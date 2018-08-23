@@ -22,11 +22,13 @@
 #include "chrome/renderer/media/cast_ipc_dispatcher.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/mime_handler_view_mode.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/switches.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/extension_frame_helper.h"
@@ -35,10 +37,11 @@
 #include "extensions/renderer/guest_view/extensions_guest_view_container_dispatcher.h"
 #include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container.h"
 #include "extensions/renderer/script_context.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginParams.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_params.h"
+#include "url/origin.h"
 
 using extensions::Extension;
 
@@ -215,19 +218,40 @@ bool ChromeExtensionsRendererClient::AllowPopup() {
   }
 }
 
-bool ChromeExtensionsRendererClient::WillSendRequest(
+void ChromeExtensionsRendererClient::WillSendRequest(
     blink::WebLocalFrame* frame,
     ui::PageTransition transition_type,
     const blink::WebURL& url,
-    GURL* new_url) {
+    const url::Origin* initiator_origin,
+    GURL* new_url,
+    bool* attach_same_site_cookies) {
+  if (initiator_origin &&
+      initiator_origin->scheme() == extensions::kExtensionScheme) {
+    const extensions::RendererExtensionRegistry* extension_registry =
+        extensions::RendererExtensionRegistry::Get();
+    const Extension* extension =
+        extension_registry->GetByID(initiator_origin->host());
+    if (extension) {
+      int tab_id = extensions::ExtensionFrameHelper::Get(
+                       content::RenderFrame::FromWebFrame(frame))
+                       ->tab_id();
+      GURL request_url(url);
+      if (extension->permissions_data()->GetPageAccess(request_url, tab_id,
+                                                       nullptr) ==
+              extensions::PermissionsData::PageAccess::kAllowed ||
+          extension->permissions_data()->GetContentScriptAccess(
+              request_url, tab_id, nullptr) ==
+              extensions::PermissionsData::PageAccess::kAllowed) {
+        *attach_same_site_cookies = true;
+      }
+    }
+  }
+
   if (url.ProtocolIs(extensions::kExtensionScheme) &&
       !resource_request_policy_->CanRequestResource(GURL(url), frame,
                                                     transition_type)) {
     *new_url = GURL(chrome::kExtensionInvalidRequestURL);
-    return true;
   }
-
-  return false;
 }
 
 void ChromeExtensionsRendererClient::SetExtensionDispatcherForTest(
@@ -249,8 +273,7 @@ ChromeExtensionsRendererClient::GetExtensionDispatcherForTest() {
 bool ChromeExtensionsRendererClient::ShouldFork(blink::WebLocalFrame* frame,
                                                 const GURL& url,
                                                 bool is_initial_navigation,
-                                                bool is_server_redirect,
-                                                bool* send_referrer) {
+                                                bool is_server_redirect) {
   const extensions::RendererExtensionRegistry* extension_registry =
       extensions::RendererExtensionRegistry::Get();
 
@@ -267,11 +290,6 @@ bool ChromeExtensionsRendererClient::ShouldFork(blink::WebLocalFrame* frame,
   if (!is_server_redirect &&
       CrossesExtensionExtents(frame, url, is_extension_url,
                               is_initial_navigation)) {
-    // Include the referrer in this case since we're going from a hosted web
-    // page. (the packaged case is handled previously by the extension
-    // navigation test)
-    *send_referrer = true;
-
     const Extension* extension =
         extension_registry->GetExtensionOrAppByURL(url);
     if (extension && extension->is_app()) {
@@ -299,12 +317,26 @@ bool ChromeExtensionsRendererClient::ShouldFork(blink::WebLocalFrame* frame,
 content::BrowserPluginDelegate*
 ChromeExtensionsRendererClient::CreateBrowserPluginDelegate(
     content::RenderFrame* render_frame,
+    const content::WebPluginInfo& info,
     const std::string& mime_type,
     const GURL& original_url) {
   if (mime_type == content::kBrowserPluginMimeType)
     return new extensions::ExtensionsGuestViewContainer(render_frame);
-  return new extensions::MimeHandlerViewContainer(render_frame, mime_type,
+  return new extensions::MimeHandlerViewContainer(render_frame, info, mime_type,
                                                   original_url);
+}
+
+// static
+bool ChromeExtensionsRendererClient::IsPluginHandledByMimeHandlerView(
+    const blink::WebElement& plugin_element,
+    const GURL& resource_url,
+    const std::string& mime_type,
+    const content::WebPluginInfo& plugin_info,
+    int32_t element_instance_id) {
+  CHECK(content::MimeHandlerViewMode::UsesCrossProcessFrame());
+  // TODO(ekaramad): Implement the renderer side logic here
+  // (https://crbug.com/659750).
+  return false;
 }
 
 // static

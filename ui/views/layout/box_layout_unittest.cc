@@ -102,29 +102,30 @@ TEST_F(BoxLayoutTest, Overflow) {
   host_->AddChildView(v1);
   View* v2 = new StaticSizedView(gfx::Size(10, 20));
   host_->AddChildView(v2);
-  host_->SetBounds(0, 0, 10, 10);
+  host_->SetBounds(0, 0, 15, 10);
 
   // Overflows by positioning views at the start and truncating anything that
   // doesn't fit.
   host_->Layout();
-  EXPECT_EQ(gfx::Rect(0, 0, 10, 10), v1->bounds());
+  EXPECT_EQ(gfx::Rect(0, 0, 15, 10), v1->bounds());
   EXPECT_EQ(gfx::Rect(0, 0, 0, 0), v2->bounds());
 
-  // All values of main axis alignment should overflow in the same manner.
+  // Clipping of children should occur at the opposite end(s) to the main axis
+  // alignment position.
   layout->set_main_axis_alignment(BoxLayout::MAIN_AXIS_ALIGNMENT_START);
   host_->Layout();
-  EXPECT_EQ(gfx::Rect(0, 0, 10, 10), v1->bounds());
+  EXPECT_EQ(gfx::Rect(0, 0, 15, 10), v1->bounds());
   EXPECT_EQ(gfx::Rect(0, 0, 0, 0), v2->bounds());
 
   layout->set_main_axis_alignment(BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
   host_->Layout();
-  EXPECT_EQ(gfx::Rect(0, 0, 10, 10), v1->bounds());
-  EXPECT_EQ(gfx::Rect(0, 0, 0, 0), v2->bounds());
+  EXPECT_EQ(gfx::Rect(0, 0, 13, 10), v1->bounds());
+  EXPECT_EQ(gfx::Rect(13, 0, 2, 10), v2->bounds());
 
   layout->set_main_axis_alignment(BoxLayout::MAIN_AXIS_ALIGNMENT_END);
   host_->Layout();
-  EXPECT_EQ(gfx::Rect(0, 0, 10, 10), v1->bounds());
-  EXPECT_EQ(gfx::Rect(0, 0, 0, 0), v2->bounds());
+  EXPECT_EQ(gfx::Rect(0, 0, 5, 10), v1->bounds());
+  EXPECT_EQ(gfx::Rect(5, 0, 10, 10), v2->bounds());
 }
 
 TEST_F(BoxLayoutTest, NoSpace) {
@@ -882,6 +883,33 @@ TEST_F(BoxLayoutTest, NegativeBetweenChildSpacing) {
   host_->Layout();
   EXPECT_EQ(gfx::Rect(0, 0, 20, 20), v1->bounds());
   EXPECT_EQ(gfx::Rect(0, 10, 20, 15), v2->bounds());
+}
+
+TEST_F(BoxLayoutTest, MinimumChildSize) {
+  BoxLayout* layout = host_->SetLayoutManager(
+      std::make_unique<BoxLayout>(BoxLayout::kHorizontal, gfx::Insets()));
+  StaticSizedView* v1 = new StaticSizedView(gfx::Size(20, 20));
+  host_->AddChildView(v1);
+  StaticSizedView* v2 = new StaticSizedView(gfx::Size(20, 20));
+  host_->AddChildView(v2);
+
+  v1->set_minimum_size(gfx::Size(10, 20));
+  layout->SetFlexForView(v1, 1, true);
+
+  gfx::Size preferred_size = layout->GetPreferredSize(host_.get());
+  EXPECT_EQ(40, preferred_size.width());
+  EXPECT_EQ(20, preferred_size.height());
+
+  host_->SetBounds(0, 0, 15, 20);
+  host_->Layout();
+  EXPECT_EQ(gfx::Rect(0, 0, 10, 20), v1->bounds());
+  EXPECT_EQ(gfx::Rect(10, 0, 5, 20), v2->bounds());
+
+  v1->set_minimum_size(gfx::Size(5, 20));
+
+  host_->Layout();
+  EXPECT_EQ(gfx::Rect(0, 0, 5, 20), v1->bounds());
+  EXPECT_EQ(gfx::Rect(5, 0, 10, 20), v2->bounds());
 }
 
 }  // namespace views

@@ -25,6 +25,7 @@ const char* const kPublicSessionWhitelist[] = {
     "pmnllmkmjilbojkpgplbdmckghmaocjh",  // Scan app by François Beaufort
     "haeblkpifdemlfnkogkipmghfcbonief",  // Charismathics Smart Card Middleware
     "mpnkhdpphjiihmlmkcamhpogecnnfffa",  // Service NSW Kiosk Utility
+    "npilppbicblkkgjfnbmibmhhgjhobpll",  // QwickACCESS
 
     // Libraries:
     "aclofikceldphonlfmghmimkodjdmhck",  // Ancoris login component
@@ -96,6 +97,10 @@ const char* const kPublicSessionWhitelist[] = {
     "bhfoghflalnnjfcfkaelngenjgjjhapk",  // Wevideo demo
     "pjckdjlmdcofkkkocnmhcbehkiapalho",  // Wunderlist demo
     "pbdihpaifchmclcmkfdgffnnpfbobefh",  // YouTube demo
+
+    // New demo mode:
+    "lpmakjfjcconjeehbidjclhdlpjmfjjj",  // Highlights app
+    "iggildboghmjpbjcpmobahnkmoefkike",  // Highlights app
 
     // Testing extensions:
     "ongnjlefhnoajpbodoldndkbkdgfomlp",  // Show Managed Storage

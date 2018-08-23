@@ -11,10 +11,6 @@
 
 namespace gfx {
 
-// The size of a single side of the square canvas to which path coordinates
-// are relative, in device independent pixels.
-const int kReferenceSizeDip = 48;
-
 // A command to Skia.
 enum CommandType {
   // A new <path> element. For the first path, this is assumed.
@@ -47,7 +43,7 @@ enum CommandType {
   CIRCLE,
   ROUND_RECT,
   CLOSE,
-  // Sets the dimensions of the canvas in dip. (Default is kReferenceSizeDip.)
+  // Sets the dimensions of the canvas in dip.
   CANVAS_DIMENSIONS,
   // Sets a bounding rect for the path. This allows fine adjustment because it
   // can tweak edge anti-aliasing. Args are x, y, w, h.
@@ -63,9 +59,6 @@ enum CommandType {
   // Parameters are delay (ms), duration (ms), and tween type
   // (gfx::Tween::Type).
   TRANSITION_END,
-  // Marks the end of the list of commands. TODO(estade): remove this sentinel
-  // value and rely on VectorIcon::path_size.
-  END
 };
 
 // A POD that describes either a path command or an argument for it.
@@ -79,18 +72,29 @@ struct PathElement {
   };
 };
 
-struct VectorIcon {
-  VectorIcon() = default;
+// Describes the drawing commands for a single vector icon at a particular pixel
+// size or range of sizes.
+struct VectorIconRep {
+  VectorIconRep() = default;
 
-  bool is_empty() const { return !path; }
+  const PathElement* path = nullptr;
 
-  const gfx::PathElement* path = nullptr;
   // The length of |path|.
   size_t path_size = 0u;
 
-  const gfx::PathElement* path_1x = nullptr;
-  // The length of |path_1x|.
-  size_t path_1x_size = 0u;
+ private:
+  DISALLOW_COPY_AND_ASSIGN(VectorIconRep);
+};
+
+// A vector icon that stores one or more representations to be used for various
+// scale factors and pixel dimensions.
+struct VectorIcon {
+  VectorIcon() = default;
+
+  bool is_empty() const { return !reps; }
+
+  const VectorIconRep* const reps = nullptr;
+  size_t reps_size = 0u;
 
   // A human-readable name, useful for debugging, derived from the name of the
   // icon file. This can also be used as an identifier, but vector icon targets

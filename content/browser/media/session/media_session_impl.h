@@ -34,6 +34,12 @@ namespace media {
 enum class MediaContentType;
 }  // namespace media
 
+namespace media_session {
+namespace mojom {
+enum class AudioFocusType;
+}  // namespace mojom
+}  // namespace media_session
+
 namespace content {
 
 class AudioFocusDelegate;
@@ -141,6 +147,9 @@ class MediaSessionImpl : public MediaSession,
   // MediaSessionService declared state and guessed state (audio_focus_state_).
   CONTENT_EXPORT bool IsActuallyPaused() const override;
 
+  // Set the volume multiplier applied during ducking.
+  CONTENT_EXPORT void SetDuckingVolumeMultiplier(double multiplier) override;
+
   // Let the media session start ducking such that the volume multiplier is
   // reduced.
   CONTENT_EXPORT void StartDucking() override;
@@ -160,7 +169,7 @@ class MediaSessionImpl : public MediaSession,
 
   // Returns the audio focus type. The type is updated everytime after the
   // session requests audio focus.
-  CONTENT_EXPORT AudioFocusManager::AudioFocusType audio_focus_type() const {
+  CONTENT_EXPORT media_session::mojom::AudioFocusType audio_focus_type() const {
     return audio_focus_type_;
   }
 
@@ -196,6 +205,24 @@ class MediaSessionImpl : public MediaSession,
   // to blink::MediaSession corresponding to the current routed service.
   void DidReceiveAction(blink::mojom::MediaSessionAction action) override;
 
+  // Requests audio focus to the AudioFocusDelegate.
+  // Returns whether the request was granted.
+  CONTENT_EXPORT bool RequestSystemAudioFocus(
+      media_session::mojom::AudioFocusType audio_focus_type);
+
+  // Returns debugging information to be displayed on chrome://media-internals.
+  struct DebugInfo {
+    // A unique name for the MediaSession.
+    std::string name;
+
+    // The title and URL of the owning WebContents.
+    std::string owner;
+
+    // State information stored in a string e.g. Ducked.
+    std::string state;
+  };
+  const DebugInfo GetDebugInfo();
+
  private:
   friend class content::WebContentsUserData<MediaSessionImpl>;
   friend class ::MediaSessionImplBrowserTest;
@@ -204,6 +231,7 @@ class MediaSessionImpl : public MediaSession,
   friend class content::MediaSessionImplServiceRoutingTest;
   friend class content::MediaSessionImplStateObserver;
   friend class content::MediaSessionServiceImplBrowserTest;
+  friend class MediaInternalsAudioFocusTest;
 
   CONTENT_EXPORT void SetDelegateForTests(
       std::unique_ptr<AudioFocusDelegate> delegate);
@@ -236,11 +264,6 @@ class MediaSessionImpl : public MediaSession,
   CONTENT_EXPORT void OnSuspendInternal(MediaSession::SuspendType suspend_type,
                                         State new_state);
   CONTENT_EXPORT void OnResumeInternal(MediaSession::SuspendType suspend_type);
-
-  // Requests audio focus to the AudioFocusDelegate.
-  // Returns whether the request was granted.
-  CONTENT_EXPORT bool RequestSystemAudioFocus(
-      AudioFocusManager::AudioFocusType audio_focus_type);
 
   // To be called after a call to AbandonAudioFocus() in order request the
   // delegate to abandon the audio focus.
@@ -293,7 +316,7 @@ class MediaSessionImpl : public MediaSession,
 
   State audio_focus_state_;
   MediaSession::SuspendType suspend_type_;
-  AudioFocusManager::AudioFocusType audio_focus_type_;
+  media_session::mojom::AudioFocusType audio_focus_type_;
 
   MediaSessionUmaHelper uma_helper_;
 
@@ -302,9 +325,11 @@ class MediaSessionImpl : public MediaSession,
   // StopDucking().
   bool is_ducking_;
 
+  double ducking_volume_multiplier_;
+
   base::CallbackList<void(State)> media_session_state_listeners_;
 
-  base::ObserverList<MediaSessionObserver> observers_;
+  base::ObserverList<MediaSessionObserver>::Unchecked observers_;
 
 #if defined(OS_ANDROID)
   std::unique_ptr<MediaSessionAndroid> session_android_;

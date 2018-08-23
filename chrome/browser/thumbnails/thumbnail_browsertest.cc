@@ -10,7 +10,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/thumbnails/thumbnail_service.h"
@@ -18,8 +17,6 @@
 #include "chrome/browser/thumbnails/thumbnailing_context.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/chrome_features.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -84,13 +81,6 @@ std::string MakeHtmlDocument(const std::string& background_color) {
       "<body></body>"
       "</html>",
       background_color.c_str());
-}
-
-void Sleep(base::TimeDelta delta) {
-  base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, run_loop.QuitClosure(), delta);
-  run_loop.Run();
 }
 
 class MockThumbnailService : public ThumbnailService {
@@ -173,9 +163,6 @@ class ThumbnailTest : public InProcessBrowserTest {
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    feature_list_.InitAndEnableFeature(
-        features::kCaptureThumbnailOnNavigatingAway);
-
     will_create_browser_context_services_subscription_ =
         BrowserContextDependencyManager::GetInstance()
             ->RegisterWillCreateBrowserContextServicesCallbackForTesting(
@@ -193,8 +180,6 @@ class ThumbnailTest : public InProcessBrowserTest {
     ThumbnailServiceFactory::GetInstance()->SetTestingFactory(
         context, &ThumbnailTest::CreateThumbnailService);
   }
-
-  base::test::ScopedFeatureList feature_list_;
 
   std::unique_ptr<
       base::CallbackList<void(content::BrowserContext*)>::Subscription>
@@ -329,12 +314,12 @@ IN_PROC_BROWSER_TEST_F(ThumbnailTest,
       .Times(0);
 
   // Navigate to the red page.
-  ui_test_utils::NavigateToURL(browser(), red_url);
-
-  // Give the renderer process some time to actually paint it. Without this,
-  // there's a chance we might attempt to take a screenshot before the first
-  // paint, which would fail.
-  Sleep(base::TimeDelta::FromMilliseconds(200));
+  {
+    NavigationAndFirstPaintWaiter waiter(
+        browser()->tab_strip_model()->GetActiveWebContents());
+    ui_test_utils::NavigateToURL(browser(), red_url);
+    waiter.Wait();
+  }
 
   // Before navigating away from the red page, we should take a thumbnail.
   // Note that the page load is deliberately slowed down, so that the

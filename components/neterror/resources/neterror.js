@@ -154,6 +154,30 @@ var primaryControlOnLeft = true;
 primaryControlOnLeft = false;
 // </if>
 
+// Populates suggested offline content. Note: this UI is in development.
+// See https://crbug.com/852872.
+function offlineContentAvailable(content) {
+  var div = document.getElementById('offline-suggestions');
+  var suggestionText = [];
+  for (var c of content) {
+    var visual = '';
+    if (c.thumbnail_data_uri) {
+      // html_inline.py will try to replace src attributes with data URIs using
+      // a simple regex. The following is obfuscated slightly to avoid that.
+      var src = 'src';
+      visual = `<img ${src}="${c.thumbnail_data_uri}"` +
+        ' class="suggested-thumbnail"></img>';
+    }
+    suggestionText.push(
+      `<li>${visual} ${c.title} ${c.date_modified} ${c.attribution}</li>`);
+  }
+  var htmlList = document.getElementById('offline-content-list');
+  htmlList.innerHTML = suggestionText.join('\n');
+  div.hidden = false;
+  document.getElementById('scroll-spacer').hidden = false;
+  document.getElementById('suggestions-list').hidden = true;
+}
+
 function onDocumentLoad() {
   var controlButtonDiv = document.getElementById('control-buttons');
   var reloadButton = document.getElementById('reload-button');

@@ -17,6 +17,7 @@
 #include "base/containers/stack.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/time/time_override.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/trace_config.h"
 #include "base/trace_event/trace_event_impl.h"
@@ -24,10 +25,11 @@
 
 namespace base {
 
-template <typename Type>
-struct DefaultSingletonTraits;
 class MessageLoop;
 class RefCountedString;
+
+template <typename T>
+class NoDestructor;
 
 namespace trace_event {
 
@@ -176,6 +178,14 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
   // Cancels tracing and discards collected data.
   void CancelTracing(const OutputCallback& cb);
 
+  typedef void (*AddTraceEventOverrideCallback)(const TraceEvent&);
+  typedef void (*OnFlushCallback)();
+  // The callback will be called up until the point where the flush is
+  // finished, i.e. must be callable until OutputCallback is called with
+  // has_more_events==false.
+  void SetAddTraceEventOverride(const AddTraceEventOverrideCallback& override,
+                                const OnFlushCallback& on_flush_callback);
+
   // Called by TRACE_EVENT* macros, don't call this directly.
   // The name parameter is a category group for example:
   // TRACE_EVENT0("renderer,webkit", "WebViewImpl::HandleInputEvent")
@@ -293,8 +303,8 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
     filter_factory_for_testing_ = factory;
   }
 
-  // Allows deleting our singleton instance.
-  static void DeleteForTesting();
+  // Allows clearing up our singleton instance.
+  static void ResetForTesting();
 
   // Allow tests to inspect TraceEvents.
   TraceEvent* GetEventByHandle(TraceEventHandle handle);
@@ -359,10 +369,9 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
                            ConvertTraceConfigToInternalOptions);
   FRIEND_TEST_ALL_PREFIXES(TraceEventTestFixture,
                            TraceRecordAsMuchAsPossibleMode);
+  FRIEND_TEST_ALL_PREFIXES(TraceEventTestFixture, ConfigTraceBufferLimit);
 
-  // This allows constructor and destructor to be private and usable only
-  // by the Singleton class.
-  friend struct DefaultSingletonTraits<TraceLog>;
+  friend class base::NoDestructor<TraceLog>;
 
   // MemoryDumpProvider implementation.
   bool OnMemoryDump(const MemoryDumpArgs& args,
@@ -388,6 +397,11 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
   TraceLog();
   ~TraceLog() override;
   void AddMetadataEventsWhileLocked();
+  template <typename T>
+  void AddMetadataEventWhileLocked(int thread_id,
+                                   const char* metadata_name,
+                                   const char* arg_name,
+                                   const T& value);
 
   InternalTraceOptions trace_options() const {
     return static_cast<InternalTraceOptions>(
@@ -432,7 +446,10 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
   }
   void UseNextTraceBuffer();
 
-  TimeTicks OffsetNow() const { return OffsetTimestamp(TimeTicks::Now()); }
+  TimeTicks OffsetNow() const {
+    // This should be TRACE_TIME_TICKS_NOW but include order makes that hard.
+    return OffsetTimestamp(base::subtle::TimeTicksNowIgnoringOverride());
+  }
   TimeTicks OffsetTimestamp(const TimeTicks& timestamp) const {
     return timestamp - time_offset_;
   }
@@ -502,10 +519,12 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
 
   // Set when asynchronous Flush is in progress.
   OutputCallback flush_output_callback_;
-  scoped_refptr<SingleThreadTaskRunner> flush_task_runner_;
+  scoped_refptr<SequencedTaskRunner> flush_task_runner_;
   ArgumentFilterPredicate argument_filter_predicate_;
   subtle::AtomicWord generation_;
   bool use_worker_thread_;
+  subtle::AtomicWord trace_event_override_;
+  subtle::AtomicWord on_flush_callback_;
 
   FilterFactoryForTesting filter_factory_for_testing_;
 

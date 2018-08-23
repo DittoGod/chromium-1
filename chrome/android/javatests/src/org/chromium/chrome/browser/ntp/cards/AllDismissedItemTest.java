@@ -10,7 +10,6 @@ import android.widget.FrameLayout;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
@@ -23,7 +22,6 @@ import org.chromium.chrome.browser.ntp.cards.AllDismissedItem.ViewHolder;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.RenderTestRule;
-import org.chromium.chrome.test.util.browser.ChromeHome;
 
 import java.io.IOException;
 
@@ -41,9 +39,6 @@ public class AllDismissedItemTest {
     @Rule
     public RenderTestRule mRenderTestRule = new RenderTestRule();
 
-    @Rule
-    public TestRule mChromeHomeStateRule = new ChromeHome.Processor();
-
     private FrameLayout mContentView;
 
     @Before
@@ -59,9 +54,8 @@ public class AllDismissedItemTest {
     @Test
     @MediumTest
     @Feature({"Cards", "RenderTest"})
-    @ChromeHome.Disable
     public void testNewTabPageAppearance() throws IOException {
-        SectionList sectionList = null;  // The SectionList is only used if the item is clicked on.
+        SectionList sectionList = null; // The SectionList is only used if the item is clicked on.
         ViewHolder viewHolder = new ViewHolder(mContentView, sectionList);
 
         renderAtHour(viewHolder, 9, "morning");
@@ -72,9 +66,8 @@ public class AllDismissedItemTest {
     @Test
     //@MediumTest
     //@Feature({"Cards", "RenderTest"})
-    // crbug.com/780555
+    // https://crbug.com/780555, re-enable with https://crbug.com/816922
     @DisabledTest
-    @ChromeHome.Enable
     public void testChromeHomeAppearance() throws IOException {
         renderAtHour(new ViewHolder(mContentView, null), 0, "modern");
     }
@@ -83,7 +76,7 @@ public class AllDismissedItemTest {
         // TODO(peconn): Extract common code between this and ArticleSnippetsTest for rendering
         // views in isolation.
         ThreadUtils.runOnUiThreadBlocking(() -> {
-            viewHolder.onBindViewHolder(hour, null);
+            viewHolder.onBindViewHolder(hour);
             mContentView.addView(viewHolder.itemView);
         });
         mRenderTestRule.render(viewHolder.itemView, renderId);

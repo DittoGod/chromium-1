@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -77,72 +78,6 @@
           "reason": "style change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'The color of this'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'text in the reflection'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'should be green'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'The color of this'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'text in the reflection'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'should be green'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'The color of this'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'text in the reflection'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'should be green'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'The color of this'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'text in the reflection'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'should be green'",
-      "reason": "style change"
     }
   ]
 }

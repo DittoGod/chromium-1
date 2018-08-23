@@ -7,8 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "ash/resources/grit/ash_resources.h"
-#include "ash/resources/vector_icons/vector_icons.h"
+#include "ash/public/cpp/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "base/strings/string16.h"
@@ -36,8 +35,8 @@ class LocaleNotificationDelegate : public message_center::NotificationDelegate {
 
   // message_center::NotificationDelegate overrides:
   void Close(bool by_user) override;
-  void Click() override;
-  void ButtonClick(int button_index) override;
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override;
 
  private:
   base::OnceCallback<void(ash::mojom::LocaleNotificationResult)> callback_;
@@ -63,18 +62,15 @@ void LocaleNotificationDelegate::Close(bool by_user) {
   }
 }
 
-void LocaleNotificationDelegate::Click() {
-  if (callback_) {
-    std::move(callback_).Run(ash::mojom::LocaleNotificationResult::ACCEPT);
-  }
-}
+void LocaleNotificationDelegate::Click(
+    const base::Optional<int>& button_index,
+    const base::Optional<base::string16>& reply) {
+  if (!callback_)
+    return;
 
-void LocaleNotificationDelegate::ButtonClick(int button_index) {
-  DCHECK_EQ(0, button_index);
-
-  if (callback_) {
-    std::move(callback_).Run(ash::mojom::LocaleNotificationResult::REVERT);
-  }
+  std::move(callback_).Run(button_index
+                               ? ash::mojom::LocaleNotificationResult::REVERT
+                               : ash::mojom::LocaleNotificationResult::ACCEPT);
 }
 
 }  // namespace
@@ -110,13 +106,12 @@ void LocaleNotificationController::OnLocaleChanged(
           l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_LOCALE_CHANGE_TITLE),
           l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_LOCALE_CHANGE_MESSAGE,
                                      from, to),
-          gfx::Image(), base::string16() /* display_source */, GURL(),
+          base::string16() /* display_source */, GURL(),
           message_center::NotifierId(
               message_center::NotifierId::SYSTEM_COMPONENT, kNotifierLocale),
           optional, new LocaleNotificationDelegate(std::move(callback)),
           kNotificationSettingsIcon,
           message_center::SystemNotificationWarningLevel::NORMAL);
-  notification->set_clickable(true);
   message_center::MessageCenter::Get()->AddNotification(
       std::move(notification));
 }

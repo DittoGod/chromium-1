@@ -9,7 +9,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/client_native_pixmap.h"
-#include "ui/gfx/client_native_pixmap_factory.h"
 #include "ui/gl/gl_image_native_pixmap.h"
 #include "ui/gl/test/gl_image_test_template.h"
 #include "ui/ozone/public/client_native_pixmap_factory_ozone.h"
@@ -26,7 +25,7 @@ template <gfx::BufferUsage usage, gfx::BufferFormat format>
 class GLImageNativePixmapTestDelegate : public GLImageTestDelegateBase {
  public:
   GLImageNativePixmapTestDelegate() {
-    ui::CreateClientNativePixmapFactoryOzone();
+    client_native_pixmap_factory_ = ui::CreateClientNativePixmapFactoryOzone();
   }
 
   ~GLImageNativePixmapTestDelegate() override = default;
@@ -41,9 +40,8 @@ class GLImageNativePixmapTestDelegate : public GLImageTestDelegateBase {
     DCHECK(pixmap);
     if (usage == gfx::BufferUsage::GPU_READ_CPU_READ_WRITE ||
         usage == gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE) {
-      auto client_pixmap =
-          gfx::ClientNativePixmapFactory::GetInstance()->ImportFromHandle(
-              pixmap->ExportHandle(), size, usage);
+      auto client_pixmap = client_native_pixmap_factory_->ImportFromHandle(
+          pixmap->ExportHandle(), size, usage);
       bool mapped = client_pixmap->Map();
       EXPECT_TRUE(mapped);
 
@@ -77,6 +75,8 @@ class GLImageNativePixmapTestDelegate : public GLImageTestDelegateBase {
   }
 
  private:
+  std::unique_ptr<gfx::ClientNativePixmapFactory> client_native_pixmap_factory_;
+
   DISALLOW_COPY_AND_ASSIGN(GLImageNativePixmapTestDelegate);
 };
 
@@ -90,9 +90,9 @@ INSTANTIATE_TYPED_TEST_CASE_P(GLImageNativePixmapScanout,
 
 using GLImageScanoutTypeDisabled = testing::Types<
     GLImageNativePixmapTestDelegate<gfx::BufferUsage::SCANOUT,
-                                    gfx::BufferFormat::BGRX_1010102>>;
+                                    gfx::BufferFormat::RGBX_1010102>>;
 
-// This test is disabled since we need mesa support for XR30 that is not
+// This test is disabled since we need mesa support for XR30/XB30 that is not
 // available on many boards yet.
 INSTANTIATE_TYPED_TEST_CASE_P(DISABLED_GLImageNativePixmapScanout,
                               GLImageTest,
@@ -108,7 +108,7 @@ using GLImageBindTestTypes = testing::Types<
     GLImageNativePixmapTestDelegate<gfx::BufferUsage::GPU_READ_CPU_READ_WRITE,
                                     gfx::BufferFormat::BGRA_8888>,
     GLImageNativePixmapTestDelegate<gfx::BufferUsage::GPU_READ_CPU_READ_WRITE,
-                                    gfx::BufferFormat::BGRX_1010102>,
+                                    gfx::BufferFormat::RGBX_1010102>,
     GLImageNativePixmapTestDelegate<gfx::BufferUsage::GPU_READ_CPU_READ_WRITE,
                                     gfx::BufferFormat::R_8>,
     GLImageNativePixmapTestDelegate<gfx::BufferUsage::GPU_READ_CPU_READ_WRITE,

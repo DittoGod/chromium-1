@@ -32,11 +32,6 @@ class NET_EXPORT ProxyInfo {
   void Use(const ProxyInfo& proxy_info);
 
   // Uses a direct connection.
-  //
-  // Note that this method resets this instance unlike Fallback(), etc. which
-  // only modify |proxy_list_|. For example, since |config_id_| is cleared, the
-  // ProxyResolutionService may recognize this instance as a new config after
-  // UseDirect() call.
   void UseDirect();
 
   // Uses a direct connection. did_bypass_proxy() will return true to indicate
@@ -136,20 +131,14 @@ class NET_EXPORT ProxyInfo {
   // to call this function.
   const ProxyServer& proxy_server() const { return proxy_list_.Get(); }
 
-  // Returns the source for configuration settings used for proxy resolution.
-  ProxyConfigSource config_source() const { return config_source_; }
-
-  // Returns traffic annotation tag based on current config source.
-  const NetworkTrafficAnnotationTag traffic_annotation() const;
-
   // See description in ProxyList::ToPacString().
   std::string ToPacString() const;
 
   // Marks the current proxy as bad. |net_error| should contain the network
   // error encountered when this proxy was tried, if any. If this fallback
   // is not because of a network error, then |OK| should be passed in (eg. for
-  // reasons such as local policy). Returns true if there is another proxy is
-  // available to try in proxy list_.
+  // reasons such as local policy). Returns true if there is another proxy
+  // available to try in |proxy_list_|.
   bool Fallback(int net_error, const NetLogWithSource& net_log);
 
   // De-prioritizes the proxies that we have cached as not working, by moving
@@ -158,8 +147,6 @@ class NET_EXPORT ProxyInfo {
 
   // Deletes any entry which doesn't have one of the specified proxy schemes.
   void RemoveProxiesWithoutScheme(int scheme_bit_field);
-
-  ProxyConfig::ID config_id() const { return config_id_; }
 
   // Returns the list of proxies to use.
   const ProxyList& proxy_list() const {
@@ -175,6 +162,15 @@ class NET_EXPORT ProxyInfo {
 
   base::TimeTicks proxy_resolve_end_time() const {
     return proxy_resolve_end_time_;
+  }
+
+  void set_traffic_annotation(
+      const MutableNetworkTrafficAnnotationTag& traffic_annotation) {
+    traffic_annotation_ = traffic_annotation;
+  }
+
+  MutableNetworkTrafficAnnotationTag traffic_annotation() const {
+    return traffic_annotation_;
   }
 
  private:
@@ -199,11 +195,8 @@ class NET_EXPORT ProxyInfo {
   // List of proxies that have been tried already.
   ProxyRetryInfoMap proxy_retry_info_;
 
-  // This value identifies the proxy config used to initialize this object.
-  ProxyConfig::ID config_id_;
-
-  // The source of the proxy settings used,
-  ProxyConfigSource config_source_;
+  // The traffic annotation of the used proxy config.
+  MutableNetworkTrafficAnnotationTag traffic_annotation_;
 
   // Whether the proxy result represent a proxy bypass.
   bool did_bypass_proxy_;

@@ -19,9 +19,9 @@
 #include "extensions/renderer/injection_host.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/scripts_run_info.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebScriptSource.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_script_source.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "url/gurl.h"
 
@@ -149,6 +149,10 @@ base::Optional<CSSOrigin> UserScriptInjector::GetCssOrigin() const {
   return base::nullopt;
 }
 
+const base::Optional<std::string> UserScriptInjector::GetInjectionKey() const {
+  return base::nullopt;
+}
+
 bool UserScriptInjector::ShouldInjectJs(
     UserScript::RunLocation run_location,
     const std::set<std::string>& executing_scripts) const {
@@ -165,14 +169,14 @@ bool UserScriptInjector::ShouldInjectCss(
          ShouldInjectScripts(script_->css_scripts(), injected_stylesheets);
 }
 
-PermissionsData::AccessType UserScriptInjector::CanExecuteOnFrame(
+PermissionsData::PageAccess UserScriptInjector::CanExecuteOnFrame(
     const InjectionHost* injection_host,
     blink::WebLocalFrame* web_frame,
     int tab_id) {
   // There is no harm in allowing the injection when the script is gone,
   // because there is nothing to inject.
   if (!script_)
-    return PermissionsData::ACCESS_ALLOWED;
+    return PermissionsData::PageAccess::kAllowed;
 
   if (script_->consumer_instance_type() ==
           UserScript::ConsumerInstanceType::WEBVIEW) {
@@ -198,8 +202,8 @@ PermissionsData::AccessType UserScriptInjector::CanExecuteOnFrame(
       map.insert(std::pair<RoutingInfoKey, bool>(key, allowed));
     }
 
-    return allowed ? PermissionsData::ACCESS_ALLOWED
-                   : PermissionsData::ACCESS_DENIED;
+    return allowed ? PermissionsData::PageAccess::kAllowed
+                   : PermissionsData::PageAccess::kDenied;
   }
 
   GURL effective_document_url = ScriptContext::GetEffectiveDocumentURL(

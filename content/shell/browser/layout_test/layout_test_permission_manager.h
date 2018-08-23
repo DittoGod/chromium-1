@@ -12,12 +12,12 @@
 #include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "base/synchronization/lock.h"
-#include "content/public/browser/permission_manager.h"
+#include "content/public/browser/permission_controller_delegate.h"
 #include "url/gurl.h"
 
 namespace content {
 
-class LayoutTestPermissionManager : public PermissionManager {
+class LayoutTestPermissionManager : public PermissionControllerDelegate {
  public:
   LayoutTestPermissionManager();
   ~LayoutTestPermissionManager() override;
@@ -45,10 +45,14 @@ class LayoutTestPermissionManager : public PermissionManager {
       PermissionType permission,
       const GURL& requesting_origin,
       const GURL& embedding_origin) override;
+  blink::mojom::PermissionStatus GetPermissionStatusForFrame(
+      content::PermissionType permission,
+      content::RenderFrameHost* render_frame_host,
+      const GURL& requesting_origin) override;
   int SubscribePermissionStatusChange(
       PermissionType permission,
+      RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
-      const GURL& embedding_origin,
       const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
       override;
   void UnsubscribePermissionStatusChange(int subscription_id) override;

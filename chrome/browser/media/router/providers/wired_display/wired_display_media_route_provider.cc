@@ -41,7 +41,7 @@ MediaSinkInternal CreateSinkForDisplay(const Display& display,
   const std::string sink_name =
       l10n_util::GetStringFUTF8(IDS_MEDIA_ROUTER_WIRED_DISPLAY_SINK_NAME,
                                 base::FormatNumber(display_index));
-  MediaSink sink(sink_id, sink_name, SinkIconType::GENERIC,
+  MediaSink sink(sink_id, sink_name, SinkIconType::WIRED_DISPLAY,
                  MediaRouteProviderId::WIRED_DISPLAY);
   MediaSinkInternal sink_internal;
   sink_internal.set_sink(sink);
@@ -90,14 +90,15 @@ WiredDisplayMediaRouteProvider::WiredDisplayMediaRouteProvider(
     : binding_(this, std::move(request)),
       media_router_(std::move(media_router)),
       profile_(profile) {
-  if (PresentationReceiverWindowEnabled())
-    display::Screen::GetScreen()->AddObserver(this);
-  ReportSinkAvailability(GetSinks());
+  media_router_->OnSinkAvailabilityUpdated(
+      kProviderId, mojom::MediaRouter::SinkAvailability::PER_SOURCE);
 }
 
 WiredDisplayMediaRouteProvider::~WiredDisplayMediaRouteProvider() {
-  if (PresentationReceiverWindowEnabled())
+  if (is_observing_displays_ && PresentationReceiverWindowEnabled()) {
     display::Screen::GetScreen()->RemoveObserver(this);
+    is_observing_displays_ = false;
+  }
 }
 
 void WiredDisplayMediaRouteProvider::CreateRoute(
@@ -201,8 +202,15 @@ void WiredDisplayMediaRouteProvider::SendRouteBinaryMessage(
 
 void WiredDisplayMediaRouteProvider::StartObservingMediaSinks(
     const std::string& media_source) {
-  if (IsPresentationSource(media_source))
-    sink_queries_.insert(media_source);
+  if (!IsPresentationSource(media_source))
+    return;
+
+  // Start observing displays if |this| isn't already observing.
+  if (!is_observing_displays_ && PresentationReceiverWindowEnabled()) {
+    display::Screen::GetScreen()->AddObserver(this);
+    is_observing_displays_ = true;
+  }
+  sink_queries_.insert(media_source);
   UpdateMediaSinks(media_source);
 }
 
@@ -290,6 +298,16 @@ void WiredDisplayMediaRouteProvider::OnDisplayAdded(
 
 void WiredDisplayMediaRouteProvider::OnDisplayRemoved(
     const Display& old_display) {
+  const std::string sink_id =
+      WiredDisplayMediaRouteProvider::GetSinkIdForDisplay(old_display);
+  auto it = std::find_if(
+      presentations_.begin(), presentations_.end(),
+      [&sink_id](
+          const std::pair<const std::string, Presentation>& presentation) {
+        return presentation.second.route().media_sink_id() == sink_id;
+      });
+  if (it != presentations_.end())
+    it->second.receiver()->ExitFullscreen();
   NotifySinkObservers();
 }
 
@@ -409,7 +427,13 @@ void WiredDisplayMediaRouteProvider::ReportSinkAvailability(
 
 void WiredDisplayMediaRouteProvider::RemovePresentationById(
     const std::string& presentation_id) {
-  presentations_.erase(presentation_id);
+  auto entry = presentations_.find(presentation_id);
+  if (entry == presentations_.end())
+    return;
+  media_router_->OnPresentationConnectionStateChanged(
+      entry->second.route().media_route_id(),
+      mojom::MediaRouter::PresentationConnectionState::TERMINATED);
+  presentations_.erase(entry);
   NotifyRouteObservers();
 }
 

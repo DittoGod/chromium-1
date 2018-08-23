@@ -157,8 +157,8 @@ class HookManager {
       return;
     }
 
-    uint32_t dchecked_co_create_instance_address = reinterpret_cast<uint32_t>(
-        static_cast<void*>(&HookManager::DCheckedCoCreateInstance));
+    uint32_t dchecked_co_create_instance_address =
+        reinterpret_cast<uint32_t>(&HookManager::DCheckedCoCreateInstance);
     uint32_t jmp_offset_base_address = co_create_instance_padded_address_ + 5;
     StructuredHotpatch structured_hotpatch;
     structured_hotpatch.relative_address =
@@ -243,7 +243,7 @@ class HookManager {
     // evaluate your threading guarantees and dispatch your work with
     // base::CreateCOMSTATaskRunnerWithTraits().
     //
-    // If you need MTA support, ping //base/task_scheduler/OWNERS.
+    // If you need MTA support, ping //base/task/task_scheduler/OWNERS.
     AssertComInitialized(
         "CoCreateInstance calls in Chromium require explicit COM "
         "initialization via base::CreateCOMSTATaskRunnerWithTraits() or "

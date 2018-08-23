@@ -2,7 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/python.gni")
 import("//build/config/ui.gni")
+import("//build/util/lastchange.gni")
 import("//testing/test.gni")
 
 action("embed_js_in_cpp") {
@@ -148,12 +150,12 @@ source_set("automation_client_lib") {
     "chrome/web_view.h",
     "chrome/web_view_impl.cc",
     "chrome/web_view_impl.h",
+    "log_replay/devtools_log_reader.cc",
+    "log_replay/devtools_log_reader.h",
     "net/adb_client_socket.cc",
     "net/adb_client_socket.h",
     "net/net_util.cc",
     "net/net_util.h",
-    "net/port_server.cc",
-    "net/port_server.h",
     "net/sync_websocket.h",
     "net/sync_websocket_factory.cc",
     "net/sync_websocket_factory.h",
@@ -182,7 +184,7 @@ source_set("automation_client_lib") {
     "//base",
     "//base/third_party/dynamic_annotations",
     "//net",
-    "//third_party/WebKit/public:features",
+    "//third_party/blink/public:buildflags",
     "//third_party/zlib:minizip",
     "//third_party/zlib/google:zip",
     "//ui/accessibility:ax_enums_mojo",
@@ -198,11 +200,12 @@ action("embed_version_in_cpp") {
   inputs = [
     "cpp_source.py",
     "VERSION",
+    "//chrome/VERSION",
 
     # We don't actually use LASTCHANGE as an input file. It is updated
     # whenever a different Git revision is checked out, at which point
     # version.cc needs to be updated with the new revision info.
-    "//build/util/LASTCHANGE",
+    lastchange_file,
   ]
   outputs = [
     "$target_gen_dir/version.cc",
@@ -210,8 +213,10 @@ action("embed_version_in_cpp") {
   ]
 
   args = [
-    "--version-file",
+    "--chromedriver-version-file",
     rebase_path("VERSION", root_build_dir),
+    "--chrome-version-file",
+    rebase_path("//chrome/VERSION", root_build_dir),
     "--directory",
     rebase_path(target_gen_dir, root_build_dir),
   ]
@@ -291,7 +296,7 @@ source_set("lib") {
     "//chrome/common:version_header",
     "//crypto",
     "//net",
-    "//net:http_server",
+    "//net/server:http_server",
     "//third_party/zlib",
     "//ui/base",
     "//ui/events:dom_keycode_converter",
@@ -321,32 +326,31 @@ executable("chromedriver") {
 
   deps = [
     ":lib",
-    "//build/config:exe_and_shlib_deps",
     "//build/win:default_exe_manifest",
   ]
 }
 
-group("chromedriver_py_tests") {
+python_library("chromedriver_py_tests") {
   testonly = true
   deps = [
     ":chromedriver",
     "//chrome:chrome",
   ]
 
-  _py_files = read_file("test/run_py_tests.pydeps", "list lines")
-
-  # Filter out comments.
-  set_sources_assignment_filter([ "#*" ])
-  sources = _py_files
-  data = sources + [
-           "test/run_py_tests.pydeps",
-           "//chrome/test/data/chromedriver/",
-           "//testing/xvfb.py",
-         ]
+  pydeps_file = "test/run_py_tests.pydeps"
+  data = [
+    "//chrome/test/data/chromedriver/",
+    "//testing/scripts/run_chromedriver_tests.py",
+    "//testing/scripts/common.py",
+    "//testing/xvfb.py",
+  ]
 
   data_deps = [
     "//chrome/test/chromedriver",
   ]
+  if (is_component_build && is_mac) {
+    data_deps += [ "//chrome:chrome_framework" ]
+  }
 
   if (is_win) {
     # On Windows, the following target produces the final chrome.exe
@@ -384,13 +388,16 @@ test("chromedriver_unittests") {
     "chrome_launcher_unittest.cc",
     "command_listener_proxy_unittest.cc",
     "commands_unittest.cc",
+    "log_replay/devtools_log_reader_unittest.cc",
     "logging_unittest.cc",
+    "net/adb_client_socket_unittest.cc",
     "net/timeout_unittest.cc",
     "performance_logger_unittest.cc",
     "server/http_handler_unittest.cc",
     "session_commands_unittest.cc",
     "session_unittest.cc",
     "util_unittest.cc",
+    "window_commands_unittest.cc",
   ]
 
   # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
@@ -398,6 +405,7 @@ test("chromedriver_unittests") {
 
   data = [
     "//chrome/test/data/chromedriver/",
+    "//chrome/test/chromedriver/log_replay/test_data",
   ]
 
   deps = [
@@ -405,7 +413,9 @@ test("chromedriver_unittests") {
     "//base",
     "//base/test:run_all_unittests",
     "//net",
-    "//net:http_server",
+    "//net:test_support",
+    "//net/server:http_server",
+    "//testing/gmock",
     "//testing/gtest",
     "//ui/base",
     "//ui/gfx",
@@ -420,7 +430,6 @@ test("chromedriver_tests") {
     "key_converter_unittest.cc",
     "keycode_text_conversion_unittest.cc",
     "net/net_util_unittest.cc",
-    "net/port_server_unittest.cc",
     "net/sync_websocket_impl_unittest.cc",
     "net/test_http_server.cc",
     "net/test_http_server.h",
@@ -435,8 +444,8 @@ test("chromedriver_tests") {
     "//base",
     "//base/test:run_all_unittests",
     "//net",
-    "//net:http_server",
     "//net:test_support",
+    "//net/server:http_server",
     "//testing/gtest",
     "//ui/events:test_support",
     "//url",

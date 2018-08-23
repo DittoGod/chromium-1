@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -71,8 +70,10 @@ void PingSender::SendPing(const Component& component, Callback callback) {
     return;
   }
 
+  DCHECK(component.crx_component());
+
   auto urls(config_->PingUrl());
-  if (component.crx_component().requires_network_encryption)
+  if (component.crx_component()->requires_network_encryption)
     RemoveUnsecureUrls(&urls);
 
   if (urls.empty()) {
@@ -84,7 +85,8 @@ void PingSender::SendPing(const Component& component, Callback callback) {
   callback_ = std::move(callback);
 
   request_sender_ = std::make_unique<RequestSender>(config_);
-  request_sender_->Send(false, BuildEventPingRequest(*config_, component), urls,
+  request_sender_->Send(urls, {}, BuildEventPingRequest(*config_, component),
+                        false,
                         base::BindOnce(&PingSender::SendPingComplete, this));
 }
 

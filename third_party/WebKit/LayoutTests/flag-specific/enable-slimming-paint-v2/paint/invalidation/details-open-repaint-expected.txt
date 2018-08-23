@@ -8,7 +8,7 @@
       "paintInvalidations": [
         {
           "object": "LayoutTextControl INPUT",
-          "rect": [8, 72, 154, 22],
+          "rect": [8, 72, 181, 22],
           "reason": "appeared"
         },
         {
@@ -17,40 +17,6 @@
           "reason": "full"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutDetailsMarker DIV id='details-marker'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='details-content'",
-      "reason": "appeared"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutTextControl INPUT",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    },
-    {
-      "object": "HorizontalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "appeared"
     }
   ]
 }

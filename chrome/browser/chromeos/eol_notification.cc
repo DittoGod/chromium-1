@@ -46,8 +46,12 @@ class EolNotificationDelegate : public message_center::NotificationDelegate {
   ~EolNotificationDelegate() override = default;
 
   // NotificationDelegate overrides:
-  void ButtonClick(int button_index) override {
-    switch (button_index) {
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override {
+    if (!button_index)
+      return;
+
+    switch (*button_index) {
       case BUTTON_MORE_INFO: {
         // show eol link
         NavigateParams params(profile_, GURL(chrome::kEolNotificationURL),
@@ -104,8 +108,8 @@ void EolNotification::CheckEolStatus() {
       DBusThreadManager::Get()->GetUpdateEngineClient();
 
   // Request the Eol Status.
-  update_engine_client->GetEolStatus(
-      base::Bind(&EolNotification::OnEolStatus, weak_factory_.GetWeakPtr()));
+  update_engine_client->GetEolStatus(base::BindOnce(
+      &EolNotification::OnEolStatus, weak_factory_.GetWeakPtr()));
 }
 
 void EolNotification::OnEolStatus(update_engine::EndOfLifeStatus status) {
@@ -148,7 +152,7 @@ void EolNotification::Update() {
       message_center::Notification::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE, kEolNotificationId,
           GetStringUTF16(IDS_EOL_NOTIFICATION_TITLE),
-          GetStringUTF16(IDS_EOL_NOTIFICATION_EOL), gfx::Image(),
+          GetStringUTF16(IDS_EOL_NOTIFICATION_EOL),
           GetStringUTF16(IDS_EOL_NOTIFICATION_DISPLAY_SOURCE),
           GURL(kEolNotificationId),
           message_center::NotifierId(

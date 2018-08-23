@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [600, 250],
+      "drawsContent": false,
       "backgroundColor": "#0000FF"
     },
     {
@@ -15,16 +16,6 @@
       "bounds": [600, 250],
       "contentsOpaque": true,
       "backgroundColor": "#0000FF"
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
     }
   ]
 }
@@ -33,6 +24,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [400, 250],
+      "drawsContent": false,
       "backgroundColor": "#0000FF"
     },
     {
@@ -45,16 +37,6 @@
       "bounds": [400, 250],
       "contentsOpaque": true,
       "backgroundColor": "#0000FF"
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
     }
   ]
 }
@@ -63,6 +45,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [400, 600],
+      "drawsContent": false,
       "backgroundColor": "#0000FF"
     },
     {
@@ -83,16 +66,6 @@
         }
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    }
   ]
 }
 {
@@ -100,6 +73,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#0000FF"
     },
     {
@@ -119,16 +93,6 @@
           "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
     }
   ]
 }

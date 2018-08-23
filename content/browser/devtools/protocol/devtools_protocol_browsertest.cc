@@ -11,26 +11,22 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/json/json_reader.h"
-#include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
-#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/sys_info.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "components/download/public/common/download_file_factory.h"
+#include "components/download/public/common/download_file_impl.h"
+#include "components/download/public/common/download_task_runner.h"
 #include "content/browser/devtools/protocol/devtools_download_manager_delegate.h"
-#include "content/browser/download/download_file_factory.h"
-#include "content/browser/download/download_file_impl.h"
+#include "content/browser/devtools/protocol/devtools_protocol_test_support.h"
 #include "content/browser/download/download_manager_impl.h"
-#include "content/browser/download/download_task_runner.h"
 #include "content/browser/frame_host/interstitial_page_impl.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/interstitial_page_delegate.h"
 #include "content/public/browser/javascript_dialog_manager.h"
@@ -46,21 +42,15 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
-#include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
+#include "content/public/test/slow_download_http_response.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_download_manager_delegate.h"
-#include "content/test/content_browser_test_utils_internal.h"
-#include "net/dns/mock_host_resolver.h"
-#include "net/test/cert_test_util.h"
-#include "net/test/embedded_test_server/embedded_test_server.h"
-#include "net/test/test_data_directory.h"
-#include "net/test/url_request/url_request_mock_http_job.h"
-#include "net/test/url_request/url_request_slow_download_job.h"
+#include "services/network/public/cpp/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -84,10 +74,6 @@ using testing::ElementsAre;
 namespace content {
 
 namespace {
-
-const char kIdParam[] = "id";
-const char kMethodParam[] = "method";
-const char kParamsParam[] = "params";
 
 // If |params| contains an explanation with a non-empty certificate list,
 // returns true and points |certificate| to the certificate list of the first
@@ -139,7 +125,7 @@ class TestJavaScriptDialogManager : public JavaScriptDialogManager,
 
   // JavaScriptDialogManager
   void RunJavaScriptDialog(WebContents* web_contents,
-                           const GURL& alerting_frame_url,
+                           RenderFrameHost* render_frame_host,
                            JavaScriptDialogType dialog_type,
                            const base::string16& message_text,
                            const base::string16& default_prompt_text,
@@ -179,326 +165,6 @@ class TestJavaScriptDialogManager : public JavaScriptDialogManager,
 
 }  // namespace
 
-class DevToolsProtocolTest : public ContentBrowserTest,
-                             public DevToolsAgentHostClient,
-                             public WebContentsDelegate {
- public:
-  typedef base::Callback<bool(base::DictionaryValue*)> NotificationMatcher;
-
-  DevToolsProtocolTest()
-      : last_sent_id_(0),
-        waiting_for_command_result_id_(0),
-        in_dispatch_(false),
-        agent_host_can_close_(false) {}
-
-  void SetUpOnMainThread() override {
-    host_resolver()->AddRule("*", "127.0.0.1");
-  }
-
- protected:
-  // WebContentsDelegate methods:
-  bool DidAddMessageToConsole(WebContents* source,
-                              int32_t level,
-                              const base::string16& message,
-                              int32_t line_no,
-                              const base::string16& source_id) override {
-    console_messages_.push_back(base::UTF16ToUTF8(message));
-    return true;
-  }
-
-  blink::WebSecurityStyle GetSecurityStyle(
-      content::WebContents* web_contents,
-      content::SecurityStyleExplanations* security_style_explanations)
-      override {
-    security_style_explanations->secure_explanations.push_back(
-        SecurityStyleExplanation(
-            "an explanation title", "an explanation summary",
-            "an explanation description", cert_,
-            blink::WebMixedContentContextType::kNotMixedContent));
-    return blink::kWebSecurityStyleNeutral;
-  }
-
-  base::DictionaryValue* SendCommand(
-      const std::string& method,
-      std::unique_ptr<base::DictionaryValue> params) {
-    return SendCommand(method, std::move(params), true);
-  }
-
-  base::DictionaryValue* SendCommand(
-      const std::string& method,
-      std::unique_ptr<base::DictionaryValue> params,
-      bool wait) {
-    in_dispatch_ = true;
-    base::DictionaryValue command;
-    command.SetInteger(kIdParam, ++last_sent_id_);
-    command.SetString(kMethodParam, method);
-    if (params)
-      command.Set(kParamsParam, std::move(params));
-
-    std::string json_command;
-    base::JSONWriter::Write(command, &json_command);
-    agent_host_->DispatchProtocolMessage(this, json_command);
-    // Some messages are dispatched synchronously.
-    // Only run loop if we are not finished yet.
-    if (in_dispatch_ && wait) {
-      WaitForResponse();
-      in_dispatch_ = false;
-      return result_.get();
-    }
-    in_dispatch_ = false;
-    return result_.get();
-  }
-
-  void WaitForResponse() {
-    waiting_for_command_result_id_ = last_sent_id_;
-    base::RunLoop().Run();
-  }
-
-  bool HasValue(const std::string& path) {
-    base::Value* value = nullptr;
-    return result_->Get(path, &value);
-  }
-
-  bool HasListItem(const std::string& path_to_list,
-                   const std::string& name,
-                   const std::string& value) {
-    base::ListValue* list;
-    if (!result_->GetList(path_to_list, &list))
-      return false;
-
-    for (size_t i = 0; i != list->GetSize(); i++) {
-      base::DictionaryValue* item;
-      if (!list->GetDictionary(i, &item))
-        return false;
-      std::string id;
-      if (!item->GetString(name, &id))
-        return false;
-      if (id == value)
-        return true;
-    }
-    return false;
-  }
-
-  void Attach() {
-    agent_host_ = DevToolsAgentHost::GetOrCreateFor(shell()->web_contents());
-    agent_host_->AttachClient(this);
-    shell()->web_contents()->SetDelegate(this);
-  }
-
-  void AttachToBrowserTarget() {
-    // Tethering domain is not used in tests.
-    agent_host_ = DevToolsAgentHost::CreateForBrowser(
-        nullptr, DevToolsAgentHost::CreateServerSocketCallback());
-    agent_host_->AttachClient(this);
-    shell()->web_contents()->SetDelegate(this);
-  }
-
-  void Detach() {
-    if (agent_host_) {
-      agent_host_->DetachClient(this);
-      agent_host_ = nullptr;
-    }
-  }
-
-  void TearDownOnMainThread() override { Detach(); }
-
-  std::unique_ptr<base::DictionaryValue> WaitForNotification(
-      const std::string& notification) {
-    return WaitForNotification(notification, false);
-  }
-
-  std::unique_ptr<base::DictionaryValue> WaitForNotification(
-      const std::string& notification,
-      bool allow_existing) {
-    if (allow_existing) {
-      for (size_t i = 0; i < notifications_.size(); i++) {
-        if (notifications_[i] == notification) {
-          std::unique_ptr<base::DictionaryValue> result =
-              std::move(notification_params_[i]);
-          notifications_.erase(notifications_.begin() + i);
-          notification_params_.erase(notification_params_.begin() + i);
-          return result;
-        }
-      }
-    }
-
-    waiting_for_notification_ = notification;
-    RunMessageLoop();
-    return std::move(waiting_for_notification_params_);
-  }
-
-  // Waits for a notification whose params, when passed to |matcher|, returns
-  // true. Existing notifications are allowed.
-  std::unique_ptr<base::DictionaryValue> WaitForMatchingNotification(
-      const std::string& notification,
-      const NotificationMatcher& matcher) {
-    for (size_t i = 0; i < notifications_.size(); i++) {
-      if (notifications_[i] == notification &&
-          matcher.Run(notification_params_[i].get())) {
-        std::unique_ptr<base::DictionaryValue> result =
-            std::move(notification_params_[i]);
-        notifications_.erase(notifications_.begin() + i);
-        notification_params_.erase(notification_params_.begin() + i);
-        return result;
-      }
-    }
-
-    waiting_for_notification_ = notification;
-    waiting_for_notification_matcher_ = matcher;
-    RunMessageLoop();
-    return std::move(waiting_for_notification_params_);
-  }
-
-  void ClearNotifications() {
-    notifications_.clear();
-    notification_params_.clear();
-  }
-
-  struct ExpectedNavigation {
-    std::string url;
-    bool is_redirect;
-    bool abort;
-  };
-
-  std::string RemovePort(const GURL& url) {
-    GURL::Replacements remove_port;
-    remove_port.ClearPort();
-    return url.ReplaceComponents(remove_port).spec();
-  }
-
-  // Waits for the expected navigations to occur in any order. If an expected
-  // navigation occurs, Network.continueInterceptedRequest is called with the
-  // specified navigation_response to either allow it to proceed or to cancel
-  // it.
-  void ProcessNavigationsAnyOrder(
-      std::vector<ExpectedNavigation> expected_navigations) {
-    std::unique_ptr<base::DictionaryValue> params;
-    while (!expected_navigations.empty()) {
-      std::unique_ptr<base::DictionaryValue> params =
-          WaitForNotification("Network.requestIntercepted");
-
-      std::string interception_id;
-      ASSERT_TRUE(params->GetString("interceptionId", &interception_id));
-      bool is_redirect = params->HasKey("redirectUrl");
-      bool is_navigation;
-      ASSERT_TRUE(params->GetBoolean("isNavigationRequest", &is_navigation));
-      std::string resource_type;
-      ASSERT_TRUE(params->GetString("resourceType", &resource_type));
-      std::string url;
-      ASSERT_TRUE(params->GetString("request.url", &url));
-      if (is_redirect)
-        ASSERT_TRUE(params->GetString("redirectUrl", &url));
-      // The url will typically have a random port which we want to remove.
-      url = RemovePort(GURL(url));
-
-      if (!is_navigation) {
-        params.reset(new base::DictionaryValue());
-        params->SetString("interceptionId", interception_id);
-        SendCommand("Network.continueInterceptedRequest", std::move(params),
-                    false);
-        continue;
-      }
-
-      bool navigation_was_expected = false;
-      for (auto it = expected_navigations.begin();
-           it != expected_navigations.end(); it++) {
-        if (url != it->url || is_redirect != it->is_redirect)
-          continue;
-
-        params.reset(new base::DictionaryValue());
-        params->SetString("interceptionId", interception_id);
-        if (it->abort)
-          params->SetString("errorReason", "Aborted");
-        SendCommand("Network.continueInterceptedRequest", std::move(params),
-                    false);
-
-        navigation_was_expected = true;
-        expected_navigations.erase(it);
-        break;
-      }
-      EXPECT_TRUE(navigation_was_expected)
-          << "url = " << url << "is_redirect = " << is_redirect;
-    }
-  }
-
-  std::vector<std::string> GetAllFrameUrls() {
-    std::vector<std::string> urls;
-    for (RenderFrameHost* render_frame_host :
-         shell()->web_contents()->GetAllFrames()) {
-      urls.push_back(RemovePort(render_frame_host->GetLastCommittedURL()));
-    }
-    return urls;
-  }
-
-  void set_agent_host_can_close() { agent_host_can_close_ = true; }
-
-  void SetSecurityExplanationCert(
-      const scoped_refptr<net::X509Certificate>& cert) {
-    cert_ = cert;
-  }
-
-  std::unique_ptr<base::DictionaryValue> result_;
-  scoped_refptr<DevToolsAgentHost> agent_host_;
-  int last_sent_id_;
-  std::vector<int> result_ids_;
-  std::vector<std::string> notifications_;
-  std::vector<std::string> console_messages_;
-  std::vector<std::unique_ptr<base::DictionaryValue>> notification_params_;
-
- private:
-  void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
-                               const std::string& message) override {
-    std::unique_ptr<base::DictionaryValue> root(
-        static_cast<base::DictionaryValue*>(
-            base::JSONReader::Read(message).release()));
-    int id;
-    if (root->GetInteger("id", &id)) {
-      result_ids_.push_back(id);
-      base::DictionaryValue* result;
-      ASSERT_TRUE(root->GetDictionary("result", &result));
-      result_.reset(result->DeepCopy());
-      in_dispatch_ = false;
-      if (id && id == waiting_for_command_result_id_) {
-        waiting_for_command_result_id_ = 0;
-        base::RunLoop::QuitCurrentDeprecated();
-      }
-    } else {
-      std::string notification;
-      EXPECT_TRUE(root->GetString("method", &notification));
-      notifications_.push_back(notification);
-      base::DictionaryValue* params;
-      if (root->GetDictionary("params", &params)) {
-        notification_params_.push_back(params->CreateDeepCopy());
-      } else {
-        notification_params_.push_back(
-            base::WrapUnique(new base::DictionaryValue()));
-      }
-      if (waiting_for_notification_ == notification &&
-          (waiting_for_notification_matcher_.is_null() ||
-           waiting_for_notification_matcher_.Run(
-               notification_params_[notification_params_.size() - 1].get()))) {
-        waiting_for_notification_ = std::string();
-        waiting_for_notification_matcher_ = NotificationMatcher();
-        waiting_for_notification_params_ = base::WrapUnique(
-            notification_params_[notification_params_.size() - 1]->DeepCopy());
-        base::RunLoop::QuitCurrentDeprecated();
-      }
-    }
-  }
-
-  void AgentHostClosed(DevToolsAgentHost* agent_host) override {
-    if (!agent_host_can_close_)
-      NOTREACHED();
-  }
-
-  std::string waiting_for_notification_;
-  NotificationMatcher waiting_for_notification_matcher_;
-  std::unique_ptr<base::DictionaryValue> waiting_for_notification_params_;
-  int waiting_for_command_result_id_;
-  bool in_dispatch_;
-  bool agent_host_can_close_;
-  scoped_refptr<net::X509Certificate> cert_;
-};
 
 class TestInterstitialDelegate : public InterstitialPageDelegate {
  private:
@@ -547,9 +213,9 @@ IN_PROC_BROWSER_TEST_F(SyntheticKeyEventTest, KeyEventSynthesizeKey) {
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
   Attach();
   ASSERT_TRUE(content::ExecuteScript(
-      shell()->web_contents()->GetRenderViewHost(),
+      shell()->web_contents(),
       "function handleKeyEvent(event) {"
-        "domAutomationController.send(event.key);"
+      "domAutomationController.send(event.key);"
       "}"
       "document.body.addEventListener('keydown', handleKeyEvent);"
       "document.body.addEventListener('keyup', handleKeyEvent);"));
@@ -580,7 +246,7 @@ IN_PROC_BROWSER_TEST_F(SyntheticKeyEventTest, KeyboardEventAck) {
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
   Attach();
   ASSERT_TRUE(content::ExecuteScript(
-      shell()->web_contents()->GetRenderViewHost(),
+      shell()->web_contents(),
       "document.body.addEventListener('keydown', () => {debugger;});"));
 
   auto filter = std::make_unique<InputMsgWatcher>(
@@ -606,7 +272,7 @@ IN_PROC_BROWSER_TEST_F(SyntheticMouseEventTest, MouseEventAck) {
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
   Attach();
   ASSERT_TRUE(content::ExecuteScript(
-      shell()->web_contents()->GetRenderViewHost(),
+      shell()->web_contents(),
       "document.body.addEventListener('mousedown', () => {debugger;});"));
 
   auto filter = std::make_unique<InputMsgWatcher>(
@@ -782,7 +448,7 @@ class CaptureScreenshotTest : public DevToolsProtocolTest {
 
     // Draw a blue box of provided size in the horizontal center of the page.
     EXPECT_TRUE(content::ExecuteScript(
-        shell()->web_contents()->GetRenderViewHost(),
+        shell()->web_contents(),
         base::StringPrintf(
             "var style = document.body.style;                             "
             "style.overflow = 'hidden';                                   "
@@ -839,7 +505,7 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshot) {
   if (base::SysInfo::IsLowEndDevice()) return;
 
   shell()->LoadURL(
-      GURL("data:text/html,<body style='background:#123456'></body>"));
+      GURL("data:text/html,<body style='background:%23123456'></body>"));
   WaitForLoadStop(shell()->web_contents());
   Attach();
   SkBitmap expected_bitmap;
@@ -848,7 +514,7 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshot) {
   // integer precision.
   gfx::Size view_size = static_cast<RenderWidgetHostViewBase*>(
                             shell()->web_contents()->GetRenderWidgetHostView())
-                            ->GetPhysicalBackingSize();
+                            ->GetCompositorViewportPixelSize();
   expected_bitmap.allocN32Pixels(view_size.width(), view_size.height());
   expected_bitmap.eraseColor(SkColorSetRGB(0x12, 0x34, 0x56));
   CaptureScreenshotAndCompareTo(expected_bitmap, ENCODING_PNG, false);
@@ -862,7 +528,7 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshotJpeg) {
     return;
 
   shell()->LoadURL(
-      GURL("data:text/html,<body style='background:#123456'></body>"));
+      GURL("data:text/html,<body style='background:%23123456'></body>"));
   WaitForLoadStop(shell()->web_contents());
   Attach();
   SkBitmap expected_bitmap;
@@ -871,7 +537,7 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshotJpeg) {
   // integer precision.
   gfx::Size view_size = static_cast<RenderWidgetHostViewBase*>(
                             shell()->web_contents()->GetRenderWidgetHostView())
-                            ->GetPhysicalBackingSize();
+                            ->GetCompositorViewportPixelSize();
   expected_bitmap.allocN32Pixels(view_size.width(), view_size.height());
   expected_bitmap.eraseColor(SkColorSetRGB(0x12, 0x34, 0x56));
   CaptureScreenshotAndCompareTo(expected_bitmap, ENCODING_JPEG, false);
@@ -932,7 +598,7 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
   // integer precision.
   gfx::Size view_size = static_cast<RenderWidgetHostViewBase*>(
                             shell()->web_contents()->GetRenderWidgetHostView())
-                            ->GetPhysicalBackingSize();
+                            ->GetCompositorViewportPixelSize();
   expected_bitmap.allocN32Pixels(view_size.width(), view_size.height());
   expected_bitmap.eraseColor(SkColorSetRGB(0x00, 0x00, 0xff));
   CaptureScreenshotAndCompareTo(expected_bitmap, ENCODING_PNG, true);
@@ -948,14 +614,7 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
 // Verifies that setDefaultBackgroundColor and captureScreenshot support a fully
 // and semi-transparent background, and that setDeviceMetricsOverride doesn't
 // affect it.
-// TODO(bokan): Temporarily disabled while landing --root-layer-scrolls.
-// https://crbug.com/811406.
-#if defined(OS_ANDROID)
-#define MAYBE_TransparentScreenshots DISABLED_TransparentScreenshots
-#else
-#define MAYBE_TransparentScreenshots TransparentScreenshots
-#endif
-IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, MAYBE_TransparentScreenshots) {
+IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, TransparentScreenshots) {
   if (base::SysInfo::IsLowEndDevice())
     return;
 
@@ -980,7 +639,7 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, MAYBE_TransparentScreenshots) {
   // integer precision.
   gfx::Size view_size = static_cast<RenderWidgetHostViewBase*>(
                             shell()->web_contents()->GetRenderWidgetHostView())
-                            ->GetPhysicalBackingSize();
+                            ->GetCompositorViewportPixelSize();
   expected_bitmap.allocN32Pixels(view_size.width(), view_size.height());
   expected_bitmap.eraseColor(SK_ColorTRANSPARENT);
   CaptureScreenshotAndCompareTo(expected_bitmap, ENCODING_PNG, true);
@@ -1568,206 +1227,6 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, BrowserGetTargets) {
   EXPECT_EQ("about:blank", url);
 }
 
-namespace {
-class NavigationFinishedObserver : public content::WebContentsObserver {
- public:
-  explicit NavigationFinishedObserver(WebContents* web_contents)
-      : WebContentsObserver(web_contents),
-        num_finished_(0),
-        num_to_wait_for_(0) {}
-
-  ~NavigationFinishedObserver() override {}
-
-  void DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) override {
-    if (navigation_handle->WasServerRedirect())
-      return;
-
-    num_finished_++;
-    if (num_finished_ >= num_to_wait_for_ && num_to_wait_for_ != 0) {
-      base::RunLoop::QuitCurrentDeprecated();
-    }
-  }
-
-  void WaitForNavigationsToFinish(int num_to_wait_for) {
-    if (num_finished_ < num_to_wait_for) {
-      num_to_wait_for_ = num_to_wait_for;
-      RunMessageLoop();
-    }
-    num_to_wait_for_ = 0;
-  }
-
- private:
-  int num_finished_;
-  int num_to_wait_for_;
-};
-
-class LoadFinishedObserver : public content::WebContentsObserver {
- public:
-  explicit LoadFinishedObserver(WebContents* web_contents)
-      : WebContentsObserver(web_contents), num_finished_(0) {}
-
-  ~LoadFinishedObserver() override {}
-
-  void DidStopLoading() override {
-    num_finished_++;
-    if (run_loop_.running())
-      run_loop_.Quit();
-  }
-
-  void WaitForLoadToFinish() {
-    if (num_finished_ == 0)
-      run_loop_.Run();
-  }
-
- private:
-  int num_finished_;
-  base::RunLoop run_loop_;
-};
-
-}  // namespace
-
-IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, PageStopLoading) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  // Navigate to about:blank first so we can make sure there is a target page we
-  // can attach to, and have Network.setRequestInterception complete
-  // before we start the navigations we're interested in.
-  NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
-  Attach();
-
-  std::unique_ptr<base::DictionaryValue> params(new base::DictionaryValue());
-  std::unique_ptr<base::ListValue> patterns(new base::ListValue());
-  patterns->Append(std::make_unique<base::DictionaryValue>());
-  params->Set("patterns", std::move(patterns));
-  SendCommand("Network.setRequestInterception", std::move(params), true);
-
-  LoadFinishedObserver load_finished_observer(shell()->web_contents());
-
-  // The page will try to navigate twice, however since
-  // Network.setRequestInterception is true,
-  // it'll wait for confirmation before committing to the navigation.
-  GURL test_url = embedded_test_server()->GetURL(
-      "/devtools/control_navigations/meta_tag.html");
-  shell()->LoadURL(test_url);
-
-  // Stop all navigations.
-  SendCommand("Page.stopLoading", nullptr);
-
-  // Wait for the initial navigation to finish.
-  load_finished_observer.WaitForLoadToFinish();
-}
-
-IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, ControlNavigationsMainFrame) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  // Navigate to about:blank first so we can make sure there is a target page we
-  // can attach to, and have Network.setRequestInterception complete
-  // before we start the navigations we're interested in.
-  NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
-  Attach();
-
-  std::unique_ptr<base::DictionaryValue> params(new base::DictionaryValue());
-  std::unique_ptr<base::ListValue> patterns(new base::ListValue());
-  patterns->Append(std::make_unique<base::DictionaryValue>());
-  params->Set("patterns", std::move(patterns));
-  SendCommand("Network.setRequestInterception", std::move(params), true);
-
-  NavigationFinishedObserver navigation_finished_observer(
-      shell()->web_contents());
-
-  GURL test_url = embedded_test_server()->GetURL(
-      "/devtools/control_navigations/meta_tag.html");
-  shell()->LoadURL(test_url);
-
-  std::vector<ExpectedNavigation> expected_navigations = {
-      {"http://127.0.0.1/devtools/control_navigations/meta_tag.html",
-       false /* expected_is_redirect */, false /* abort */},
-      {"http://127.0.0.1/devtools/navigation.html",
-       false /* expected_is_redirect */, true /* abort */}};
-
-  ProcessNavigationsAnyOrder(std::move(expected_navigations));
-
-  // Wait for the initial navigation and the cancelled meta refresh navigation
-  // to finish.
-  navigation_finished_observer.WaitForNavigationsToFinish(2);
-
-  // Check main frame has the expected url.
-  EXPECT_EQ(
-      "http://127.0.0.1/devtools/control_navigations/meta_tag.html",
-      RemovePort(
-          shell()->web_contents()->GetMainFrame()->GetLastCommittedURL()));
-}
-
-class IsolatedDevToolsProtocolTest : public DevToolsProtocolTest {
- public:
-  ~IsolatedDevToolsProtocolTest() override {}
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    IsolateAllSitesForTesting(command_line);
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(IsolatedDevToolsProtocolTest,
-                       ControlNavigationsChildFrames) {
-  content::SetupCrossSiteRedirector(embedded_test_server());
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  // Navigate to about:blank first so we can make sure there is a target page we
-  // can attach to, and have Network.setRequestInterception complete
-  // before we start the navigations we're interested in.
-  NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
-  Attach();
-
-  std::unique_ptr<base::DictionaryValue> params(new base::DictionaryValue());
-  std::unique_ptr<base::ListValue> patterns(new base::ListValue());
-  patterns->Append(std::make_unique<base::DictionaryValue>());
-  params->Set("patterns", std::move(patterns));
-  SendCommand("Network.setRequestInterception", std::move(params), true);
-
-  NavigationFinishedObserver navigation_finished_observer(
-      shell()->web_contents());
-
-  GURL test_url = embedded_test_server()->GetURL(
-      "/devtools/control_navigations/iframe_navigation.html");
-  shell()->LoadURL(test_url);
-
-  // Allow main frame navigation, and all iframe navigations to http://a.com
-  // Allow initial iframe navigation to http://b.com but dissallow it to
-  // navigate to /devtools/navigation.html.
-  std::vector<ExpectedNavigation> expected_navigations = {
-      {"http://127.0.0.1/devtools/control_navigations/"
-       "iframe_navigation.html",
-       false /* expected_is_redirect */, false /* abort */},
-      {"http://127.0.0.1/cross-site/a.com/devtools/control_navigations/"
-       "meta_tag.html",
-       false /* expected_is_redirect */, false /* abort */},
-      {"http://127.0.0.1/cross-site/b.com/devtools/control_navigations/"
-       "meta_tag.html",
-       false /* expected_is_redirect */, false /* abort */},
-      {"http://a.com/devtools/control_navigations/meta_tag.html",
-       true /* expected_is_redirect */, false /* abort */},
-      {"http://b.com/devtools/control_navigations/meta_tag.html",
-       true /* expected_is_redirect */, false /* abort */},
-      {"http://a.com/devtools/navigation.html",
-       false /* expected_is_redirect */, false /* abort */},
-      {"http://b.com/devtools/navigation.html",
-       false /* expected_is_redirect */, true /* abort */}};
-
-  ProcessNavigationsAnyOrder(std::move(expected_navigations));
-
-  // Wait for each frame's navigation to finish, ignoring redirects.
-  navigation_finished_observer.WaitForNavigationsToFinish(3);
-
-  // Make sure each frame has the expected url.
-  EXPECT_THAT(
-      GetAllFrameUrls(),
-      ElementsAre("http://127.0.0.1/devtools/control_navigations/"
-                  "iframe_navigation.html",
-                  "http://a.com/devtools/navigation.html",
-                  "http://b.com/devtools/control_navigations/meta_tag.html"));
-}
-
 IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, VirtualTimeTest) {
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
   Attach();
@@ -2250,6 +1709,24 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolDeviceEmulationTest, MAYBE_DeviceSize) {
   EXPECT_EQ(original_size, GetViewSize());
 }
 
+// Setting frame size (through RWHV) is not supported on Android.
+#if defined(OS_ANDROID)
+#define MAYBE_RenderKillDoesNotCrashBrowser \
+  DISABLED_RenderKillDoesNotCrashBrowser
+#else
+#define MAYBE_RenderKillDoesNotCrashBrowser RenderKillDoesNotCrashBrowser
+#endif
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolDeviceEmulationTest,
+                       MAYBE_RenderKillDoesNotCrashBrowser) {
+  NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
+  Attach();
+  EmulateDeviceSize(gfx::Size(200, 200));
+  NavigateToURLBlockUntilNavigationsComplete(
+      shell(), GURL(content::kChromeUICrashURL), 1);
+  SendCommand("Emulation.clearDeviceMetricsOverride", nullptr);
+  // Should not crash at this point.
+}
+
 class DevToolsProtocolTouchTest : public DevToolsProtocolTest {
  public:
   ~DevToolsProtocolTouchTest() override {}
@@ -2392,36 +1869,38 @@ static void RemoveShellDelegate(Shell* shell) {
   DownloadManagerForShell(shell)->SetDelegate(nullptr);
 }
 
-class CountingDownloadFile : public DownloadFileImpl {
+class CountingDownloadFile : public download::DownloadFileImpl {
  public:
-  CountingDownloadFile(std::unique_ptr<download::DownloadSaveInfo> save_info,
-                       const base::FilePath& default_downloads_directory,
-                       std::unique_ptr<DownloadManager::InputStream> stream,
-                       uint32_t download_id,
-                       base::WeakPtr<DownloadDestinationObserver> observer)
-      : DownloadFileImpl(std::move(save_info),
-                         default_downloads_directory,
-                         std::move(stream),
-                         download_id,
-                         observer) {}
+  CountingDownloadFile(
+      std::unique_ptr<download::DownloadSaveInfo> save_info,
+      const base::FilePath& default_downloads_directory,
+      std::unique_ptr<download::InputStream> stream,
+      uint32_t download_id,
+      base::WeakPtr<download::DownloadDestinationObserver> observer)
+      : download::DownloadFileImpl(std::move(save_info),
+                                   default_downloads_directory,
+                                   std::move(stream),
+                                   download_id,
+                                   observer) {}
 
   ~CountingDownloadFile() override {
-    DCHECK(GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
+    DCHECK(download::GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
     active_files_--;
   }
 
-  void Initialize(const InitializeCallback& callback,
+  void Initialize(InitializeCallback callback,
                   const CancelRequestCallback& cancel_request_callback,
                   const download::DownloadItem::ReceivedSlices& received_slices,
                   bool is_parallelizable) override {
-    DCHECK(GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
+    DCHECK(download::GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
     active_files_++;
-    DownloadFileImpl::Initialize(callback, cancel_request_callback,
-                                 received_slices, is_parallelizable);
+    download::DownloadFileImpl::Initialize(std::move(callback),
+                                           cancel_request_callback,
+                                           received_slices, is_parallelizable);
   }
 
   static void GetNumberActiveFiles(int* result) {
-    DCHECK(GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
+    DCHECK(download::GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
     *result = active_files_;
   }
 
@@ -2429,11 +1908,12 @@ class CountingDownloadFile : public DownloadFileImpl {
   // until data is returned.
   static int GetNumberActiveFilesFromFileThread() {
     int result = -1;
-    GetDownloadTaskRunner()->PostTaskAndReply(
+    base::RunLoop run_loop;
+    download::GetDownloadTaskRunner()->PostTaskAndReply(
         FROM_HERE,
         base::BindOnce(&CountingDownloadFile::GetNumberActiveFiles, &result),
-        base::MessageLoop::current()->QuitWhenIdleClosure());
-    base::RunLoop().Run();
+        run_loop.QuitWhenIdleClosure());
+    run_loop.Run();
     DCHECK_NE(-1, result);
     return result;
   }
@@ -2444,18 +1924,18 @@ class CountingDownloadFile : public DownloadFileImpl {
 
 int CountingDownloadFile::active_files_ = 0;
 
-class CountingDownloadFileFactory : public DownloadFileFactory {
+class CountingDownloadFileFactory : public download::DownloadFileFactory {
  public:
   CountingDownloadFileFactory() {}
   ~CountingDownloadFileFactory() override {}
 
   // DownloadFileFactory interface.
-  DownloadFile* CreateFile(
+  download::DownloadFile* CreateFile(
       std::unique_ptr<download::DownloadSaveInfo> save_info,
       const base::FilePath& default_downloads_directory,
-      std::unique_ptr<DownloadManager::InputStream> stream,
+      std::unique_ptr<download::InputStream> stream,
       uint32_t download_id,
-      base::WeakPtr<DownloadDestinationObserver> observer) override {
+      base::WeakPtr<download::DownloadDestinationObserver> observer) override {
     return new CountingDownloadFile(std::move(save_info),
                                     default_downloads_directory,
                                     std::move(stream), download_id, observer);
@@ -2495,7 +1975,7 @@ class TestShellDownloadManagerDelegate : public ShellDownloadManagerDelegate {
 class DownloadCreateObserver : DownloadManager::Observer {
  public:
   explicit DownloadCreateObserver(DownloadManager* manager)
-      : manager_(manager), item_(nullptr) {
+      : manager_(manager), item_(nullptr), received_item_response_(false) {
     manager_->AddObserver(this);
   }
 
@@ -2513,16 +1993,26 @@ class DownloadCreateObserver : DownloadManager::Observer {
 
   void OnDownloadCreated(DownloadManager* manager,
                          download::DownloadItem* download) override {
+    received_item_response_ = true;
+
     if (!item_)
       item_ = download;
 
-    if (!completion_closure_.is_null())
-      base::ResetAndReturn(&completion_closure_).Run();
+    if (completion_closure_)
+      std::move(completion_closure_).Run();
+  }
+
+  void OnDownloadDropped(DownloadManager* manager) override {
+    received_item_response_ = true;
+
+    item_ = nullptr;
+    if (completion_closure_)
+      std::move(completion_closure_).Run();
   }
 
   download::DownloadItem* WaitForFinished() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    if (!item_) {
+    if (!received_item_response_) {
       base::RunLoop run_loop;
       completion_closure_ = run_loop.QuitClosure();
       run_loop.Run();
@@ -2533,6 +2023,7 @@ class DownloadCreateObserver : DownloadManager::Observer {
  private:
   DownloadManager* manager_;
   download::DownloadItem* item_;
+  bool received_item_response_;
   base::Closure completion_closure_;
 };
 
@@ -2556,14 +2047,8 @@ class DevToolsDownloadContentTest : public DevToolsProtocolTest {
     manager->SetDelegate(test_delegate_.get());
     test_delegate_->SetDownloadManager(manager);
 
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&net::URLRequestSlowDownloadJob::AddUrlHandler));
-    base::FilePath mock_base(GetTestFilePath("download", ""));
-
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&net::URLRequestMockHTTPJob::AddUrlHandlers, mock_base));
+    embedded_test_server()->RegisterRequestHandler(base::BindRepeating(
+        &content::SlowDownloadHttpResponse::HandleSlowDownloadRequest));
     ASSERT_TRUE(embedded_test_server()->Start());
   }
 
@@ -2597,7 +2082,7 @@ class DevToolsDownloadContentTest : public DevToolsProtocolTest {
   // Note: Cannot be used with other alternative DownloadFileFactorys
   void SetupEnsureNoPendingDownloads() {
     DownloadManagerForShell(shell())->SetDownloadFileFactoryForTesting(
-        std::unique_ptr<DownloadFileFactory>(
+        std::unique_ptr<download::DownloadFileFactory>(
             new CountingDownloadFileFactory()));
   }
 
@@ -2609,13 +2094,7 @@ class DevToolsDownloadContentTest : public DevToolsProtocolTest {
   }
 
   bool EnsureNoPendingDownloads() {
-    bool result = true;
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&EnsureNoPendingDownloadJobsOnIO, &result));
-    base::RunLoop().Run();
-    return result &&
-           (CountingDownloadFile::GetNumberActiveFilesFromFileThread() == 0);
+    return CountingDownloadFile::GetNumberActiveFilesFromFileThread() == 0;
   }
 
   // Checks that |path| is has |file_size| bytes, and matches the |value|
@@ -2626,7 +2105,7 @@ class DevToolsDownloadContentTest : public DevToolsProtocolTest {
     std::string file_contents;
 
     {
-      base::ThreadRestrictions::ScopedAllowIO allow_io_during_test_verification;
+      base::ScopedAllowBlockingForTesting allow_blocking;
       bool read = base::ReadFileToString(path, &file_contents);
       EXPECT_TRUE(read) << "Failed reading file: " << path.value() << std::endl;
       if (!read)
@@ -2659,14 +2138,6 @@ class DevToolsDownloadContentTest : public DevToolsProtocolTest {
   }
 
  private:
-  static void EnsureNoPendingDownloadJobsOnIO(bool* result) {
-    if (net::URLRequestSlowDownloadJob::NumberOutstandingRequests())
-      *result = false;
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::MessageLoop::current()->QuitWhenIdleClosure());
-  }
-
   // Location of the downloads directory for these tests
   base::ScopedTempDir downloads_directory_;
   std::unique_ptr<TestShellDownloadManagerDelegate> test_delegate_;
@@ -2685,8 +2156,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, SingleDownload) {
   // Create a download, wait until it's started, and confirm
   // we're in the expected state.
   download::DownloadItem* download = StartDownloadAndReturnItem(
-      shell(),
-      GURL(net::URLRequestMockHTTPJob::GetMockUrl("download-test.lib")));
+      shell(), embedded_test_server()->GetURL("/download/download-test.lib"));
   ASSERT_EQ(download::DownloadItem::IN_PROGRESS, download->GetState());
 
   WaitForCompletion(download);
@@ -2704,7 +2174,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, DownloadCancelled) {
   // Create a download, wait until it's started, and confirm
   // we're in the expected state.
   download::DownloadItem* download = StartDownloadAndReturnItem(
-      shell(), GURL(net::URLRequestSlowDownloadJob::kUnknownSizeUrl));
+      shell(), embedded_test_server()->GetURL(
+                   content::SlowDownloadHttpResponse::kUnknownSizeUrl));
   ASSERT_EQ(download::DownloadItem::IN_PROGRESS, download->GetState());
 
   // Cancel the download and wait for download system quiesce.
@@ -2726,9 +2197,10 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, DeniedDownload) {
   SetDownloadBehavior("deny");
   // Create a download, wait and confirm it was cancelled.
   download::DownloadItem* download = StartDownloadAndReturnItem(
-      shell(),
-      GURL(net::URLRequestMockHTTPJob::GetMockUrl("download-test.lib")));
-  EnsureNoPendingDownloads();
+      shell(), embedded_test_server()->GetURL("/download/download-test.lib"));
+  DownloadTestFlushObserver flush_observer(DownloadManagerForShell(shell()));
+  flush_observer.WaitForFlush();
+  EXPECT_TRUE(EnsureNoPendingDownloads());
   ASSERT_EQ(download::DownloadItem::CANCELLED, download->GetState());
 }
 
@@ -2743,7 +2215,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, DefaultDownload) {
   // Create a download, wait until it's started, and confirm
   // we're in the expected state.
   download::DownloadItem* download = StartDownloadAndReturnItem(
-      shell(), GURL(net::URLRequestSlowDownloadJob::kUnknownSizeUrl));
+      shell(), embedded_test_server()->GetURL(
+                   content::SlowDownloadHttpResponse::kUnknownSizeUrl));
   ASSERT_EQ(download::DownloadItem::IN_PROGRESS, download->GetState());
 
   // Cancel the download and wait for download system quiesce.
@@ -2767,10 +2240,17 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, DefaultDownloadHeadless) {
   SetDownloadBehavior("default");
   // Create a download, wait and confirm it was cancelled.
   download::DownloadItem* download = StartDownloadAndReturnItem(
-      shell(),
-      GURL(net::URLRequestMockHTTPJob::GetMockUrl("download-test.lib")));
-  EnsureNoPendingDownloads();
-  ASSERT_EQ(download::DownloadItem::CANCELLED, download->GetState());
+      shell(), embedded_test_server()->GetURL("/download/download-test.lib"));
+  DownloadTestFlushObserver flush_observer(DownloadManagerForShell(shell()));
+  flush_observer.WaitForFlush();
+  EXPECT_TRUE(EnsureNoPendingDownloads());
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    // The download manager will intercept the download navigation and drop it
+    // since we have set the delegate to null.
+    EXPECT_EQ(nullptr, download);
+  } else {
+    EXPECT_EQ(download::DownloadItem::CANCELLED, download->GetState());
+  }
 }
 
 // Check that download logic is reset when creating a new target.
@@ -2787,14 +2267,20 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, ResetDownloadState) {
   // Create a download, wait and confirm it wasn't cancelled.
   download::DownloadItem* download = StartDownloadAndReturnItem(
       new_window,
-      GURL(net::URLRequestMockHTTPJob::GetMockUrl("download-test.lib")));
+      embedded_test_server()->GetURL("/download/download-test.lib"));
   WaitForCompletion(download);
   ASSERT_EQ(download::DownloadItem::COMPLETE, download->GetState());
 }
 
+// Flakly on ChromeOS https://crbug.com/860312
+#if defined(OS_CHROMEOS)
+#define MAYBE_MultiDownload DISABLED_MultiDownload
+#else
+#define MAYBE_MultiDownload MultiDownload
+#endif
 // Check that downloading multiple (in this case, 2) files does not result in
 // corrupted files.
-IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, MultiDownload) {
+IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, MAYBE_MultiDownload) {
   base::ThreadRestrictions::SetIOAllowed(true);
   SetupEnsureNoPendingDownloads();
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
@@ -2804,13 +2290,14 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, MultiDownload) {
   // Create a download, wait until it's started, and confirm
   // we're in the expected state.
   download::DownloadItem* download1 = StartDownloadAndReturnItem(
-      shell(), GURL(net::URLRequestSlowDownloadJob::kUnknownSizeUrl));
+      shell(), embedded_test_server()->GetURL(
+                   content::SlowDownloadHttpResponse::kUnknownSizeUrl));
   ASSERT_EQ(download::DownloadItem::IN_PROGRESS, download1->GetState());
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
   SetDownloadBehavior("allow", "download2");
   // Start the second download and wait until it's done.
-  GURL url(net::URLRequestMockHTTPJob::GetMockUrl("download-test.lib"));
+  GURL url(embedded_test_server()->GetURL("/download/download-test.lib"));
   download::DownloadItem* download2 = StartDownloadAndReturnItem(shell(), url);
   WaitForCompletion(download2);
 
@@ -2820,7 +2307,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, MultiDownload) {
   // Allow the first request to finish.
   std::unique_ptr<DownloadTestObserver> observer2(CreateWaiter(shell(), 1));
   NavigateToURL(shell(),
-                GURL(net::URLRequestSlowDownloadJob::kFinishDownloadUrl));
+                embedded_test_server()->GetURL(
+                    content::SlowDownloadHttpResponse::kFinishDownloadUrl));
   observer2->WaitForFinished();  // Wait for the third request.
   EXPECT_EQ(
       1u, observer2->NumDownloadsSeenInState(download::DownloadItem::COMPLETE));
@@ -2834,8 +2322,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, MultiDownload) {
   // source file.
   base::FilePath file1(download1->GetTargetFilePath());
   ASSERT_EQ(file1.DirName().MaybeAsASCII(), "download1");
-  size_t file_size1 = net::URLRequestSlowDownloadJob::kFirstDownloadSize +
-                      net::URLRequestSlowDownloadJob::kSecondDownloadSize;
+  size_t file_size1 = content::SlowDownloadHttpResponse::kFirstDownloadSize +
+                      content::SlowDownloadHttpResponse::kSecondDownloadSize;
   std::string expected_contents(file_size1, '*');
   ASSERT_TRUE(VerifyFile(file1, expected_contents, file_size1));
 

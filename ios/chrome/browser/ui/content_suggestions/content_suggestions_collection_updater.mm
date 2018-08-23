@@ -13,6 +13,7 @@
 #import "ios/chrome/browser/ui/collection_view/collection_view_controller.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/commands/snackbar_commands.h"
+#import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_articles_header_item.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_footer_item.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_header_item.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_text_item.h"
@@ -330,17 +331,42 @@ NSString* const kContentSuggestionsCollectionUpdaterSnackbarCategory =
 
   NSInteger section = [model sectionForSectionIdentifier:sectionIdentifier];
 
-  NSMutableArray* oldItems = [NSMutableArray array];
-  NSInteger numberOfItems = [model numberOfItemsInSection:section];
-  for (NSInteger i = 0; i < numberOfItems; i++) {
-    [oldItems addObject:[NSIndexPath indexPathForItem:i inSection:section]];
-  }
-  [self.collectionViewController
-                   collectionView:self.collectionViewController.collectionView
-      willDeleteItemsAtIndexPaths:oldItems];
+  // Reset collection model data for |sectionIdentifier|
+  [self.collectionViewController.collectionViewModel
+                     setFooter:nil
+      forSectionWithIdentifier:sectionIdentifier];
+  [self.collectionViewController.collectionViewModel
+                     setHeader:nil
+      forSectionWithIdentifier:sectionIdentifier];
+  [self.sectionIdentifiersFromContentSuggestions
+      removeObject:@(sectionIdentifier)];
 
-  [self addSuggestionsToModel:[self.dataSource itemsForSectionInfo:sectionInfo]
+  // Update the section and the other ones.
+  auto addSectionBlock = ^{
+    [self.collectionViewController.collectionViewModel
+        removeSectionWithIdentifier:sectionIdentifier];
+    [self.collectionViewController.collectionView
+        deleteSections:[NSIndexSet indexSetWithIndex:section]];
+
+    NSIndexSet* addedSections =
+        [self addSectionsForSectionInfoToModel:@[ sectionInfo ]];
+    [self.collectionViewController.collectionView insertSections:addedSections];
+
+    NSArray<NSIndexPath*>* addedItems = [self
+        addSuggestionsToModel:[self.dataSource itemsForSectionInfo:sectionInfo]
               withSectionInfo:sectionInfo];
+    [self.collectionViewController.collectionView
+        insertItemsAtIndexPaths:addedItems];
+  };
+  [UIView animateWithDuration:0
+                   animations:^{
+                     [self.collectionViewController.collectionView
+                         performBatchUpdates:addSectionBlock
+                                  completion:nil];
+                   }];
+
+  // Make sure we get the right index for the section.
+  section = [model sectionForSectionIdentifier:sectionIdentifier];
 
   [self.collectionViewController.collectionView
       reloadSections:[NSIndexSet indexSetWithIndex:section]];
@@ -504,7 +530,8 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
     } else {
       [self addHeaderIfNeeded:sectionInfo];
     }
-    [self addFooterIfNeeded:sectionInfo];
+    if (sectionInfo.expanded)
+      [self addFooterIfNeeded:sectionInfo];
   }
 
   NSMutableIndexSet* indexSet = [NSMutableIndexSet indexSet];
@@ -637,12 +664,13 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
     BOOL addHeader = YES;
 
     if (IsFromContentSuggestionsService(sectionIdentifier)) {
-      addHeader = NO;
+      addHeader = IsUIRefreshPhase1Enabled();
 
       if ([self.sectionIdentifiersFromContentSuggestions
               containsObject:@(sectionIdentifier)]) {
         return;
       }
+
       if ([self.sectionIdentifiersFromContentSuggestions count] == 1) {
         NSNumber* existingSectionIdentifier =
             [self.sectionIdentifiersFromContentSuggestions anyObject];
@@ -669,6 +697,19 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
 // Returns the header for this |sectionInfo|.
 - (CollectionViewItem*)headerForSectionInfo:
     (ContentSuggestionsSectionInformation*)sectionInfo {
+  if (IsUIRefreshPhase1Enabled()) {
+    DCHECK(SectionIdentifierForInfo(sectionInfo) == SectionIdentifierArticles);
+    __weak ContentSuggestionsCollectionUpdater* weakSelf = self;
+    ContentSuggestionsArticlesHeaderItem* header =
+        [[ContentSuggestionsArticlesHeaderItem alloc]
+            initWithType:ItemTypeHeader
+                   title:sectionInfo.title
+                callback:^{
+                  [weakSelf.dataSource toggleArticlesVisibility];
+                }];
+    header.expanded = sectionInfo.expanded;
+    return header;
+  }
   CollectionViewTextItem* header =
       [[CollectionViewTextItem alloc] initWithType:ItemTypeHeader];
   header.text = sectionInfo.title;
@@ -800,7 +841,7 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
 // Returns nil if there is no empty item for this section info.
 - (CSCollectionViewItem*)emptyItemForSectionInfo:
     (ContentSuggestionsSectionInformation*)sectionInfo {
-  if (!sectionInfo.emptyText)
+  if (!sectionInfo.emptyText || !sectionInfo.expanded)
     return nil;
   ContentSuggestionsTextItem* item =
       [[ContentSuggestionsTextItem alloc] initWithType:ItemTypeEmpty];

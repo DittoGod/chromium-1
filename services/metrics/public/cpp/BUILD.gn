@@ -19,6 +19,8 @@ component("metrics_cpp") {
     "ukm_entry_builder_base.h",
     "ukm_recorder.cc",
     "ukm_recorder.h",
+    "ukm_source.cc",
+    "ukm_source.h",
     "ukm_source_id.cc",
     "ukm_source_id.h",
   ]
@@ -34,6 +36,22 @@ component("metrics_cpp") {
   deps = [
     "//mojo/public/cpp/bindings",
     "//services/service_manager/public/cpp",
+    "//third_party/metrics_proto",
+  ]
+}
+
+source_set("tests") {
+  testonly = true
+
+  sources = [
+    "metrics_utils_unittest.cc",
+    "ukm_source_id_unittest.cc",
+  ]
+
+  deps = [
+    ":metrics_cpp",
+    "//base",
+    "//testing/gtest",
   ]
 }
 
@@ -43,6 +61,7 @@ action("gen_ukm_builders") {
   # Re-generate the outputs if the codegen code changes:
   inputs = [
     "//tools/metrics/ukm/builders_template.py",
+    "//tools/metrics/ukm/decode_template.py",
     "//tools/metrics/ukm/codegen.py",
     "//tools/metrics/ukm/gen_builders.py",
   ]

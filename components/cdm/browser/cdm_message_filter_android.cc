@@ -11,7 +11,7 @@
 
 #include "base/feature_list.h"
 #include "base/macros.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "components/cdm/common/cdm_messages_android.h"
 #include "content/public/browser/android/android_overlay_provider.h"
 #include "ipc/ipc_message_macros.h"
@@ -20,7 +20,7 @@
 #include "media/base/audio_codecs.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 using media::MediaDrmBridge;
 using media::SupportedCodecs;
@@ -39,6 +39,8 @@ struct CodecInfo {
 const CodecInfo<media::VideoCodec> kVideoCodecsToQuery[] = {
     {media::EME_CODEC_WEBM_VP8, media::kCodecVP8, "video/webm"},
     {media::EME_CODEC_WEBM_VP9, media::kCodecVP9, "video/webm"},
+    {media::EME_CODEC_COMMON_VP9, media::kCodecVP9, "video/webm"},
+    {media::EME_CODEC_COMMON_VP9, media::kCodecVP9, "video/mp4"},
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
     {media::EME_CODEC_MP4_AVC1, media::kCodecH264, "video/mp4"},
 #if BUILDFLAG(ENABLE_HEVC_DEMUXING)
@@ -98,7 +100,7 @@ CdmMessageFilterAndroid::CdmMessageFilterAndroid(
     bool force_to_support_secure_codecs)
     : BrowserMessageFilter(EncryptedMediaMsgStart),
       task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND})),
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT})),
       can_persist_data_(can_persist_data),
       force_to_support_secure_codecs_(force_to_support_secure_codecs) {}
 

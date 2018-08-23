@@ -180,7 +180,7 @@ var availableTests = [
     chrome.networkingPrivate.createNetwork(
       false,  // shared
       { Type: NetworkType.WI_FI,
-        GUID: 'ignored_guid',
+        GUID: 'some_guid',
         WiFi: {
           SSID: 'wifi_created',
           Security: 'WEP-PSK'
@@ -188,7 +188,7 @@ var availableTests = [
       },
       callbackPass(function(guid) {
         assertFalse(guid == '');
-        assertFalse(guid == 'ignored_guid');
+        assertEq('some_guid', guid);
         chrome.networkingPrivate.getProperties(
             guid, callbackPass(function(properties) {
               assertEq(NetworkType.WI_FI, properties.Type);
@@ -284,7 +284,8 @@ var availableTests = [
             HexSSID: "7769666931",
             Security: 'WEP-PSK',
             SignalStrength: 40,
-            SSID: "wifi1"
+            SSID: "wifi1",
+            TetheringState: "NotDetected"
           }
         }, {
           GUID: 'stub_wifi2_guid',
@@ -297,7 +298,8 @@ var availableTests = [
             Frequency: 5000,
             HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
-            SSID: "wifi2_PSK"
+            SSID: "wifi2_PSK",
+            TetheringState: "NotDetected"
           }
         }], result);
 
@@ -320,7 +322,8 @@ var availableTests = [
                 HexSSID: "7769666931",
                 Security: 'WEP-PSK',
                 SignalStrength: 40,
-                SSID: "wifi1"
+                SSID: "wifi1",
+                TetheringState: "NotDetected"
               }
             }], result);
 
@@ -375,7 +378,8 @@ var availableTests = [
             HexSSID: "7769666931",
             Security: 'WEP-PSK',
             SignalStrength: 40,
-            SSID: "wifi1"
+            SSID: "wifi1",
+            TetheringState: "NotDetected"
           }
         }, {
           Connectable: true,
@@ -425,7 +429,8 @@ var availableTests = [
             HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
             SignalStrength: 80,
-            SSID: "wifi2_PSK"
+            SSID: "wifi2_PSK",
+            TetheringState: "NotDetected"
           }
         }], result);
       }));
@@ -448,7 +453,8 @@ var availableTests = [
             HexSSID: "7769666931",
             Security: 'WEP-PSK',
             SignalStrength: 40,
-            SSID: "wifi1"
+            SSID: "wifi1",
+            TetheringState: "NotDetected"
           }
         }, {
           Connectable: true,
@@ -464,7 +470,8 @@ var availableTests = [
             HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
             SignalStrength: 80,
-            SSID: "wifi2_PSK"
+            SSID: "wifi2_PSK",
+            TetheringState: "NotDetected"
           }
         }], result);
       }));
@@ -498,7 +505,8 @@ var availableTests = [
     chrome.networkingPrivate.getDeviceStates(callbackPass(function(result) {
       assertEq([
         {Scanning: false, State: 'Enabled', Type: 'Ethernet'},
-        {Scanning: false, State: 'Enabled', Type: 'WiFi'},
+        {Scanning: false, State: 'Enabled', Type: 'WiFi',
+         ManagedNetworkAvailable: false},
         {State: 'Uninitialized', SIMPresent: true,
          SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
          Type: 'Cellular' },
@@ -562,7 +570,8 @@ var availableTests = [
             FrequencyList: [2400],
             SSID: 'wifi1',
             Security: 'WEP-PSK',
-            SignalStrength: 40
+            SignalStrength: 40,
+            TetheringState: "NotDetected"
           }
         }, result);
       }));
@@ -592,7 +601,8 @@ var availableTests = [
             ModelID:"test_model_id",
             NetworkTechnology: 'GSM',
             RoamingState: 'Home',
-            SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3}
+            SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+            Scanning: false,
           },
           ConnectionState: ConnectionStateType.NOT_CONNECTED,
           GUID: kCellularGuid,
@@ -624,6 +634,7 @@ var availableTests = [
             MIN: "test_min",
             ModelID:"test_model_id",
             SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+            Scanning: false,
             SignalStrength: 0,
           },
           Connectable: false,
@@ -686,6 +697,7 @@ var availableTests = [
               UserPolicy: 'WPA-PSK'
             },
             SignalStrength: 80,
+            TetheringState: "NotDetected"
           }
         }, result);
       }));
@@ -810,7 +822,8 @@ var availableTests = [
             HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
             SignalStrength: 80,
-            SSID: "wifi2_PSK"
+            SSID: "wifi2_PSK",
+            TetheringState: "NotDetected"
           }
         }, result);
       }));

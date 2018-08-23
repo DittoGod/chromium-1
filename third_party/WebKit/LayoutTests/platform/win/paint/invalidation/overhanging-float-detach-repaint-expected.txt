@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -19,7 +20,7 @@
         {
           "object": "LayoutBlockFlow HTML",
           "rect": [8, 68, 100, 100],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
     }

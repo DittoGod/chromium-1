@@ -7,9 +7,9 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/component_updater/chrome_component_updater_configurator.h"
+#include "components/component_updater/component_updater_command_line_config_policy.h"
 #include "components/component_updater/component_updater_switches.h"
 #include "components/component_updater/component_updater_url_constants.h"
 #include "components/component_updater/configurator_impl.h"
@@ -39,7 +39,7 @@ class ChromeComponentUpdaterConfiguratorTest : public testing::Test {
 };
 
 void ChromeComponentUpdaterConfiguratorTest::SetUp() {
-  pref_service_ = base::MakeUnique<TestingPrefServiceSimple>();
+  pref_service_ = std::make_unique<TestingPrefServiceSimple>();
   RegisterPrefsForChromeComponentUpdaterConfigurator(pref_service_->registry());
 }
 
@@ -122,27 +122,29 @@ TEST_F(ChromeComponentUpdaterConfiguratorTest, TestUseEncryption) {
 
   const auto urls = config->UpdateUrl();
   ASSERT_EQ(2u, urls.size());
-  ASSERT_STREQ(kUpdaterDefaultUrlAlt, urls[0].spec().c_str());
-  ASSERT_STREQ(kUpdaterFallbackUrlAlt, urls[1].spec().c_str());
+  ASSERT_STREQ(kUpdaterDefaultUrl, urls[0].spec().c_str());
+  ASSERT_STREQ(kUpdaterFallbackUrl, urls[1].spec().c_str());
 
   ASSERT_EQ(config->UpdateUrl(), config->PingUrl());
 
   // Use the configurator implementation to test the filtering of
   // unencrypted URLs.
   {
-    const ConfiguratorImpl config(cmdline, true);
+    const ConfiguratorImpl config(
+        ComponentUpdaterCommandLineConfigPolicy(cmdline), true);
     const auto urls = config.UpdateUrl();
     ASSERT_EQ(1u, urls.size());
-    ASSERT_STREQ(kUpdaterDefaultUrlAlt, urls[0].spec().c_str());
+    ASSERT_STREQ(kUpdaterDefaultUrl, urls[0].spec().c_str());
     ASSERT_EQ(config.UpdateUrl(), config.PingUrl());
   }
 
   {
-    const ConfiguratorImpl config(cmdline, false);
+    const ConfiguratorImpl config(
+        ComponentUpdaterCommandLineConfigPolicy(cmdline), false);
     const auto urls = config.UpdateUrl();
     ASSERT_EQ(2u, urls.size());
-    ASSERT_STREQ(kUpdaterDefaultUrlAlt, urls[0].spec().c_str());
-    ASSERT_STREQ(kUpdaterFallbackUrlAlt, urls[1].spec().c_str());
+    ASSERT_STREQ(kUpdaterDefaultUrl, urls[0].spec().c_str());
+    ASSERT_STREQ(kUpdaterFallbackUrl, urls[1].spec().c_str());
     ASSERT_EQ(config.UpdateUrl(), config.PingUrl());
   }
 }
@@ -156,17 +158,17 @@ TEST_F(ChromeComponentUpdaterConfiguratorTest, TestEnabledComponentUpdates) {
 
   // Tests the component updates are disabled.
   pref_service()->SetManagedPref("component_updates.component_updates_enabled",
-                                 base::MakeUnique<base::Value>(false));
+                                 std::make_unique<base::Value>(false));
   EXPECT_FALSE(config->EnabledComponentUpdates());
 
   // Tests the component updates are enabled.
   pref_service()->SetManagedPref("component_updates.component_updates_enabled",
-                                 base::MakeUnique<base::Value>(true));
+                                 std::make_unique<base::Value>(true));
   EXPECT_TRUE(config->EnabledComponentUpdates());
 
   // Sanity check setting the preference back to |false| and then removing it.
   pref_service()->SetManagedPref("component_updates.component_updates_enabled",
-                                 base::MakeUnique<base::Value>(false));
+                                 std::make_unique<base::Value>(false));
   EXPECT_FALSE(config->EnabledComponentUpdates());
   pref_service()->RemoveManagedPref(
       "component_updates.component_updates_enabled");

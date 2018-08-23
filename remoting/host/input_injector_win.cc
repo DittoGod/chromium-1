@@ -114,6 +114,12 @@ void ParseMouseClickEvent(const MouseEvent& event, std::vector<INPUT>* output) {
       input.mi.dwFlags = down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP;
     } else if (button == MouseEvent::BUTTON_RIGHT) {
       input.mi.dwFlags = down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;
+    } else if (button == MouseEvent::BUTTON_BACK) {
+      input.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
+      input.mi.mouseData = XBUTTON1;
+    } else if (button == MouseEvent::BUTTON_FORWARD) {
+      input.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
+      input.mi.mouseData = XBUTTON2;
     } else {
       input.mi.dwFlags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
     }
@@ -291,8 +297,8 @@ InputInjectorWin::Core::Core(
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner)
     : main_task_runner_(main_task_runner),
       ui_task_runner_(ui_task_runner),
-      clipboard_(Clipboard::Create()) {
-}
+      clipboard_(Clipboard::Create()),
+      touch_injector_(new TouchInjectorWin()) {}
 
 void InputInjectorWin::Core::InjectClipboardEvent(const ClipboardEvent& event) {
   if (!ui_task_runner_->BelongsToCurrentThread()) {
@@ -355,7 +361,6 @@ void InputInjectorWin::Core::Start(
   }
 
   clipboard_->Start(std::move(client_clipboard));
-  touch_injector_.reset(new TouchInjectorWin());
   touch_injector_->Init();
 }
 

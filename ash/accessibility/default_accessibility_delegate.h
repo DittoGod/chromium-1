@@ -7,7 +7,6 @@
 
 #include "ash/accessibility/accessibility_delegate.h"
 #include "ash/ash_export.h"
-#include "ash/public/cpp/accessibility_types.h"
 #include "base/macros.h"
 
 namespace ash {
@@ -19,16 +18,12 @@ class ASH_EXPORT DefaultAccessibilityDelegate : public AccessibilityDelegate {
 
   void SetMagnifierEnabled(bool enabled) override;
   bool IsMagnifierEnabled() const override;
-  void SetTapDraggingEnabled(bool enabled) override;
-  bool IsTapDraggingEnabled() const override;
   bool ShouldShowAccessibilityMenu() const override;
-  void SilenceSpokenFeedback() const override;
   void SaveScreenMagnifierScale(double scale) override;
   double GetSavedScreenMagnifierScale() override;
 
  private:
   bool screen_magnifier_enabled_ = false;
-  bool tap_dragging_enabled_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(DefaultAccessibilityDelegate);
 };

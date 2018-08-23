@@ -49,7 +49,14 @@ class APP_LIST_MODEL_EXPORT SearchBoxModel {
     return selection_model_;
   }
 
-  void SetTabletMode(bool started);
+  void SetTabletMode(bool is_tablet_mode);
+  bool is_tablet_mode() const { return is_tablet_mode_; }
+
+  void SetShowAssistantButton(bool show);
+  bool show_assistant_button() const { return show_assistant_button_; }
+
+  void SetSearchEngineIsGoogle(bool is_google);
+  bool search_engine_is_google() const { return search_engine_is_google_; }
 
   // Sets/gets the text for the search box's Textfield and the voice search
   // flag.
@@ -67,9 +74,11 @@ class APP_LIST_MODEL_EXPORT SearchBoxModel {
   base::string16 accessible_name_;
   gfx::SelectionModel selection_model_;
   base::string16 text_;
-  bool is_tablet_mode_;
+  bool search_engine_is_google_ = false;
+  bool is_tablet_mode_ = false;
+  bool show_assistant_button_ = false;
 
-  base::ObserverList<SearchBoxModelObserver> observers_;
+  base::ObserverList<SearchBoxModelObserver>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchBoxModel);
 };

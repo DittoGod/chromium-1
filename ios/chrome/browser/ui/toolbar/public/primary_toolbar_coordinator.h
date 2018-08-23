@@ -7,27 +7,23 @@
 
 #import "ios/chrome/browser/ui/toolbar/public/fakebox_focuser.h"
 #import "ios/chrome/browser/ui/toolbar/public/omnibox_focuser.h"
-#import "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_interacting.h"
 #import "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_snapshot_providing.h"
 
 @protocol ActivityServicePositioner;
-@protocol QRScannerResultLoading;
-@protocol TabHistoryUIUpdater;
-@protocol VoiceSearchControllerDelegate;
+@class CommandDispatcher;
 
 // Protocol defining a primary toolbar, in a paradigm where the toolbar can be
 // split between primary and secondary.
 @protocol PrimaryToolbarCoordinator<FakeboxFocuser,
-                                    SideSwipeToolbarInteracting,
                                     SideSwipeToolbarSnapshotProviding>
+
+// Command dispatcher.
+@property(nonatomic, strong) CommandDispatcher* commandDispatcher;
 
 @property(nonatomic, strong, readonly) UIViewController* viewController;
 
 // Returns the different protocols and superclass now implemented by the
 // internal ViewController.
-- (id<VoiceSearchControllerDelegate>)voiceSearchDelegate;
-- (id<QRScannerResultLoading>)QRScannerResultLoader;
-- (id<TabHistoryUIUpdater>)tabHistoryUIUpdater;
 - (id<ActivityServicePositioner>)activityServicePositioner;
 - (id<OmniboxFocuser>)omniboxFocuser;
 

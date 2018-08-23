@@ -18,6 +18,7 @@
 #include "components/offline_items_collection/core/offline_content_provider.h"
 #include "components/offline_items_collection/core/offline_item.h"
 #include "content/public/browser/background_fetch_delegate.h"
+#include "ui/gfx/image/image.h"
 #include "url/origin.h"
 
 class Profile;
@@ -38,21 +39,25 @@ class BackgroundFetchDelegateImpl
       public offline_items_collection::OfflineContentProvider,
       public KeyedService {
  public:
-  explicit BackgroundFetchDelegateImpl(Profile* profile);
+  BackgroundFetchDelegateImpl(Profile* profile,
+                              const std::string& provider_namespace);
 
   ~BackgroundFetchDelegateImpl() override;
+
+  // Lazily initializes and returns the DownloadService.
+  download::DownloadService* GetDownloadService();
 
   // KeyedService implementation:
   void Shutdown() override;
 
   // BackgroundFetchDelegate implementation:
-  void CreateDownloadJob(
-      const std::string& job_unique_id,
-      const std::string& title,
+  void GetIconDisplaySize(GetIconDisplaySizeCallback callback) override;
+  void GetPermissionForOrigin(
       const url::Origin& origin,
-      int completed_parts,
-      int total_parts,
-      const std::vector<std::string>& current_guids) override;
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
+      GetPermissionForOriginCallback callback) override;
+  void CreateDownloadJob(std::unique_ptr<content::BackgroundFetchDescription>
+                             fetch_description) override;
   void DownloadUrl(const std::string& job_unique_id,
                    const std::string& guid,
                    const std::string& method,
@@ -60,6 +65,13 @@ class BackgroundFetchDelegateImpl
                    const net::NetworkTrafficAnnotationTag& traffic_annotation,
                    const net::HttpRequestHeaders& headers) override;
   void Abort(const std::string& job_unique_id) override;
+  void UpdateUI(const std::string& job_unique_id,
+                const base::Optional<std::string>& title,
+                const base::Optional<SkBitmap>& icon) override;
+
+  // Abort all ongoing downloads and fail the fetch. Currently only used when
+  // the bytes downloaded exceed the total download size, if specified.
+  void FailFetch(const std::string& job_unique_id);
 
   void OnDownloadStarted(const std::string& guid,
                          std::unique_ptr<content::BackgroundFetchResponse>);
@@ -74,7 +86,8 @@ class BackgroundFetchDelegateImpl
                            uint64_t size);
 
   // OfflineContentProvider implementation:
-  void OpenItem(const offline_items_collection::ContentId& id) override;
+  void OpenItem(offline_items_collection::LaunchLocation location,
+                const offline_items_collection::ContentId& id) override;
   void RemoveItem(const offline_items_collection::ContentId& id) override;
   void CancelDownload(const offline_items_collection::ContentId& id) override;
   void PauseDownload(const offline_items_collection::ContentId& id) override;
@@ -84,9 +97,15 @@ class BackgroundFetchDelegateImpl
                    SingleItemCallback callback) override;
   void GetAllItems(MultipleItemCallback callback) override;
   void GetVisualsForItem(const offline_items_collection::ContentId& id,
-                         const VisualsCallback& callback) override;
+                         VisualsCallback callback) override;
+  void GetShareInfoForItem(const offline_items_collection::ContentId& id,
+                           ShareCallback callback) override;
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
+
+  // Called once the Download Service is initialized. Resumes all previously
+  // active Jobs.
+  void ResumeActiveJobs();
 
   base::WeakPtr<BackgroundFetchDelegateImpl> GetWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
@@ -95,20 +114,14 @@ class BackgroundFetchDelegateImpl
  private:
   struct JobDetails {
     JobDetails(JobDetails&&);
-    JobDetails(const std::string& job_unique_id,
-               const std::string& title,
-               const url::Origin& origin,
-               int completed_parts,
-               int total_parts);
+    explicit JobDetails(
+        std::unique_ptr<content::BackgroundFetchDescription> fetch_description);
     ~JobDetails();
 
     void UpdateOfflineItem();
 
-    std::string title;
-    const url::Origin origin;
-    int completed_parts;
-    const int total_parts;
     bool cancelled;
+    bool failed;
 
     // Set of DownloadService GUIDs that are currently downloading. They are
     // added by DownloadUrl and are removed when the download completes, fails
@@ -116,8 +129,13 @@ class BackgroundFetchDelegateImpl
     base::flat_set<std::string> current_download_guids;
 
     offline_items_collection::OfflineItem offline_item;
+    std::unique_ptr<content::BackgroundFetchDescription> fetch_description;
 
    private:
+    // Whether we should report progress of the job in terms of size of
+    // downloads or in terms of the number of files being downloaded.
+    bool ShouldReportProgressBySize();
+
     DISALLOW_COPY_AND_ASSIGN(JobDetails);
   };
 
@@ -129,9 +147,12 @@ class BackgroundFetchDelegateImpl
   void OnDownloadReceived(const std::string& guid,
                           download::DownloadParams::StartResult result);
 
+  // The profile this service is being created for.
+  Profile* profile_;
+
   // The BackgroundFetchDelegateImplFactory depends on the
   // DownloadServiceFactory, so |download_service_| should outlive |this|.
-  download::DownloadService* download_service_;
+  download::DownloadService* download_service_ = nullptr;
 
   // Map from individual download GUIDs to job unique ids.
   std::map<std::string, std::string> download_job_unique_id_map_;

@@ -7,7 +7,6 @@
 #include <utility>
 #include <vector>
 
-#include "ash/accelerators/accelerator_controller.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
 #include "base/bind.h"
@@ -20,12 +19,11 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/arc/boot_phase_monitor/arc_boot_phase_monitor_bridge.h"
 #include "chrome/browser/chromeos/arc/voice_interaction/highlighter_controller_client.h"
 #include "chrome/browser/chromeos/arc/voice_interaction/voice_interaction_controller_client.h"
-#include "chrome/browser/chromeos/ash_config.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host_webui.h"
 #include "chrome/browser/profiles/profile.h"
@@ -46,6 +44,7 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_owner.h"
 #include "ui/compositor/layer_tree_owner.h"
@@ -114,7 +113,7 @@ std::unique_ptr<ui::LayerTreeOwner> CreateLayerTreeForSnapshot(
   // Exclude metalayer-related layers. This will also include other layers
   // under kShellWindowId_OverlayContainer which is fine.
   // TODO(crbug.com/757012): Mash support.
-  if (chromeos::GetAshConfig() != ash::Config::MASH) {
+  if (!features::IsMultiProcessMash()) {
     aura::Window* overlay_container = ash::Shell::GetContainer(
         root_window, ash::kShellWindowId_OverlayContainer);
     if (overlay_container != nullptr)
@@ -178,9 +177,6 @@ void EncodeAndReturnImage(
           image.AsBitmap()),
       std::move(callback));
 }
-
-template <typename T>
-void DoNothing(T value) {}
 
 // Singleton factory for ArcVoiceInteractionFrameworkService.
 class ArcVoiceInteractionFrameworkServiceFactory
@@ -288,7 +284,7 @@ void ArcVoiceInteractionFrameworkService::CaptureFullscreen(
   // Since ARC currently only runs in primary display, we restrict
   // the screenshot to it.
   // TODO(crbug.com/757012): Mash support.
-  if (chromeos::GetAshConfig() == ash::Config::MASH) {
+  if (features::IsMultiProcessMash()) {
     std::move(callback).Run(std::vector<uint8_t>{});
     return;
   }
@@ -320,8 +316,7 @@ void ArcVoiceInteractionFrameworkService::SetVoiceInteractionState(
     bool enable_voice_interaction =
         value_prop_accepted &&
         prefs->GetBoolean(prefs::kVoiceInteractionEnabled);
-    SetVoiceInteractionEnabled(enable_voice_interaction,
-                               base::BindOnce(&DoNothing<bool>));
+    SetVoiceInteractionEnabled(enable_voice_interaction, base::DoNothing());
 
     SetVoiceInteractionContextEnabled(
         enable_voice_interaction &&
@@ -353,7 +348,7 @@ void ArcVoiceInteractionFrameworkService::OnArcPlayStoreEnabledChanged(
     return;
 
   SetVoiceInteractionSetupCompletedInternal(false);
-  SetVoiceInteractionEnabled(false, base::BindOnce(&DoNothing<bool>));
+  SetVoiceInteractionEnabled(false, base::DoNothing());
   SetVoiceInteractionContextEnabled(false);
 }
 
@@ -454,7 +449,7 @@ void ArcVoiceInteractionFrameworkService::SetVoiceInteractionSetupCompleted() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   SetVoiceInteractionSetupCompletedInternal(true);
-  SetVoiceInteractionEnabled(true, base::BindOnce(&DoNothing<bool>));
+  SetVoiceInteractionEnabled(true, base::DoNothing());
   SetVoiceInteractionContextEnabled(true);
 }
 
@@ -531,8 +526,7 @@ void ArcVoiceInteractionFrameworkService::StartVoiceInteractionOobe() {
   if (chromeos::LoginDisplayHost::default_host())
     return;
   // The display host will be destructed at the end of OOBE flow.
-  chromeos::LoginDisplayHostWebUI* display_host =
-      new chromeos::LoginDisplayHostWebUI();
+  auto* display_host = new chromeos::LoginDisplayHostWebUI();
   display_host->StartVoiceInteractionOobe();
 }
 
@@ -540,8 +534,9 @@ bool ArcVoiceInteractionFrameworkService::InitiateUserInteraction(
     bool is_toggle) {
   VLOG(1) << "Start voice interaction.";
   PrefService* prefs = Profile::FromBrowserContext(context_)->GetPrefs();
-  if (!prefs->GetBoolean(prefs::kArcVoiceInteractionValuePropAccepted)) {
-    VLOG(1) << "Voice interaction feature not accepted.";
+  if (!prefs->GetBoolean(prefs::kArcVoiceInteractionValuePropAccepted) ||
+      arc::IsArcTermsOfServiceOobeNegotiationNeeded()) {
+    VLOG(1) << "Voice interaction feature or ARC not accepted.";
     should_start_runtime_flow_ = true;
     // If voice interaction value prop has not been accepted, show the value
     // prop OOBE page again.
@@ -581,7 +576,7 @@ void ArcVoiceInteractionFrameworkService::
 bool ArcVoiceInteractionFrameworkService::IsHomescreenActive() {
   // Homescreen is considered to be active if there are no active windows.
   // TODO(crbug.com/757012): Mash support.
-  if (chromeos::GetAshConfig() == ash::Config::MASH)
+  if (features::IsMultiProcessMash())
     return false;
   return !ash::Shell::Get()->activation_client()->GetActiveWindow();
 }

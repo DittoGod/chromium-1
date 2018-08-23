@@ -641,6 +641,18 @@
         <message name="IDS_THIRD_PARTY_AUTH_NOT_SUPPORTED" desc="Error message shown when the user attempts to connect to a remote device under third party authentication, which is currently unsupported by the client.">
           This device is not supported by this client because it requires third party authentication.
         </message>
+        <message name="IDS_REPORT_THIS" desc="Label text for a button to report a connection failure to the developers.">
+          Report this
+        </message>
+        <message name="IDS_IOS_PHOTO_LIBRARY_USAGE_DESCRIPTION" desc="Message shown when the app requests permission to access the user's photo library.">
+          To choose a profile picture, allow Chrome Remote Desktop to access your photos
+        </message>
+        <message name="IDS_IOS_CAMERA_USAGE_DESCRIPTION" desc="Message shown when the app requests permission to use the camera of the device.">
+          To choose a profile picture, allow Chrome Remote Desktop to access your camera
+        </message>
+        <message name="IDS_SERVER_COMMUNICATION_ERROR" desc="Message shown when the client fails to communicate with the back end server.">
+          Failed to communicate with the server: <ph name="ERROR">$1<ex>Server Unavailable</ex></ph>
+        </message>
 
 <!-- Play Store listings text. These Android-specific strings are not marked
      with formatter_data="android_java" since they are used only for the Play
@@ -678,7 +690,7 @@ For information about privacy, please see the Google Privacy Policy (http://goo.
         <message name="IDS_APP_STORE_TITLE" desc="App Store title of the Chrome Remote Desktop app for iOS. If needed to meet the 50-char limit, please translate just 'Remote Desktop' instead. [CHAR-LIMIT=50] [NAME=app_store_title]" meaning="Title used in App Store">
           Chrome Remote Desktop
         </message>
-        <message name="IDS_APP_STORE_PROMOTIONAL_TEXT" desc="App Store promotional text. To be displayed below the app title in App Store. No period at the end. [CHAR-LIMIT=170]">
+        <message name="IDS_APP_STORE_SUBTITLE" desc="App Store subtitle text. To be displayed below the app title in App Store. No period at the end. [CHAR-LIMIT=30]" meaning="Please try to keep translation below 30 characters. If not possible, please try to translate 'access your computer' instead.">
           Securely access your computer
         </message>
         <message name="IDS_APP_STORE_KEYWORDS" desc="App Store keywords (to be used to search for the app) for the Chrome Remote Desktop app for iOS. Separate keywords with newline. [NAME=app_store_keywords]">
@@ -698,9 +710,7 @@ Securely access your computer from your iOS device. It's fast, simple and free.
 • On your iOS device, open the app and tap on any of your online computers to connect.
         </message>
         <message name="IDS_APP_STORE_CHANGES" desc="List of what's changed in this release of Chrome Remote Desktop for iOS. [CHAR-LIMIT=4000] [NAME=app_store_changes]">
-• New look and feel.
-• Improved performance, responsiveness and reliability.
-• Support for playing audio from Windows or Linux computers.
+General fixes and stability improvements.
         </message>
       </if>  <!-- is_android or is_ios -->
 
@@ -789,8 +799,8 @@ Securely access your computer from your iOS device. It's fast, simple and free.
         Welcome to Chrome Remote Desktop
       </message>
       <message desc="Step 1 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_1">On the computer you want to access remotely, open Chrome and visit <ph name="INSTALLATION_LINK">$1<ex>google.com/remotedesktop</ex></ph></message>
-      <message desc="Step 2 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_2">Install Chrome Remote Desktop software and follow the instructions to complete setup</message>
-      <message desc="Step 3 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_3">After setup is complete, you'll be able to access the computer from this page by entering the PIN or access code</message>
+      <message desc="Step 2 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_2">Follow the instructions to set up your computer for remote access</message>
+      <message desc="Step 3 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_3">After setup is complete, refresh this page, then you'll be able to access the computer by choosing your device and entering the PIN</message>
       <message desc="Label for a button for sending the user an email with link and instructions for setting up a computer for remote access." name="IDS_EMAIL_LINKS_AND_INSTRUCTIONS">
         Email these instructions
       </message>
@@ -1156,7 +1166,7 @@ Securely access your computer from your iOS device. It's fast, simple and free.
       <message desc="Label for button to reconnect to the previous Me2Me host. This button appears on the 'session-finished' page." name="IDS_RECONNECT">
         Reconnect
       </message>
-      <message desc="Button for enabling or disabling the 'resize-to-client' functionality, whereby the host desktop is resized to match the client size as closely as possible." name="IDS_RESIZE_TO_CLIENT">
+      <message desc="Button for enabling or disabling the 'resize-to-client' functionality, whereby the host desktop is resized to match the client size as closely as possible." name="IDS_RESIZE_TO_CLIENT" formatter_data="android_java">
         Resize desktop to fit
       </message>
       <message desc="Label for button to retry connecting to a Me2Me host, after failing to connect to that host. This button appears on the 'session-finished' page." name="IDS_RETRY">

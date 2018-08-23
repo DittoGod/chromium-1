@@ -13,8 +13,8 @@
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_util.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/extensions/web_app_info_image_source.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -48,26 +48,27 @@ BookmarkAppConfirmationView::BookmarkAppConfirmationView(
   constexpr int kColumnSetId = 0;
 
   views::ColumnSet* column_set = layout->AddColumnSet(kColumnSetId);
-  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 0,
+  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER,
+                        views::GridLayout::kFixedSize,
                         views::GridLayout::USE_PREF, 0, 0);
-  column_set->AddPaddingColumn(0,
+  column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
                                layout_provider->GetDistanceMetric(
                                    views::DISTANCE_RELATED_CONTROL_HORIZONTAL));
   constexpr int textfield_width = 320;
-  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 0,
-                        views::GridLayout::FIXED, textfield_width, 0);
+  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER,
+                        views::GridLayout::kFixedSize, views::GridLayout::FIXED,
+                        textfield_width, 0);
 
-  const int icon_size = layout_provider->IsHarmonyMode()
-                            ? extension_misc::EXTENSION_ICON_SMALL
-                            : extension_misc::EXTENSION_ICON_MEDIUM;
   views::ImageView* icon_image_view = new views::ImageView();
-  gfx::Size image_size(icon_size, icon_size);
+  gfx::Size image_size(extension_misc::EXTENSION_ICON_SMALL,
+                       extension_misc::EXTENSION_ICON_SMALL);
   gfx::ImageSkia image(
-      std::make_unique<WebAppInfoImageSource>(icon_size, web_app_info_.icons),
+      std::make_unique<WebAppInfoImageSource>(
+          extension_misc::EXTENSION_ICON_SMALL, web_app_info_.icons),
       image_size);
   icon_image_view->SetImageSize(image_size);
   icon_image_view->SetImage(image);
-  layout->StartRow(0, kColumnSetId);
+  layout->StartRow(views::GridLayout::kFixedSize, kColumnSetId);
   layout->AddView(icon_image_view);
 
   title_tf_ = new views::Textfield();
@@ -78,7 +79,8 @@ BookmarkAppConfirmationView::BookmarkAppConfirmationView(
   layout->AddView(title_tf_);
 
   layout->AddPaddingRow(
-      0, layout_provider->GetDistanceMetric(DISTANCE_CONTROL_LIST_VERTICAL));
+      views::GridLayout::kFixedSize,
+      layout_provider->GetDistanceMetric(DISTANCE_CONTROL_LIST_VERTICAL));
 
   // When CanHostedAppsOpenInWindows() returns false, do not show the open as
   // window checkbox to avoid confusing users.
@@ -88,7 +90,7 @@ BookmarkAppConfirmationView::BookmarkAppConfirmationView(
     open_as_window_checkbox_ = new views::Checkbox(
         l10n_util::GetStringUTF16(IDS_BOOKMARK_APP_BUBBLE_OPEN_AS_WINDOW));
     open_as_window_checkbox_->SetChecked(web_app_info_.open_as_window);
-    layout->StartRow(0, kColumnSetId);
+    layout->StartRow(views::GridLayout::kFixedSize, kColumnSetId);
     layout->SkipColumns(1);
     layout->AddView(open_as_window_checkbox_);
   }
@@ -129,8 +131,9 @@ bool BookmarkAppConfirmationView::Accept() {
 
 base::string16 BookmarkAppConfirmationView::GetDialogButtonLabel(
     ui::DialogButton button) const {
-  return l10n_util::GetStringUTF16(button == ui::DIALOG_BUTTON_OK ? IDS_ADD
-                                                                  : IDS_CANCEL);
+  return l10n_util::GetStringUTF16(button == ui::DIALOG_BUTTON_OK
+                                       ? IDS_CREATE_SHORTCUTS_BUTTON_LABEL
+                                       : IDS_CANCEL);
 }
 
 bool BookmarkAppConfirmationView::IsDialogButtonEnabled(

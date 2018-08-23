@@ -20,10 +20,10 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/loader/resource_loader_delegate.h"
 #include "content/browser/loader/test_resource_handler.h"
 #include "content/public/browser/client_certificate_delegate.h"
+#include "content/public/browser/login_delegate.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/resource_type.h"
@@ -59,6 +59,7 @@
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
 #include "services/network/public/cpp/resource_response.h"
+#include "services/network/throttling/scoped_throttling_token.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -337,16 +338,17 @@ class NonChunkedUploadDataStream : public net::UploadDataStream {
  private:
   int InitInternal(const net::NetLogWithSource& net_log) override {
     SetSize(size_);
-    stream_.Init(base::Bind(&NonChunkedUploadDataStream::OnInitCompleted,
-                            base::Unretained(this)),
+    stream_.Init(base::BindOnce(&NonChunkedUploadDataStream::OnInitCompleted,
+                                base::Unretained(this)),
                  net_log);
     return net::OK;
   }
 
   int ReadInternal(net::IOBuffer* buf, int buf_len) override {
-    return stream_.Read(buf, buf_len,
-                        base::Bind(&NonChunkedUploadDataStream::OnReadCompleted,
-                                   base::Unretained(this)));
+    return stream_.Read(
+        buf, buf_len,
+        base::BindOnce(&NonChunkedUploadDataStream::OnReadCompleted,
+                       base::Unretained(this)));
   }
 
   void ResetInternal() override { stream_.Reset(); }
@@ -452,7 +454,7 @@ class ResourceLoaderTest : public testing::Test,
     loader_.reset(new ResourceLoader(
         std::move(request),
         WrapResourceHandler(std::move(resource_handler), raw_ptr_to_request_),
-        this, &resource_context_));
+        this, &resource_context_, nullptr /* throttling_token */));
   }
 
   void SetUpResourceLoaderForUrl(const GURL& test_url) {
@@ -470,8 +472,8 @@ class ResourceLoaderTest : public testing::Test,
     browser_context_.reset(new TestBrowserContext());
     scoped_refptr<SiteInstance> site_instance =
         SiteInstance::Create(browser_context_.get());
-    web_contents_.reset(
-        TestWebContents::Create(browser_context_.get(), site_instance.get()));
+    web_contents_ =
+        TestWebContents::Create(browser_context_.get(), site_instance.get());
     SetUpResourceLoaderForUrl(test_redirect_url());
   }
 
@@ -488,7 +490,7 @@ class ResourceLoaderTest : public testing::Test,
   }
 
   // ResourceLoaderDelegate:
-  ResourceDispatcherHostLoginDelegate* CreateLoginDelegate(
+  scoped_refptr<LoginDelegate> CreateLoginDelegate(
       ResourceLoader* loader,
       net::AuthChallengeInfo* auth_info) override {
     return nullptr;

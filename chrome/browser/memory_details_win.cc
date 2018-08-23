@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/memory_details.h"
+// Windows headers must come first.
+#include <windows.h>
 
 #include <psapi.h>
 #include <stddef.h>
 #include <TlHelp32.h>
+
+#include "chrome/browser/memory_details.h"
 
 #include <memory>
 
@@ -30,7 +33,7 @@ using content::BrowserThread;
 
 MemoryDetails::MemoryDetails() {
   base::FilePath browser_process_path;
-  PathService::Get(base::FILE_EXE, &browser_process_path);
+  base::PathService::Get(base::FILE_EXE, &browser_process_path);
 
   ProcessData process;
   process.name = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
@@ -77,11 +80,6 @@ void MemoryDetails::CollectProcessData(
     info.process_type = pid == GetCurrentProcessId()
                             ? content::PROCESS_TYPE_BROWSER
                             : content::PROCESS_TYPE_UNKNOWN;
-
-    std::unique_ptr<base::ProcessMetrics> metrics =
-        base::ProcessMetrics::CreateProcessMetrics(process_handle.Get());
-    metrics->GetCommittedKBytes(&info.committed);
-    metrics->GetWorkingSetKBytes(&info.working_set);
 
     // Get Version Information.
     info.version = base::ASCIIToUTF16(version_info::GetVersionNumber());

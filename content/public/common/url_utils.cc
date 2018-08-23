@@ -4,6 +4,11 @@
 
 #include "content/public/common/url_utils.h"
 
+#include <set>
+#include <string>
+
+#include "base/logging.h"
+#include "base/no_destructor.h"
 #include "build/build_config.h"
 #include "content/common/url_schemes.h"
 #include "content/public/common/browser_side_navigation_policy.h"
@@ -81,7 +86,7 @@ bool IsRendererDebugURL(const GURL& url) {
     return true;
   }
 
-#if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
+#if defined(ADDRESS_SANITIZER)
   if (url == kChromeUICrashHeapOverflowURL ||
       url == kChromeUICrashHeapUnderflowURL ||
       url == kChromeUICrashUseAfterFreeURL) {
@@ -89,14 +94,34 @@ bool IsRendererDebugURL(const GURL& url) {
   }
 #endif
 
-#if defined(SYZYASAN)
+#if defined(OS_WIN)
+  if (url == kChromeUIHeapCorruptionCrashURL)
+    return true;
+#endif
+
+#if DCHECK_IS_ON()
+  if (url == kChromeUICrashDcheckURL)
+    return true;
+#endif
+
+#if defined(OS_WIN) && defined(ADDRESS_SANITIZER)
   if (url == kChromeUICrashCorruptHeapBlockURL ||
-      url == kChromeUICrashCorruptHeapURL || url == kChromeUICrashDcheckURL) {
+      url == kChromeUICrashCorruptHeapURL) {
     return true;
   }
 #endif
 
   return false;
+}
+
+bool IsSafeRedirectTarget(const GURL& url) {
+  static base::NoDestructor<std::set<std::string>> kUnsafeSchemes(
+      std::set<std::string>({
+          url::kAboutScheme, url::kDataScheme, url::kFileScheme,
+          url::kFileSystemScheme,
+      }));
+  return !HasWebUIScheme(url) &&
+         kUnsafeSchemes->find(url.scheme()) == kUnsafeSchemes->end();
 }
 
 }  // namespace content

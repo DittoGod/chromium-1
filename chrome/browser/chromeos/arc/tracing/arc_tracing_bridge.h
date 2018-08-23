@@ -18,8 +18,8 @@
 #include "components/arc/common/tracing.mojom.h"
 #include "components/arc/connection_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "services/resource_coordinator/public/cpp/tracing/base_agent.h"
-#include "services/resource_coordinator/public/mojom/tracing/tracing.mojom.h"
+#include "services/tracing/public/cpp/base_agent.h"
+#include "services/tracing/public/mojom/tracing.mojom.h"
 
 namespace content {
 class BrowserContext;
@@ -80,7 +80,7 @@ class ArcTracingBridge : public KeyedService,
   // tracing::mojom::Agent.
   void StartTracing(const std::string& config,
                     base::TimeTicks coordinator_time,
-                    const Agent::StartTracingCallback& callback) override;
+                    Agent::StartTracingCallback callback) override;
   void StopAndFlush(tracing::mojom::RecorderPtr recorder) override;
 
   // Callback for QueryAvailableCategories.

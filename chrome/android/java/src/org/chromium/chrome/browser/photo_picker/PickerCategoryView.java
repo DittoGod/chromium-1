@@ -18,6 +18,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.RelativeLayout;
 
+import org.chromium.base.AsyncTask;
 import org.chromium.base.DiscardableReferencePool.DiscardableReference;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
@@ -146,7 +147,7 @@ public class PickerCategoryView extends RelativeLayout
         PhotoPickerToolbar toolbar = (PhotoPickerToolbar) mSelectableListLayout.initializeToolbar(
                 R.layout.photo_picker_toolbar, mSelectionDelegate,
                 R.string.photo_picker_select_images, null, 0, 0, R.color.default_primary_color,
-                null, false);
+                null, false, false);
         toolbar.setNavigationOnClickListener(this);
         Button doneButton = (Button) toolbar.findViewById(R.id.done);
         doneButton.setOnClickListener(this);
@@ -360,15 +361,16 @@ public class PickerCategoryView extends RelativeLayout
         }
 
         mEnumStartTime = SystemClock.elapsedRealtime();
-        mWorkerTask = new FileEnumWorkerTask(this, new MimeTypeFileFilter(mMimeTypes));
-        mWorkerTask.execute();
+        mWorkerTask = new FileEnumWorkerTask(
+                mActivity.getWindowAndroid(), this, new MimeTypeFileFilter(mMimeTypes));
+        mWorkerTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /**
      * Notifies any listeners that one or more photos have been selected.
      */
     private void notifyPhotosSelected() {
-        List<PickerBitmap> selectedFiles = mSelectionDelegate.getSelectedItems();
+        List<PickerBitmap> selectedFiles = mSelectionDelegate.getSelectedItemsAsList();
         Collections.sort(selectedFiles);
         String[] photos = new String[selectedFiles.size()];
         int i = 0;
@@ -423,7 +425,7 @@ public class PickerCategoryView extends RelativeLayout
      * @param umaId The UMA value to record with the action.
      */
     private void executeAction(PhotoPickerListener.Action action, String[] photos, int umaId) {
-        mListener.onPickerUserAction(action, photos);
+        mListener.onPhotoPickerUserAction(action, photos);
         mDialog.dismiss();
         UiUtils.onPhotoPickerDismissed();
         recordFinalUmaStats(umaId);

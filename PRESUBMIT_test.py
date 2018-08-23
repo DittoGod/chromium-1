@@ -4,15 +4,16 @@
 # found in the LICENSE file.
 
 import os.path
-import re
 import subprocess
 import unittest
 
 import PRESUBMIT
-from PRESUBMIT_test_mocks import MockChange, MockFile, MockAffectedFile
+from PRESUBMIT_test_mocks import MockFile, MockAffectedFile
 from PRESUBMIT_test_mocks import MockInputApi, MockOutputApi
 
+
 _TEST_DATA_DIR = 'base/test/data/presubmit'
+
 
 class VersionControlConflictsTest(unittest.TestCase):
   def testTypicalConflict(self):
@@ -38,13 +39,17 @@ class VersionControlConflictsTest(unittest.TestCase):
         MockInputApi(), MockFile('some/polymer/README.md', lines))
     self.assertEqual(0, len(errors))
 
+
 class UmaHistogramChangeMatchedOrNotTest(unittest.TestCase):
   def testTypicalCorrectlyMatchedChange(self):
     diff_cc = ['UMA_HISTOGRAM_BOOL("Bla.Foo.Dummy", true)']
+    diff_java = [
+      'RecordHistogram.recordBooleanHistogram("Bla.Foo.Dummy", true)']
     diff_xml = ['<histogram name="Bla.Foo.Dummy"> </histogram>']
     mock_input_api = MockInputApi()
     mock_input_api.files = [
       MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo.java', diff_java),
       MockFile('tools/metrics/histograms/histograms.xml', diff_xml),
     ]
     warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
@@ -53,15 +58,24 @@ class UmaHistogramChangeMatchedOrNotTest(unittest.TestCase):
 
   def testTypicalNotMatchedChange(self):
     diff_cc = ['UMA_HISTOGRAM_BOOL("Bla.Foo.Dummy", true)']
+    diff_java = [
+      'RecordHistogram.recordBooleanHistogram("Bla.Foo.Dummy", true)']
     mock_input_api = MockInputApi()
-    mock_input_api.files = [MockFile('some/path/foo.cc', diff_cc)]
+    mock_input_api.files = [
+      MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo.java', diff_java),
+    ]
     warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
                                                    MockOutputApi())
     self.assertEqual(1, len(warnings))
     self.assertEqual('warning', warnings[0].type)
+    self.assertTrue('foo.cc' in warnings[0].items[0])
+    self.assertTrue('foo.java' in warnings[0].items[1])
 
   def testTypicalNotMatchedChangeViaSuffixes(self):
     diff_cc = ['UMA_HISTOGRAM_BOOL("Bla.Foo.Dummy", true)']
+    diff_java = [
+      'RecordHistogram.recordBooleanHistogram("Bla.Foo.Dummy", true)']
     diff_xml = ['<histogram_suffixes name="SuperHistogram">',
                 '  <suffix name="Dummy"/>',
                 '  <affected-histogram name="Snafu.Dummy"/>',
@@ -69,15 +83,20 @@ class UmaHistogramChangeMatchedOrNotTest(unittest.TestCase):
     mock_input_api = MockInputApi()
     mock_input_api.files = [
       MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo.java', diff_java),
       MockFile('tools/metrics/histograms/histograms.xml', diff_xml),
     ]
     warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
                                                    MockOutputApi())
     self.assertEqual(1, len(warnings))
     self.assertEqual('warning', warnings[0].type)
+    self.assertTrue('foo.cc' in warnings[0].items[0])
+    self.assertTrue('foo.java' in warnings[0].items[1])
 
   def testTypicalCorrectlyMatchedChangeViaSuffixes(self):
     diff_cc = ['UMA_HISTOGRAM_BOOL("Bla.Foo.Dummy", true)']
+    diff_java = [
+      'RecordHistogram.recordBooleanHistogram("Bla.Foo.Dummy", true)']
     diff_xml = ['<histogram_suffixes name="SuperHistogram">',
                 '  <suffix name="Dummy"/>',
                 '  <affected-histogram name="Bla.Foo"/>',
@@ -85,6 +104,7 @@ class UmaHistogramChangeMatchedOrNotTest(unittest.TestCase):
     mock_input_api = MockInputApi()
     mock_input_api.files = [
       MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo.java', diff_java),
       MockFile('tools/metrics/histograms/histograms.xml', diff_xml),
     ]
     warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
@@ -93,6 +113,7 @@ class UmaHistogramChangeMatchedOrNotTest(unittest.TestCase):
 
   def testTypicalCorrectlyMatchedChangeViaSuffixesWithSeparator(self):
     diff_cc = ['UMA_HISTOGRAM_BOOL("Snafu_Dummy", true)']
+    diff_java = ['RecordHistogram.recordBooleanHistogram("Snafu_Dummy", true)']
     diff_xml = ['<histogram_suffixes name="SuperHistogram" separator="_">',
                 '  <suffix name="Dummy"/>',
                 '  <affected-histogram name="Snafu"/>',
@@ -100,11 +121,64 @@ class UmaHistogramChangeMatchedOrNotTest(unittest.TestCase):
     mock_input_api = MockInputApi()
     mock_input_api.files = [
       MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo.java', diff_java),
       MockFile('tools/metrics/histograms/histograms.xml', diff_xml),
     ]
     warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
                                                    MockOutputApi())
     self.assertEqual(0, len(warnings))
+
+  def testNameMatch(self):
+    # Check that the detected histogram name is "Dummy" and not, e.g.,
+    # "Dummy\", true);  // The \"correct"
+    diff_cc = ['UMA_HISTOGRAM_BOOL("Dummy", true);  // The "correct" histogram']
+    diff_java = [
+      'RecordHistogram.recordBooleanHistogram("Dummy", true);' +
+      '  // The "correct" histogram']
+    diff_xml = ['<histogram name="Dummy"> </histogram>']
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo.java', diff_java),
+      MockFile('tools/metrics/histograms/histograms.xml', diff_xml),
+    ]
+    warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
+                                                   MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testSimilarMacroNames(self):
+    diff_cc = ['PUMA_HISTOGRAM_COOL("Mountain Lion", 42)']
+    diff_java = [
+      'FakeRecordHistogram.recordFakeHistogram("Mountain Lion", 42)']
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo.java', diff_java),
+    ]
+    warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
+                                                   MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testMultiLine(self):
+    diff_cc = ['UMA_HISTOGRAM_BOOLEAN(', '    "Multi.Line", true)']
+    diff_cc2 = ['UMA_HISTOGRAM_BOOLEAN(', '    "Multi.Line"', '    , true)']
+    diff_java = [
+      'RecordHistogram.recordBooleanHistogram(',
+      '    "Multi.Line", true);',
+    ]
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo2.cc', diff_cc2),
+      MockFile('some/path/foo.java', diff_java),
+    ]
+    warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
+                                                   MockOutputApi())
+    self.assertEqual(1, len(warnings))
+    self.assertEqual('warning', warnings[0].type)
+    self.assertTrue('foo.cc' in warnings[0].items[0])
+    self.assertTrue('foo2.cc' in warnings[0].items[1])
+
 
 class BadExtensionsTest(unittest.TestCase):
   def testBadRejFile(self):
@@ -154,14 +228,14 @@ class CheckSingletonInHeadersTest(unittest.TestCase):
     diff_bad_h = ['Foo* foo = base::Singleton<Foo>::get();']
     mock_input_api = MockInputApi()
     mock_input_api.files = [MockAffectedFile('base/memory/singleton.h',
-                                     diff_singleton_h),
+                                             diff_singleton_h),
                             MockAffectedFile('foo.h', diff_foo_h),
                             MockAffectedFile('foo2.h', diff_foo2_h),
                             MockAffectedFile('bad.h', diff_bad_h)]
     warnings = PRESUBMIT._CheckSingletonInHeaders(mock_input_api,
                                                   MockOutputApi())
     self.assertEqual(1, len(warnings))
-    self.assertEqual(2, len(warnings[0].items))
+    self.assertEqual(1, len(warnings[0].items))
     self.assertEqual('error', warnings[0].type)
     self.assertTrue('Found base::Singleton<T>' in warnings[0].message)
 
@@ -203,14 +277,14 @@ class InvalidIfDefinedMacroNamesTest(unittest.TestCase):
              ' # ifdef TARGET_IPHONE_SIMULATOR',
              '# if defined(VALID) || defined(TARGET_IPHONE_SIMULATOR)',
              '# else  // defined(TARGET_IPHONE_SIMULATOR)',
-             '#endif  // defined(TARGET_IPHONE_SIMULATOR)',]
+             '#endif  // defined(TARGET_IPHONE_SIMULATOR)']
     errors = PRESUBMIT._CheckForInvalidIfDefinedMacrosInFile(
         MockInputApi(), MockFile('some/path/source.mm', lines))
     self.assertEqual(len(lines), len(errors))
 
   def testValidIfDefinedMacroNames(self):
     lines = ['#if defined(FOO)',
-             '#ifdef BAR',]
+             '#ifdef BAR']
     errors = PRESUBMIT._CheckForInvalidIfDefinedMacrosInFile(
         MockInputApi(), MockFile('some/path/source.cc', lines))
     self.assertEqual(0, len(errors))
@@ -320,7 +394,7 @@ class JSONParsingTest(unittest.TestCase):
       ('invalid_json_4.json',
        ['{ "a": "b" "c": "d" }'],
        'Expecting , delimiter:'),
-      ]
+    ]
 
     input_api.files = [MockFile(filename, contents)
                        for (filename, contents, _) in test_data]
@@ -476,7 +550,7 @@ class IDLParsingTest(unittest.TestCase):
         '  };',
         '};'],
        'Interface missing name.'),
-      ]
+    ]
 
     input_api.files = [MockFile(filename, contents)
                        for (filename, contents, _) in test_data]
@@ -503,7 +577,6 @@ class TryServerMasterTest(unittest.TestCase):
             'android_chromium_variable_nexus4',
             'android_clang_dbg_recipe',
             'android_compile_dbg',
-            'android_compile_mips_dbg',
             'android_compile_x64_dbg',
             'android_compile_x86_dbg',
             'android_coverage',
@@ -601,7 +674,6 @@ class UserMetricsActionTest(unittest.TestCase):
     self.assertEqual(
       [], PRESUBMIT._CheckUserActionUpdate(input_api, MockOutputApi()))
 
-
   def testUserMetricsActionNotAddedToActions(self):
     input_api = MockInputApi()
     file_with_user_action = 'file_with_user_action.cc'
@@ -656,9 +728,20 @@ class PydepsNeedsUpdatingTest(unittest.TestCase):
       MockAffectedFile('new.pydeps', [], action='A'),
     ]
 
+    self.mock_input_api.CreateMockFileInPath(
+        [x.LocalPath() for x in self.mock_input_api.AffectedFiles(
+            include_deletes=True)])
     results = self._RunCheck()
     self.assertEqual(1, len(results))
     self.assertTrue('PYDEPS_FILES' in str(results[0]))
+
+  def testPydepNotInSrc(self):
+    self.mock_input_api.files = [
+      MockAffectedFile('new.pydeps', [], action='A'),
+    ]
+    self.mock_input_api.CreateMockFileInPath([])
+    results = self._RunCheck()
+    self.assertEqual(0, len(results))
 
   def testRemovedPydep(self):
     # PRESUBMIT._CheckPydepsNeedsUpdating is only implemented for Android.
@@ -668,7 +751,9 @@ class PydepsNeedsUpdatingTest(unittest.TestCase):
     self.mock_input_api.files = [
       MockAffectedFile(PRESUBMIT._ALL_PYDEPS_FILES[0], [], action='D'),
     ]
-
+    self.mock_input_api.CreateMockFileInPath(
+        [x.LocalPath() for x in self.mock_input_api.AffectedFiles(
+            include_deletes=True)])
     results = self._RunCheck()
     self.assertEqual(1, len(results))
     self.assertTrue('PYDEPS_FILES' in str(results[0]))
@@ -741,6 +826,179 @@ class PydepsNeedsUpdatingTest(unittest.TestCase):
     self.assertTrue('File is stale' in str(results[0]))
     self.assertTrue('File is stale' in str(results[1]))
 
+
+class IncludeGuardTest(unittest.TestCase):
+  def testIncludeGuardChecks(self):
+    mock_input_api = MockInputApi()
+    mock_output_api = MockOutputApi()
+    mock_input_api.files = [
+        MockAffectedFile('content/browser/thing/foo.h', [
+          '// Comment',
+          '#ifndef CONTENT_BROWSER_THING_FOO_H_',
+          '#define CONTENT_BROWSER_THING_FOO_H_',
+          'struct McBoatFace;',
+          '#endif  // CONTENT_BROWSER_THING_FOO_H_',
+        ]),
+        MockAffectedFile('content/browser/thing/bar.h', [
+          '#ifndef CONTENT_BROWSER_THING_BAR_H_',
+          '#define CONTENT_BROWSER_THING_BAR_H_',
+          'namespace content {',
+          '#endif  // CONTENT_BROWSER_THING_BAR_H_',
+          '}  // namespace content',
+        ]),
+        MockAffectedFile('content/browser/test1.h', [
+          'namespace content {',
+          '}  // namespace content',
+        ]),
+        MockAffectedFile('content\\browser\\win.h', [
+          '#ifndef CONTENT_BROWSER_WIN_H_',
+          '#define CONTENT_BROWSER_WIN_H_',
+          'struct McBoatFace;',
+          '#endif  // CONTENT_BROWSER_WIN_H_',
+        ]),
+        MockAffectedFile('content/browser/test2.h', [
+          '// Comment',
+          '#ifndef CONTENT_BROWSER_TEST2_H_',
+          'struct McBoatFace;',
+          '#endif  // CONTENT_BROWSER_TEST2_H_',
+        ]),
+        MockAffectedFile('content/browser/internal.h', [
+          '// Comment',
+          '#ifndef CONTENT_BROWSER_INTERNAL_H_',
+          '#define CONTENT_BROWSER_INTERNAL_H_',
+          '// Comment',
+          '#ifndef INTERNAL_CONTENT_BROWSER_INTERNAL_H_',
+          '#define INTERNAL_CONTENT_BROWSER_INTERNAL_H_',
+          'namespace internal {',
+          '}  // namespace internal',
+          '#endif  // INTERNAL_CONTENT_BROWSER_THING_BAR_H_',
+          'namespace content {',
+          '}  // namespace content',
+          '#endif  // CONTENT_BROWSER_THING_BAR_H_',
+        ]),
+        MockAffectedFile('content/browser/thing/foo.cc', [
+          '// This is a non-header.',
+        ]),
+        MockAffectedFile('content/browser/disabled.h', [
+          '// no-include-guard-because-multiply-included',
+          'struct McBoatFace;',
+        ]),
+        # New files don't allow misspelled include guards.
+        MockAffectedFile('content/browser/spleling.h', [
+          '#ifndef CONTENT_BROWSER_SPLLEING_H_',
+          '#define CONTENT_BROWSER_SPLLEING_H_',
+          'struct McBoatFace;',
+          '#endif  // CONTENT_BROWSER_SPLLEING_H_',
+        ]),
+        # New files don't allow + in include guards.
+        MockAffectedFile('content/browser/foo+bar.h', [
+          '#ifndef CONTENT_BROWSER_FOO+BAR_H_',
+          '#define CONTENT_BROWSER_FOO+BAR_H_',
+          'struct McBoatFace;',
+          '#endif  // CONTENT_BROWSER_FOO+BAR_H_',
+        ]),
+        # Old files allow misspelled include guards (for now).
+        MockAffectedFile('chrome/old.h', [
+          '// New contents',
+          '#ifndef CHROME_ODL_H_',
+          '#define CHROME_ODL_H_',
+          '#endif  // CHROME_ODL_H_',
+        ], [
+          '// Old contents',
+          '#ifndef CHROME_ODL_H_',
+          '#define CHROME_ODL_H_',
+          '#endif  // CHROME_ODL_H_',
+        ]),
+        # Using a Blink style include guard outside Blink is wrong.
+        MockAffectedFile('content/NotInBlink.h', [
+          '#ifndef NotInBlink_h',
+          '#define NotInBlink_h',
+          'struct McBoatFace;',
+          '#endif  // NotInBlink_h',
+        ]),
+        # Using a Blink style include guard in Blink is no longer ok.
+        MockAffectedFile('third_party/blink/InBlink.h', [
+          '#ifndef InBlink_h',
+          '#define InBlink_h',
+          'struct McBoatFace;',
+          '#endif  // InBlink_h',
+        ]),
+        # Using a bad include guard in Blink is not ok.
+        MockAffectedFile('third_party/blink/AlsoInBlink.h', [
+          '#ifndef WrongInBlink_h',
+          '#define WrongInBlink_h',
+          'struct McBoatFace;',
+          '#endif  // WrongInBlink_h',
+        ]),
+        # Using a bad include guard in Blink is not accepted even if
+        # it's an old file.
+        MockAffectedFile('third_party/blink/StillInBlink.h', [
+          '// New contents',
+          '#ifndef AcceptedInBlink_h',
+          '#define AcceptedInBlink_h',
+          'struct McBoatFace;',
+          '#endif  // AcceptedInBlink_h',
+        ], [
+          '// Old contents',
+          '#ifndef AcceptedInBlink_h',
+          '#define AcceptedInBlink_h',
+          'struct McBoatFace;',
+          '#endif  // AcceptedInBlink_h',
+        ]),
+        # Using a non-Chromium include guard in third_party
+        # (outside blink) is accepted.
+        MockAffectedFile('third_party/foo/some_file.h', [
+          '#ifndef REQUIRED_RPCNDR_H_',
+          '#define REQUIRED_RPCNDR_H_',
+          'struct SomeFileFoo;',
+          '#endif  // REQUIRED_RPCNDR_H_',
+        ]),
+      ]
+    msgs = PRESUBMIT._CheckForIncludeGuards(
+        mock_input_api, mock_output_api)
+    expected_fail_count = 8
+    self.assertEqual(expected_fail_count, len(msgs),
+                     'Expected %d items, found %d: %s'
+                     % (expected_fail_count, len(msgs), msgs))
+    self.assertEqual(msgs[0].items, ['content/browser/thing/bar.h'])
+    self.assertEqual(msgs[0].message,
+                     'Include guard CONTENT_BROWSER_THING_BAR_H_ '
+                     'not covering the whole file')
+
+    self.assertEqual(msgs[1].items, ['content/browser/test1.h'])
+    self.assertEqual(msgs[1].message,
+                     'Missing include guard CONTENT_BROWSER_TEST1_H_')
+
+    self.assertEqual(msgs[2].items, ['content/browser/test2.h:3'])
+    self.assertEqual(msgs[2].message,
+                     'Missing "#define CONTENT_BROWSER_TEST2_H_" for '
+                     'include guard')
+
+    self.assertEqual(msgs[3].items, ['content/browser/spleling.h:1'])
+    self.assertEqual(msgs[3].message,
+                     'Header using the wrong include guard name '
+                     'CONTENT_BROWSER_SPLLEING_H_')
+
+    self.assertEqual(msgs[4].items, ['content/browser/foo+bar.h'])
+    self.assertEqual(msgs[4].message,
+                     'Missing include guard CONTENT_BROWSER_FOO_BAR_H_')
+
+    self.assertEqual(msgs[5].items, ['content/NotInBlink.h:1'])
+    self.assertEqual(msgs[5].message,
+                     'Header using the wrong include guard name '
+                     'NotInBlink_h')
+
+    self.assertEqual(msgs[6].items, ['third_party/blink/InBlink.h:1'])
+    self.assertEqual(msgs[6].message,
+                     'Header using the wrong include guard name '
+                     'InBlink_h')
+
+    self.assertEqual(msgs[7].items, ['third_party/blink/AlsoInBlink.h:1'])
+    self.assertEqual(msgs[7].message,
+                     'Header using the wrong include guard name '
+                     'WrongInBlink_h')
+
+
 class AndroidDeprecatedTestAnnotationTest(unittest.TestCase):
   def testCheckAndroidTestAnnotationUsage(self):
     mock_input_api = MockInputApi()
@@ -786,8 +1044,9 @@ class AndroidDeprecatedTestAnnotationTest(unittest.TestCase):
     self.assertTrue('UsedDeprecatedSmokeAnnotation.java:1' in msgs[0].items,
                     'UsedDeprecatedSmokeAnnotation not found in errors')
 
+
 class AndroidDeprecatedJUnitFrameworkTest(unittest.TestCase):
-  def testCheckAndroidTestAnnotationUsage(self):
+  def testCheckAndroidTestJUnitFramework(self):
     mock_input_api = MockInputApi()
     mock_output_api = MockOutputApi()
 
@@ -820,8 +1079,9 @@ class AndroidDeprecatedJUnitFrameworkTest(unittest.TestCase):
                     in msgs[0].items,
                     'UsedDeprecatedJUnitAssert not found in errors')
 
-class AndroidJUnitBaseClass(unittest.TestCase):
-  def testCheckAndroidTestAnnotationUsage(self):
+
+class AndroidJUnitBaseClassTest(unittest.TestCase):
+  def testCheckAndroidTestJUnitBaseClass(self):
     mock_input_api = MockInputApi()
     mock_output_api = MockOutputApi()
 
@@ -837,7 +1097,7 @@ class AndroidJUnitBaseClass(unittest.TestCase):
         MockAffectedFile('HistoricallyIncorrectTest.java', [
           'public class Test extends BaseCaseA {',
           '}',
-          ], old_contents=[
+        ], old_contents=[
           'public class Test extends BaseCaseB {',
           '}',
         ]),
@@ -850,11 +1110,11 @@ class AndroidJUnitBaseClass(unittest.TestCase):
           'public class IncorrectTest extends TestCase {',
           '}',
         ]),
-        MockAffectedFile('IncorrectTestWithInterface.java', [
+        MockAffectedFile('IncorrectWithInterfaceTest.java', [
           'public class Test implements X extends BaseClass {',
           '}',
         ]),
-        MockAffectedFile('IncorrectTestMultiLine.java', [
+        MockAffectedFile('IncorrectMultiLineTest.java', [
           'public class Test implements X, Y, Z',
           '        extends TestBase {',
           '}',
@@ -870,11 +1130,12 @@ class AndroidJUnitBaseClass(unittest.TestCase):
                      % (3, len(msgs[0].items), msgs[0].items))
     self.assertTrue('IncorrectTest.java:1' in msgs[0].items,
                     'IncorrectTest not found in errors')
-    self.assertTrue('IncorrectTestWithInterface.java:1'
+    self.assertTrue('IncorrectWithInterfaceTest.java:1'
                     in msgs[0].items,
-                    'IncorrectTestWithInterface not found in errors')
-    self.assertTrue('IncorrectTestMultiLine.java:2' in msgs[0].items,
-                    'IncorrectTestMultiLine not found in errors')
+                    'IncorrectWithInterfaceTest not found in errors')
+    self.assertTrue('IncorrectMultiLineTest.java:2' in msgs[0].items,
+                    'IncorrectMultiLineTest not found in errors')
+
 
 class LogUsageTest(unittest.TestCase):
 
@@ -1001,6 +1262,7 @@ class LogUsageTest(unittest.TestCase):
     self.assertTrue('HasDottedTag.java' in msgs[4].items)
     self.assertTrue('HasOldTag.java' in msgs[4].items)
 
+
 class GoogleAnswerUrlFormatTest(unittest.TestCase):
 
   def testCatchAnswerUrlId(self):
@@ -1030,6 +1292,7 @@ class GoogleAnswerUrlFormatTest(unittest.TestCase):
     warnings = PRESUBMIT._CheckGoogleSupportAnswerUrl(
       input_api, MockOutputApi())
     self.assertEqual(0, len(warnings))
+
 
 class HardcodedGoogleHostsTest(unittest.TestCase):
 
@@ -1073,7 +1336,7 @@ class ForwardDeclarationTest(unittest.TestCase):
       ])
     ]
     warnings = PRESUBMIT._CheckUselessForwardDeclarations(mock_input_api,
-      MockOutputApi())
+                                                          MockOutputApi())
     self.assertEqual(0, len(warnings))
 
   def testNoNestedDeclaration(self):
@@ -1087,7 +1350,7 @@ class ForwardDeclarationTest(unittest.TestCase):
       ])
     ]
     warnings = PRESUBMIT._CheckUselessForwardDeclarations(mock_input_api,
-      MockOutputApi())
+                                                          MockOutputApi())
     self.assertEqual(0, len(warnings))
 
   def testSubStrings(self):
@@ -1101,7 +1364,7 @@ class ForwardDeclarationTest(unittest.TestCase):
       ])
     ]
     warnings = PRESUBMIT._CheckUselessForwardDeclarations(mock_input_api,
-      MockOutputApi())
+                                                          MockOutputApi())
     self.assertEqual(2, len(warnings))
 
   def testUselessForwardDeclaration(self):
@@ -1115,7 +1378,7 @@ class ForwardDeclarationTest(unittest.TestCase):
       ])
     ]
     warnings = PRESUBMIT._CheckUselessForwardDeclarations(mock_input_api,
-      MockOutputApi())
+                                                          MockOutputApi())
     self.assertEqual(2, len(warnings))
 
   def testBlinkHeaders(self):
@@ -1131,7 +1394,7 @@ class ForwardDeclarationTest(unittest.TestCase):
       ])
     ]
     warnings = PRESUBMIT._CheckUselessForwardDeclarations(mock_input_api,
-      MockOutputApi())
+                                                          MockOutputApi())
     self.assertEqual(4, len(warnings))
 
 
@@ -1181,6 +1444,7 @@ class RiskyJsTest(unittest.TestCase):
     warnings = PRESUBMIT._CheckForRiskyJsFeatures(
         mock_input_api, mock_output_api)
     self.assertEqual(2, len(warnings))
+
 
 class RelativeIncludesTest(unittest.TestCase):
   def testThirdPartyNotWebKitIgnored(self):
@@ -1247,6 +1511,113 @@ class RelativeIncludesTest(unittest.TestCase):
     self.assertEqual(1, len(errors))
 
 
+class NewHeaderWithoutGnChangeTest(unittest.TestCase):
+  def testAddHeaderWithoutGn(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', ''),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(warnings))
+    self.assertTrue('base/stuff.h' in warnings[0].items)
+
+  def testModifyHeader(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', '', action='M'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testDeleteHeader(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', '', action='D'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testAddHeaderWithGn(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', ''),
+      MockAffectedFile('base/BUILD.gn', 'stuff.h'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testAddHeaderWithGni(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', ''),
+      MockAffectedFile('base/files.gni', 'stuff.h'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testAddHeaderWithOther(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', ''),
+      MockAffectedFile('base/stuff.cc', 'stuff.h'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(warnings))
+
+  def testAddHeaderWithWrongGn(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', ''),
+      MockAffectedFile('base/BUILD.gn', 'stuff_h'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(warnings))
+
+  def testAddHeadersWithGn(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', ''),
+      MockAffectedFile('base/another.h', ''),
+      MockAffectedFile('base/BUILD.gn', 'another.h\nstuff.h'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testAddHeadersWithWrongGn(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', ''),
+      MockAffectedFile('base/another.h', ''),
+      MockAffectedFile('base/BUILD.gn', 'another_h\nstuff.h'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(warnings))
+    self.assertFalse('base/stuff.h' in warnings[0].items)
+    self.assertTrue('base/another.h' in warnings[0].items)
+
+  def testAddHeadersWithWrongGn2(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('base/stuff.h', ''),
+      MockAffectedFile('base/another.h', ''),
+      MockAffectedFile('base/BUILD.gn', 'another_h\nstuff_h'),
+    ]
+    warnings = PRESUBMIT._CheckNewHeaderWithoutGnChange(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(warnings))
+    self.assertTrue('base/stuff.h' in warnings[0].items)
+    self.assertTrue('base/another.h' in warnings[0].items)
+
+
 class MojoManifestOwnerTest(unittest.TestCase):
   def testMojoManifestChangeNeedsSecurityOwner(self):
     mock_input_api = MockInputApi()
@@ -1288,23 +1659,397 @@ class MojoManifestOwnerTest(unittest.TestCase):
     self.assertEqual([], errors)
 
 
-class CrbugUrlFormatTest(unittest.TestCase):
-
-  def testCheckCrbugLinksHaveHttps(self):
+class CheckCrbugLinksHaveHttpsTest(unittest.TestCase):
+  def assertWarningsWithFile(self, content, expected_warnings, file_name):
     input_api = MockInputApi()
     input_api.files = [
-      MockFile('somewhere/file.cc',
-               ['// TODO(developer): crbug.com should be linkified',
-                '// TODO(developer): (crbug.com) should be linkified',
-                '// TODO(developer): crbug/123 should be well formed',
-                '// TODO(developer): http://crbug.com it\'s OK',
-                '// TODO(developer): https://crbug.com is just great',
-                '// TODO(crbug.com/123456): this pattern it\'s also OK']),
+      MockFile(file_name, [content])
     ]
 
     warnings = PRESUBMIT._CheckCrbugLinksHaveHttps(input_api, MockOutputApi())
+    self.assertEqual(expected_warnings, len(warnings))
+
+  def assertWarnings(self, content, expected_warnings):
+    for f in ['somewhere/file.cc', 'file.java', 'file.py', 'file_test.cc']:
+      self.assertWarningsWithFile(content, expected_warnings, f)
+
+  # The cr bug strings are split to avoid matching in real PRESUBMIT, so meta!
+  def testNoScheme(self):
+    self.assertWarnings('// TODO(dev): cr''bug.com should be linkified', 1)
+
+  def testNoScheme2(self):
+    self.assertWarnings('// TODO(dev): (cr''bug.com) should be linkified', 1)
+
+  def testNoCom(self):
+    self.assertWarnings('// TODO(dev): cr''bug/123 should be well formed', 1)
+
+  def testHttp(self):
+    self.assertWarnings('// TODO(dev): http://cr''bug.com it\'s OK', 0)
+
+  def testHttps(self):
+    self.assertWarnings('// TODO(dev): https://cr''bug.com is just great', 0)
+
+  def testTodo(self):
+    self.assertWarnings('// TODO(cr''bug.com/123456): it\'s also OK', 0)
+
+
+class BannedFunctionCheckTest(unittest.TestCase):
+
+  def testBannedIosObcjFunctions(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('some/ios/file.mm',
+               ['TEST(SomeClassTest, SomeInteraction) {',
+                '}']),
+      MockFile('some/mac/file.mm',
+               ['TEST(SomeClassTest, SomeInteraction) {',
+                '}']),
+      MockFile('another/ios_file.mm',
+               ['class SomeTest : public testing::Test {};']),
+    ]
+
+    errors = PRESUBMIT._CheckNoBannedFunctions(input_api, MockOutputApi())
+    self.assertEqual(1, len(errors))
+    self.assertTrue('some/ios/file.mm' in errors[0].message)
+    self.assertTrue('another/ios_file.mm' in errors[0].message)
+    self.assertTrue('some/mac/file.mm' not in errors[0].message)
+
+
+class NoProductionCodeUsingTestOnlyFunctionsTest(unittest.TestCase):
+  def testTruePositives(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('some/path/foo.cc', ['foo_for_testing();']),
+      MockFile('some/path/foo.mm', ['FooForTesting();']),
+      MockFile('some/path/foo.cxx', ['FooForTests();']),
+      MockFile('some/path/foo.cpp', ['foo_for_test();']),
+    ]
+
+    results = PRESUBMIT._CheckNoProductionCodeUsingTestOnlyFunctions(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(results))
+    self.assertEqual(4, len(results[0].items))
+    self.assertTrue('foo.cc' in results[0].items[0])
+    self.assertTrue('foo.mm' in results[0].items[1])
+    self.assertTrue('foo.cxx' in results[0].items[2])
+    self.assertTrue('foo.cpp' in results[0].items[3])
+
+  def testFalsePositives(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('some/path/foo.h', ['foo_for_testing();']),
+      MockFile('some/path/foo.mm', ['FooForTesting() {']),
+      MockFile('some/path/foo.cc', ['::FooForTests();']),
+      MockFile('some/path/foo.cpp', ['// foo_for_test();']),
+    ]
+
+    results = PRESUBMIT._CheckNoProductionCodeUsingTestOnlyFunctions(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(results))
+
+
+class NoProductionJavaCodeUsingTestOnlyFunctionsTest(unittest.TestCase):
+  def testTruePositives(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/java/src/foo.java', ['FooForTesting();']),
+      MockFile('dir/java/src/bar.java', ['FooForTests(x);']),
+      MockFile('dir/java/src/baz.java', ['FooForTest(', 'y', ');']),
+      MockFile('dir/java/src/mult.java', [
+        'int x = SomethingLongHere()',
+        '    * SomethingLongHereForTesting();'
+      ])
+    ]
+
+    results = PRESUBMIT._CheckNoProductionCodeUsingTestOnlyFunctionsJava(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(results))
+    self.assertEqual(4, len(results[0].items))
+    self.assertTrue('foo.java' in results[0].items[0])
+    self.assertTrue('bar.java' in results[0].items[1])
+    self.assertTrue('baz.java' in results[0].items[2])
+    self.assertTrue('mult.java' in results[0].items[3])
+
+  def testFalsePositives(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/java/src/foo.xml', ['FooForTesting();']),
+      MockFile('dir/java/src/foo.java', ['FooForTests() {']),
+      MockFile('dir/java/src/bar.java', ['// FooForTest();']),
+      MockFile('dir/java/src/bar2.java', ['x = 1; // FooForTest();']),
+      MockFile('dir/javatests/src/baz.java', ['FooForTest(', 'y', ');']),
+      MockFile('dir/junit/src/baz.java', ['FooForTest(', 'y', ');']),
+      MockFile('dir/junit/src/javadoc.java', [
+        '/** Use FooForTest(); to obtain foo in tests.'
+        ' */'
+      ]),
+      MockFile('dir/junit/src/javadoc2.java', [
+        '/** ',
+        ' * Use FooForTest(); to obtain foo in tests.'
+        ' */'
+      ]),
+    ]
+
+    results = PRESUBMIT._CheckNoProductionCodeUsingTestOnlyFunctionsJava(
+        mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(results))
+
+
+class CheckUniquePtrTest(unittest.TestCase):
+  def testTruePositivesNullptr(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/baz.cc', ['std::unique_ptr<T>()']),
+      MockFile('dir/baz-p.cc', ['std::unique_ptr<T<P>>()']),
+    ]
+
+    results = PRESUBMIT._CheckUniquePtr(mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(results))
+    self.assertTrue('nullptr' in results[0].message)
+    self.assertEqual(2, len(results[0].items))
+    self.assertTrue('baz.cc' in results[0].items[0])
+    self.assertTrue('baz-p.cc' in results[0].items[1])
+
+  def testTruePositivesConstructor(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/foo.cc', ['return std::unique_ptr<T>(foo);']),
+      MockFile('dir/bar.mm', ['bar = std::unique_ptr<T>(foo)']),
+      MockFile('dir/mult.cc', [
+        'return',
+        '    std::unique_ptr<T>(barVeryVeryLongFooSoThatItWouldNotFitAbove);'
+      ]),
+      MockFile('dir/mult2.cc', [
+        'barVeryVeryLongLongBaaaaaarSoThatTheLineLimitIsAlmostReached =',
+        '    std::unique_ptr<T>(foo);'
+      ]),
+      MockFile('dir/mult3.cc', [
+        'bar = std::unique_ptr<T>(',
+        '    fooVeryVeryVeryLongStillGoingWellThisWillTakeAWhileFinallyThere);'
+      ]),
+    ]
+
+    results = PRESUBMIT._CheckUniquePtr(mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(results))
+    self.assertTrue('std::make_unique' in results[0].message)
+    self.assertEqual(5, len(results[0].items))
+    self.assertTrue('foo.cc' in results[0].items[0])
+    self.assertTrue('bar.mm' in results[0].items[1])
+    self.assertTrue('mult.cc' in results[0].items[2])
+    self.assertTrue('mult2.cc' in results[0].items[3])
+    self.assertTrue('mult3.cc' in results[0].items[4])
+
+  def testFalsePositives(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/foo.cc', ['return std::unique_ptr<T[]>(foo);']),
+      MockFile('dir/bar.mm', ['bar = std::unique_ptr<T[]>(foo)']),
+      MockFile('dir/file.cc', ['std::unique_ptr<T> p = Foo();']),
+      MockFile('dir/baz.cc', [
+        'std::unique_ptr<T> result = std::make_unique<T>();'
+      ]),
+      MockFile('dir/baz2.cc', [
+        'std::unique_ptr<T> result = std::make_unique<T>('
+      ]),
+      MockFile('dir/nested.cc', ['set<std::unique_ptr<T>>();']),
+      MockFile('dir/nested2.cc', ['map<U, std::unique_ptr<T>>();']),
+    ]
+
+    results = PRESUBMIT._CheckUniquePtr(mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(results))
+
+class CheckNoDirectIncludesHeadersWhichRedefineStrCat(unittest.TestCase):
+  def testBlocksDirectIncludes(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/foo_win.cc', ['#include "shlwapi.h"']),
+      MockFile('dir/bar.h', ['#include <propvarutil.h>']),
+      MockFile('dir/baz.h', ['#include <atlbase.h>']),
+      MockFile('dir/jumbo.h', ['#include "sphelper.h"']),
+    ]
+    results = PRESUBMIT._CheckNoStrCatRedefines(mock_input_api, MockOutputApi())
+    self.assertEquals(1, len(results))
+    self.assertEquals(4, len(results[0].items))
+    self.assertTrue('StrCat' in results[0].message)
+    self.assertTrue('foo_win.cc' in results[0].items[0])
+    self.assertTrue('bar.h' in results[0].items[1])
+    self.assertTrue('baz.h' in results[0].items[2])
+    self.assertTrue('jumbo.h' in results[0].items[3])
+
+  def testAllowsToIncludeWrapper(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/baz_win.cc', ['#include "base/win/shlwapi.h"']),
+      MockFile('dir/baz-win.h', ['#include "base/win/atl.h"']),
+    ]
+    results = PRESUBMIT._CheckNoStrCatRedefines(mock_input_api, MockOutputApi())
+    self.assertEquals(0, len(results))
+
+  def testAllowsToCreateWrapper(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('base/win/shlwapi.h', [
+        '#include <shlwapi.h>',
+        '#include "base/win/windows_defines.inc"']),
+    ]
+    results = PRESUBMIT._CheckNoStrCatRedefines(mock_input_api, MockOutputApi())
+    self.assertEquals(0, len(results))
+
+class TranslationScreenshotsTest(unittest.TestCase):
+  # An empty grd file.
+  OLD_GRD_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
+           <grit latest_public_release="1" current_release="1">
+             <release seq="1">
+               <messages></messages>
+             </release>
+           </grit>
+        """.splitlines()
+  # A grd file with a single message.
+  NEW_GRD_CONTENTS1 = """<?xml version="1.0" encoding="UTF-8"?>
+           <grit latest_public_release="1" current_release="1">
+             <release seq="1">
+               <messages>
+                 <message name="IDS_TEST1">
+                   Test string 1
+                 </message>
+               </messages>
+             </release>
+           </grit>
+        """.splitlines()
+  # A grd file with two messages.
+  NEW_GRD_CONTENTS2 = """<?xml version="1.0" encoding="UTF-8"?>
+           <grit latest_public_release="1" current_release="1">
+             <release seq="1">
+               <messages>
+                 <message name="IDS_TEST1">
+                   Test string 1
+                 </message>
+                 <message name="IDS_TEST2">
+                   Test string 2
+                 </message>
+               </messages>
+             </release>
+           </grit>
+        """.splitlines()
+
+  DO_NOT_UPLOAD_PNG_MESSAGE = ('Do not include actual screenshots in the '
+                               'changelist. Run '
+                               'tools/translate/upload_screenshots.py to '
+                               'upload them instead:')
+  GENERATE_SIGNATURES_MESSAGE = ('You are adding or modifying UI strings.\n'
+                                 'To ensure the best translations, take '
+                                 'screenshots of the relevant UI '
+                                 '(https://g.co/chrome/translation) and add '
+                                 'these files to your changelist:')
+  REMOVE_SIGNATURES_MESSAGE = ('You removed strings associated with these '
+                               'files. Remove:')
+
+  def makeInputApi(self, files):
+    input_api = MockInputApi()
+    input_api.files = files
+    return input_api
+
+  def testNoScreenshots(self):
+    # CL modified and added messages, but didn't add any screenshots.
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.NEW_GRD_CONTENTS2,
+                       self.OLD_GRD_CONTENTS, action='M')])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
     self.assertEqual(1, len(warnings))
-    self.assertEqual(3, warnings[0].message.count('\n'));
+    self.assertEqual(self.GENERATE_SIGNATURES_MESSAGE, warnings[0].message)
+    self.assertEqual(
+      ['test_grd/IDS_TEST1.png.sha1', 'test_grd/IDS_TEST2.png.sha1'],
+      warnings[0].items)
+
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.NEW_GRD_CONTENTS2,
+                       self.NEW_GRD_CONTENTS1, action='M')])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
+    self.assertEqual(1, len(warnings))
+    self.assertEqual(self.GENERATE_SIGNATURES_MESSAGE, warnings[0].message)
+    self.assertEqual(['test_grd/IDS_TEST2.png.sha1'], warnings[0].items)
+
+
+  def testUnnecessaryScreenshots(self):
+    # CL added a single message and added the png file, but not the sha1 file.
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.NEW_GRD_CONTENTS1,
+                       self.OLD_GRD_CONTENTS, action='M'),
+      MockAffectedFile('test_grd/IDS_TEST1.png', 'binary', action='A')])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
+    self.assertEqual(2, len(warnings))
+    self.assertEqual(self.DO_NOT_UPLOAD_PNG_MESSAGE, warnings[0].message)
+    self.assertEqual(['test_grd/IDS_TEST1.png'], warnings[0].items)
+    self.assertEqual(self.GENERATE_SIGNATURES_MESSAGE, warnings[1].message)
+    self.assertEqual(['test_grd/IDS_TEST1.png.sha1'], warnings[1].items)
+
+    # CL added two messages, one has a png. Expect two messages:
+    # - One for the unnecessary png.
+    # - Another one for missing .sha1 files.
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.NEW_GRD_CONTENTS2,
+                       self.OLD_GRD_CONTENTS, action='M'),
+      MockAffectedFile('test_grd/IDS_TEST1.png', 'binary', action='A')])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
+    self.assertEqual(2, len(warnings))
+    self.assertEqual(self.DO_NOT_UPLOAD_PNG_MESSAGE, warnings[0].message)
+    self.assertEqual(['test_grd/IDS_TEST1.png'], warnings[0].items)
+    self.assertEqual(self.GENERATE_SIGNATURES_MESSAGE, warnings[1].message)
+    self.assertEqual(['test_grd/IDS_TEST1.png.sha1',
+                      'test_grd/IDS_TEST2.png.sha1'], warnings[1].items)
+
+  def testScreenshotsWithSha1(self):
+    # CL added two messages and their corresponding .sha1 files. No warnings.
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.NEW_GRD_CONTENTS2,
+                       self.OLD_GRD_CONTENTS, action='M'),
+      MockFile('test_grd/IDS_TEST1.png.sha1', 'binary', action='A'),
+      MockFile('test_grd/IDS_TEST2.png.sha1', 'binary', action='A')])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
+    self.assertEqual([], warnings)
+
+  def testScreenshotsRemovedWithSha1(self):
+    # Swap old contents with new contents, remove IDS_TEST1 and IDS_TEST2. The
+    # sha1 files associated with the messages should also be removed by the CL.
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.OLD_GRD_CONTENTS,
+                       self.NEW_GRD_CONTENTS2, action='M'),
+      MockFile('test_grd/IDS_TEST1.png.sha1', 'binary', ""),
+      MockFile('test_grd/IDS_TEST2.png.sha1', 'binary', "")])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
+    self.assertEqual(1, len(warnings))
+    self.assertEqual(self.REMOVE_SIGNATURES_MESSAGE, warnings[0].message)
+    self.assertEqual(['test_grd/IDS_TEST1.png.sha1',
+                      'test_grd/IDS_TEST2.png.sha1'], warnings[0].items)
+
+    # Same as above, but this time one of the .sha1 files is removed.
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.OLD_GRD_CONTENTS,
+                       self.NEW_GRD_CONTENTS2, action='M'),
+      MockFile('test_grd/IDS_TEST1.png.sha1', 'binary', ''),
+      MockAffectedFile('test_grd/IDS_TEST2.png.sha1',
+                       '', 'old_contents', action='D')])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
+    self.assertEqual(1, len(warnings))
+    self.assertEqual(self.REMOVE_SIGNATURES_MESSAGE, warnings[0].message)
+    self.assertEqual(['test_grd/IDS_TEST1.png.sha1'], warnings[0].items)
+
+    # Remove both sha1 files. No presubmit warnings.
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.OLD_GRD_CONTENTS,
+                       self.NEW_GRD_CONTENTS2, action='M'),
+      MockFile('test_grd/IDS_TEST1.png.sha1', 'binary', action='D'),
+      MockFile('test_grd/IDS_TEST2.png.sha1', 'binary', action='D')])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
+    self.assertEqual([], warnings)
 
 
 if __name__ == '__main__':

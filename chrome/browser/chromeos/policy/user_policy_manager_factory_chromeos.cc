@@ -11,10 +11,11 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
@@ -27,6 +28,7 @@
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/install_attributes.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/policy/schema_registry_service.h"
 #include "chrome/browser/policy/schema_registry_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -34,18 +36,20 @@
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "components/arc/arc_features.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
+#include "components/policy/core/common/cloud/enterprise_metrics.h"
 #include "components/policy/core/common/configuration_policy_provider.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
-#include "content/public/browser/browser_thread.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 using user_manager::known_user::ProfileRequiresPolicy;
 namespace policy {
@@ -73,6 +77,19 @@ constexpr base::TimeDelta kPolicyRefreshTimeout =
 
 const char kUMAHasPolicyPrefNotMigrated[] =
     "Enterprise.UserPolicyChromeOS.HasPolicyPrefNotMigrated";
+
+// Called when the user policy loading fails with a fatal error, and the user
+// session has to be terminated.
+void OnUserPolicyFatalError(
+    const AccountId& account_id,
+    MetricUserPolicyChromeOSSessionAbortType metric_value) {
+  base::UmaHistogramEnumeration(
+      kMetricUserPolicyChromeOSSessionAbort, metric_value,
+      MetricUserPolicyChromeOSSessionAbortType::kCount);
+  user_manager::UserManager::Get()->SaveForceOnlineSignin(
+      account_id, true /* force_online_signin */);
+  chrome::AttemptUserExit();
+}
 
 }  // namespace
 
@@ -168,19 +185,26 @@ UserPolicyManagerFactoryChromeOS::CreateManagerForProfile(
       chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
   CHECK(user);
 
-  // User policy exists for enterprise accounts only:
+  // User policy exists for enterprise accounts:
   // - For regular cloud-managed users (those who have a GAIA account), a
   //   |UserCloudPolicyManagerChromeOS| is created here.
   // - For Active Directory managed users, an |ActiveDirectoryPolicyManager|
   //   is created.
   // - For device-local accounts, policy is provided by
   //   |DeviceLocalAccountPolicyService|.
+  // For non-enterprise accounts only for users with type USER_TYPE_CHILD
+  //   |UserCloudPolicyManagerChromeOS| is created here.
   // All other user types do not have user policy.
   const AccountId& account_id = user->GetAccountId();
   const bool is_stub_user =
       user_manager::UserManager::Get()->IsStubAccountId(account_id);
-  if (user->IsSupervised() ||
-      BrowserPolicyConnector::IsNonEnterpriseUser(account_id.GetUserEmail())) {
+  const bool is_child_user_with_enabled_policy =
+      user->GetType() == user_manager::USER_TYPE_CHILD &&
+      base::FeatureList::IsEnabled(arc::kAvailableForChildAccountFeature);
+  if (!is_child_user_with_enabled_policy &&
+      (user->GetType() == user_manager::USER_TYPE_SUPERVISED ||
+       BrowserPolicyConnector::IsNonEnterpriseUser(
+           account_id.GetUserEmail()))) {
     DLOG(WARNING) << "No policy loaded for known non-enterprise user";
     // Mark this profile as not requiring policy.
     user_manager::known_user::SetProfileRequiresPolicy(
@@ -221,7 +245,7 @@ UserPolicyManagerFactoryChromeOS::CreateManagerForProfile(
   // must be false.
   const bool cannot_tell_if_policy_required =
       (requires_policy_user_property == ProfileRequiresPolicy::kUnknown) &&
-      !is_stub_user &&
+      !is_stub_user && !is_active_directory &&
       !command_line->HasSwitch(chromeos::switches::kProfileRequiresPolicy) &&
       !command_line->HasSwitch(
           chromeos::switches::kAllowFailedPolicyFetchForTest);
@@ -235,6 +259,13 @@ UserPolicyManagerFactoryChromeOS::CreateManagerForProfile(
   if (cannot_tell_if_policy_required && force_immediate_load) {
     LOG(ERROR) << "Exiting non-stub session because browser restarted before"
                << " profile was initialized.";
+    base::UmaHistogramEnumeration(
+        kMetricUserPolicyChromeOSSessionAbort,
+        is_active_directory ? MetricUserPolicyChromeOSSessionAbortType::
+                                  kBlockingInitWithActiveDirectoryManagement
+                            : MetricUserPolicyChromeOSSessionAbortType::
+                                  kBlockingInitWithGoogleCloudManagement,
+        MetricUserPolicyChromeOSSessionAbortType::kCount);
     chrome::AttemptUserExit();
     return {};
   }
@@ -247,7 +278,8 @@ UserPolicyManagerFactoryChromeOS::CreateManagerForProfile(
   const bool policy_required =
       !command_line->HasSwitch(
           chromeos::switches::kAllowFailedPolicyFetchForTest) &&
-      ((requires_policy_user_property ==
+      (is_active_directory ||
+       (requires_policy_user_property ==
         ProfileRequiresPolicy::kPolicyRequired) ||
        (command_line->GetSwitchValueASCII(
             chromeos::switches::kProfileRequiresPolicy) == "true"));
@@ -328,7 +360,8 @@ UserPolicyManagerFactoryChromeOS::CreateManagerForProfile(
   const base::FilePath external_data_dir =
       profile_dir.Append(kPolicy).Append(kPolicyExternalDataDir);
   base::FilePath policy_key_dir;
-  CHECK(PathService::Get(chromeos::DIR_USER_POLICY_KEYS, &policy_key_dir));
+  CHECK(
+      base::PathService::Get(chromeos::DIR_USER_POLICY_KEYS, &policy_key_dir));
 
   std::unique_ptr<UserCloudPolicyStoreChromeOS> store =
       std::make_unique<UserCloudPolicyStoreChromeOS>(
@@ -339,23 +372,22 @@ UserPolicyManagerFactoryChromeOS::CreateManagerForProfile(
 
   scoped_refptr<base::SequencedTaskRunner> backend_task_runner =
       base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
-  scoped_refptr<base::SequencedTaskRunner> io_task_runner =
-      content::BrowserThread::GetTaskRunnerForThread(
-          content::BrowserThread::IO);
   std::unique_ptr<CloudExternalDataManager> external_data_manager(
       new UserCloudExternalDataManager(base::Bind(&GetChromePolicyDetails),
-                                       backend_task_runner, io_task_runner,
-                                       external_data_dir, store.get()));
+                                       backend_task_runner, external_data_dir,
+                                       store.get()));
   if (force_immediate_load)
     store->LoadImmediately();
 
   if (is_active_directory) {
-    std::unique_ptr<ActiveDirectoryPolicyManager> manager =
-        ActiveDirectoryPolicyManager::CreateForUserPolicy(
-            account_id, policy_refresh_timeout,
-            base::BindOnce(&chrome::AttemptUserExit), std::move(store));
+    auto manager = std::make_unique<UserActiveDirectoryPolicyManager>(
+        account_id, policy_required, policy_refresh_timeout,
+        base::BindOnce(&OnUserPolicyFatalError, account_id,
+                       MetricUserPolicyChromeOSSessionAbortType::
+                           kInitWithActiveDirectoryManagement),
+        std::move(store), std::move(external_data_manager));
     manager->Init(
         SchemaRegistryServiceFactory::GetForContext(profile)->registry());
 
@@ -364,13 +396,14 @@ UserPolicyManagerFactoryChromeOS::CreateManagerForProfile(
   } else {
     std::unique_ptr<UserCloudPolicyManagerChromeOS> manager =
         std::make_unique<UserCloudPolicyManagerChromeOS>(
-            std::move(store), std::move(external_data_manager),
+            profile, std::move(store), std::move(external_data_manager),
             component_policy_cache_dir, enforcement_type,
             policy_refresh_timeout,
-            base::BindOnce(&chrome::AttemptUserExit) /* fatal_error_callback */,
-            account_id, base::ThreadTaskRunnerHandle::Get(), io_task_runner);
+            base::BindOnce(&OnUserPolicyFatalError, account_id,
+                           MetricUserPolicyChromeOSSessionAbortType::
+                               kInitWithGoogleCloudManagement),
+            account_id, base::ThreadTaskRunnerHandle::Get());
 
-    // TODO(tnagel): Enable whitelist for Active Directory.
     bool wildcard_match = false;
     if (connector->IsEnterpriseManaged() &&
         chromeos::CrosSettings::Get()->IsUserWhitelisted(
@@ -384,7 +417,7 @@ UserPolicyManagerFactoryChromeOS::CreateManagerForProfile(
         SchemaRegistryServiceFactory::GetForContext(profile)->registry());
     manager->Connect(g_browser_process->local_state(),
                      device_management_service,
-                     g_browser_process->system_request_context());
+                     g_browser_process->shared_url_loader_factory());
 
     cloud_managers_[profile] = manager.get();
     return std::move(manager);

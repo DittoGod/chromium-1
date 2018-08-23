@@ -11,8 +11,7 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/viz/common/features.h"
@@ -20,7 +19,6 @@
 #include "content/browser/download/drag_download_util.h"
 #include "content/browser/frame_host/interstitial_page_impl.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
-#include "content/browser/mus_util.h"
 #include "content/browser/renderer_host/dip_util.h"
 #include "content/browser/renderer_host/display_util.h"
 #include "content/browser/renderer_host/input/touch_selection_controller_client_aura.h"
@@ -52,7 +50,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/drop_data.h"
 #include "net/base/filename_util.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/drag_drop_client.h"
 #include "ui/aura/client/drag_drop_delegate.h"
@@ -61,6 +59,7 @@
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
+#include "ui/aura/window_occlusion_tracker.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/aura/window_tree_host_observer.h"
 #include "ui/base/clipboard/clipboard.h"
@@ -70,6 +69,7 @@
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_factory.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches_util.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/display.h"
@@ -424,13 +424,10 @@ class WebContentsViewAura::WindowObserver
                                intptr_t old) override {
     if (key != aura::client::kMirroringEnabledKey)
       return;
-    if (window->GetProperty(aura::client::kMirroringEnabledKey)) {
+    if (window->GetProperty(aura::client::kMirroringEnabledKey))
       view_->web_contents_->IncrementCapturerCount(gfx::Size());
-      view_->web_contents_->UpdateWebContentsVisibility(true);
-    } else {
+    else
       view_->web_contents_->DecrementCapturerCount();
-      view_->web_contents_->UpdateWebContentsVisibility(window->IsVisible());
-    }
   }
 
   // Overridden WindowTreeHostObserver:
@@ -470,7 +467,7 @@ WebContentsViewAura::WebContentsViewAura(WebContentsImpl* web_contents,
                                          WebContentsViewDelegate* delegate)
     : is_mus_browser_plugin_guest_(web_contents->GetBrowserPluginGuest() !=
                                        nullptr &&
-                                   (switches::IsMusHostingViz())),
+                                   features::IsUsingWindowService()),
       web_contents_(web_contents),
       delegate_(delegate),
       current_drag_op_(blink::kWebDragOperationNone),
@@ -482,8 +479,7 @@ WebContentsViewAura::WebContentsViewAura(WebContentsImpl* web_contents,
       current_overscroll_gesture_(OVERSCROLL_NONE),
       completed_overscroll_gesture_(OVERSCROLL_NONE),
       navigation_overlay_(nullptr),
-      init_rwhv_with_null_parent_for_testing_(false) {
-}
+      init_rwhv_with_null_parent_for_testing_(false) {}
 
 void WebContentsViewAura::SetDelegateForTesting(
     WebContentsViewDelegate* delegate) {
@@ -498,7 +494,6 @@ WebContentsViewAura::~WebContentsViewAura() {
     return;
 
   window_observer_.reset();
-  window_->RemoveObserver(this);
 
   // Window needs a valid delegate during its destructor, so we explicitly
   // delete it here.
@@ -561,19 +556,20 @@ void WebContentsViewAura::EndDrag(RenderWidgetHost* source_rwh,
 
 void WebContentsViewAura::InstallOverscrollControllerDelegate(
     RenderWidgetHostViewAura* view) {
-  const OverscrollConfig::Mode mode = OverscrollConfig::GetMode();
+  const OverscrollConfig::HistoryNavigationMode mode =
+      OverscrollConfig::GetHistoryNavigationMode();
   switch (mode) {
-    case OverscrollConfig::Mode::kDisabled:
+    case OverscrollConfig::HistoryNavigationMode::kDisabled:
       navigation_overlay_.reset();
       break;
-    case OverscrollConfig::Mode::kParallaxUi:
+    case OverscrollConfig::HistoryNavigationMode::kParallaxUi:
       view->overscroll_controller()->set_delegate(this);
       if (!navigation_overlay_ && !is_mus_browser_plugin_guest_) {
         navigation_overlay_.reset(
             new OverscrollNavigationOverlay(web_contents_, window_.get()));
       }
       break;
-    case OverscrollConfig::Mode::kSimpleUi:
+    case OverscrollConfig::HistoryNavigationMode::kSimpleUi:
       navigation_overlay_.reset();
       if (!gesture_nav_simple_)
         gesture_nav_simple_.reset(new GestureNavSimple(web_contents_));
@@ -733,14 +729,13 @@ gfx::Rect WebContentsViewAura::GetViewBounds() const {
 }
 
 void WebContentsViewAura::CreateAuraWindow(aura::Window* context) {
-  DCHECK(aura::Env::GetInstanceDontCreate());
+  DCHECK(aura::Env::HasInstance());
   DCHECK(!window_);
   window_ = std::make_unique<aura::Window>(this);
   window_->set_owned_by_parent(false);
   window_->SetType(aura::client::WINDOW_TYPE_CONTROL);
   window_->SetName("WebContentsViewAura");
   window_->Init(ui::LAYER_NOT_DRAWN);
-  window_->AddObserver(this);
   aura::Window* root_window = context ? context->GetRootWindow() : nullptr;
   if (root_window) {
     // There are places where there is no context currently because object
@@ -755,6 +750,7 @@ void WebContentsViewAura::CreateAuraWindow(aura::Window* context) {
                                           root_window->GetBoundsInScreen());
   }
   window_->layer()->SetMasksToBounds(true);
+  aura::WindowOcclusionTracker::Track(window_.get());
 
   // WindowObserver is not interesting and is problematic for Browser Plugin
   // guests.
@@ -836,15 +832,21 @@ RenderWidgetHostViewBase* WebContentsViewAura::CreateViewForPopupWidget(
 }
 
 void WebContentsViewAura::SetPageTitle(const base::string16& title) {
-  if (!is_mus_browser_plugin_guest_)
+  if (!is_mus_browser_plugin_guest_) {
     window_->SetTitle(title);
+    aura::Window* child_window = GetContentNativeView();
+    if (child_window)
+      child_window->SetTitle(title);
+  }
 }
 
 void WebContentsViewAura::RenderViewCreated(RenderViewHost* host) {
 }
 
-void WebContentsViewAura::RenderViewSwappedIn(RenderViewHost* host) {
-}
+void WebContentsViewAura::RenderViewReady() {}
+
+void WebContentsViewAura::RenderViewHostChanged(RenderViewHost* old_host,
+                                                RenderViewHost* new_host) {}
 
 void WebContentsViewAura::SetOverscrollControllerEnabled(bool enabled) {
   RenderWidgetHostViewAura* view =
@@ -882,11 +884,6 @@ void WebContentsViewAura::ShowContextMenu(RenderFrameHost* render_frame_host,
   }
 
   if (delegate_) {
-    RenderWidgetHostViewAura* view = ToRenderWidgetHostViewAura(
-        web_contents_->GetRenderWidgetHostView());
-    if (view && !view->OnShowContextMenu(params))
-      return;
-
     delegate_->ShowContextMenu(render_frame_host, params);
     // WARNING: we may have been deleted during the call to ShowContextMenu().
   }
@@ -937,8 +934,7 @@ void WebContentsViewAura::StartDragging(
   int result_op = 0;
   {
     gfx::NativeView content_native_view = GetContentNativeView();
-    base::MessageLoop::ScopedNestableTaskAllower allow(
-        base::MessageLoop::current());
+    base::MessageLoopCurrent::ScopedNestableTaskAllower allow;
     result_op = aura::client::GetDragDropClient(root_window)
         ->StartDragAndDrop(data,
                            root_window,
@@ -994,12 +990,6 @@ gfx::Size WebContentsViewAura::GetDisplaySize() const {
       .size();
 }
 
-void WebContentsViewAura::OnOverscrollBehaviorUpdate(
-    cc::OverscrollBehavior overscroll_behavior) {
-  navigation_overlay_->relay_delegate()->OnOverscrollBehaviorUpdate(
-      overscroll_behavior);
-}
-
 bool WebContentsViewAura::OnOverscrollUpdate(float delta_x, float delta_y) {
   if (current_overscroll_gesture_ != OVERSCROLL_EAST &&
       current_overscroll_gesture_ != OVERSCROLL_WEST) {
@@ -1014,12 +1004,14 @@ void WebContentsViewAura::OnOverscrollComplete(OverscrollMode mode) {
   CompleteOverscrollNavigation(mode);
 }
 
-void WebContentsViewAura::OnOverscrollModeChange(OverscrollMode old_mode,
-                                                 OverscrollMode new_mode,
-                                                 OverscrollSource source) {
+void WebContentsViewAura::OnOverscrollModeChange(
+    OverscrollMode old_mode,
+    OverscrollMode new_mode,
+    OverscrollSource source,
+    cc::OverscrollBehavior behavior) {
   current_overscroll_gesture_ = new_mode;
   navigation_overlay_->relay_delegate()->OnOverscrollModeChange(
-      old_mode, new_mode, source);
+      old_mode, new_mode, source, behavior);
   completed_overscroll_gesture_ = OVERSCROLL_NONE;
 }
 
@@ -1104,6 +1096,16 @@ void WebContentsViewAura::OnWindowDestroyed(aura::Window* window) {
 }
 
 void WebContentsViewAura::OnWindowTargetVisibilityChanged(bool visible) {
+}
+
+void WebContentsViewAura::OnWindowOcclusionChanged(
+    aura::Window::OcclusionState occlusion_state) {
+  web_contents_->UpdateWebContentsVisibility(
+      occlusion_state == aura::Window::OcclusionState::VISIBLE
+          ? content::Visibility::VISIBLE
+          : (occlusion_state == aura::Window::OcclusionState::OCCLUDED
+                 ? content::Visibility::OCCLUDED
+                 : content::Visibility::HIDDEN));
 }
 
 bool WebContentsViewAura::HasHitTestMask() const {
@@ -1275,19 +1277,6 @@ int WebContentsViewAura::OnPerformDrop(const ui::DropTargetEvent& event) {
     drag_dest_delegate_->OnDrop();
   current_drop_data_.reset();
   return ConvertFromWeb(current_drag_op_);
-}
-
-void WebContentsViewAura::OnWindowVisibilityChanged(aura::Window* window,
-                                                    bool visible) {
-  // Ignore any visibility changes in the hierarchy below.
-  if (window != window_.get() && window_->Contains(window))
-    return;
-
-  // |visible| indicates whether |window| (which points to |window_| or one of
-  // its ancestors) is visible within its parent. What we really need is
-  // |window_->IsVisible()|, which indicates whether |window_| and all its
-  // ancestors are visible.
-  web_contents_->UpdateWebContentsVisibility(window_->IsVisible());
 }
 
 #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)

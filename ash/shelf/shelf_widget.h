@@ -24,6 +24,7 @@ class ApplicationDragAndDropHost;
 namespace ash {
 enum class AnimationChangeType;
 class AppListButton;
+class BackButton;
 class FocusCycler;
 class LoginShelfView;
 class Shelf;
@@ -43,12 +44,23 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   ShelfWidget(aura::Window* shelf_container, Shelf* shelf);
   ~ShelfWidget() override;
 
+  // Sets the initial session state and show the UI. Not part of the constructor
+  // because showing the UI triggers the accessibility checks in browser_tests,
+  // which will crash unless the constructor returns, allowing the caller
+  // to store the constructed widget.
+  void Initialize();
+
+  // Clean up prior to deletion.
+  void Shutdown();
+
   // Returns true if the views-based shelf is being shown.
   static bool IsUsingViewsShelf();
 
   void CreateStatusAreaWidget(aura::Window* status_container);
 
   void OnShelfAlignmentChanged();
+
+  void OnTabletModeChanged();
 
   // Sets the shelf's background type.
   void SetPaintsBackground(ShelfBackgroundType background_type,
@@ -73,20 +85,20 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   void SetFocusCycler(FocusCycler* focus_cycler);
   FocusCycler* GetFocusCycler();
 
-  // Clean up prior to deletion.
-  void Shutdown();
-
-  // See Shelf::UpdateIconPositionForPanel().
-  void UpdateIconPositionForPanel(aura::Window* panel);
-
   // See Shelf::GetScreenBoundsOfItemIconForWindow().
   gfx::Rect GetScreenBoundsOfItemIconForWindow(aura::Window* window);
 
   // Returns the button that opens the app launcher.
   AppListButton* GetAppListButton() const;
 
+  // Returns the browser back button.
+  BackButton* GetBackButton() const;
+
   // Returns the ApplicationDragAndDropHost for this shelf.
   app_list::ApplicationDragAndDropHost* GetDragAndDropHostForAppList();
+
+  // Fetch the LoginShelfView instance.
+  LoginShelfView* login_shelf_view() { return login_shelf_view_; }
 
   void set_default_last_focusable_child(bool default_last_focusable_child);
 
@@ -104,10 +116,12 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
 
   // Internal implementation detail. Do not expose outside of tests.
   ShelfView* shelf_view_for_testing() const { return shelf_view_; }
+  ShelfBackgroundAnimator* background_animator_for_testing() {
+    return &background_animator_;
+  }
 
-  // Internal implementation detail. Do not expose outside of tests.
-  LoginShelfView* login_shelf_view_for_testing() const {
-    return login_shelf_view_;
+  void set_activated_from_overflow_bubble(bool val) {
+    activated_from_overflow_bubble_ = val;
   }
 
  private:
@@ -138,6 +152,11 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   // View containing the shelf items for Login/Lock/OOBE/Add User screens.
   // Owned by the views hierarchy.
   LoginShelfView* const login_shelf_view_;
+
+  // Set to true when the widget is activated from the shelf overflow bubble.
+  // Do not focus the default element in this case. This should be set when
+  // cycling focus from the overflow bubble to the main shelf.
+  bool activated_from_overflow_bubble_ = false;
 
   ShelfBackgroundAnimator background_animator_;
 

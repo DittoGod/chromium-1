@@ -47,12 +47,13 @@ class CONTENT_EXPORT ServiceWorkerTimeoutTimer {
   explicit ServiceWorkerTimeoutTimer(base::RepeatingClosure idle_callback);
   // For testing.
   ServiceWorkerTimeoutTimer(base::RepeatingClosure idle_callback,
-                            std::unique_ptr<base::TickClock> tick_clock);
+                            const base::TickClock* tick_clock);
   ~ServiceWorkerTimeoutTimer();
 
   // StartEvent() should be called at the beginning of an event. It returns an
-  // event id. The event id should be passed to EndEvent() when the event has
-  // finished. If there are pending tasks queued by PushPendingTask(), they will
+  // event id, which is unique among threads in the same process.
+  // The event id should be passed to EndEvent() when the event has finished.
+  // If there are pending tasks queued by PushPendingTask(), they will
   // run in order synchronouslly in StartEvent().
   // See the class comment to know when |abort_callback| runs.
   int StartEvent(base::OnceCallback<void(int /* event_id */)> abort_callback);
@@ -142,7 +143,8 @@ class CONTENT_EXPORT ServiceWorkerTimeoutTimer {
   // |timer_| invokes UpdateEventStatus() periodically.
   base::RepeatingTimer timer_;
 
-  std::unique_ptr<base::TickClock> tick_clock_;
+  // |tick_clock_| outlives |this|.
+  const base::TickClock* const tick_clock_;
 };
 
 }  // namespace content

@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -16,11 +17,6 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
-        {
-          "object": "LayoutBlockFlow DIV class='scroller'",
-          "rect": [18, 60, 310, 200],
-          "reason": "full"
-        },
         {
           "object": "LayoutBlockFlow (positioned) DIV class='back'",
           "rect": [93, 125, 180, 100],
@@ -72,16 +68,6 @@
         [0, 0, 1, 0],
         [200, 10, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV class='scroller'",
-      "reason": "full"
-    },
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
     }
   ]
 }

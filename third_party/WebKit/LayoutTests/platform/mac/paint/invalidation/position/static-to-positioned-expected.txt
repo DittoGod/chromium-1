@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,9 +18,9 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow DIV id='t'",
+          "object": "LayoutBlockFlow (positioned) DIV id='t'",
           "rect": [8, 328, 100, 100],
-          "reason": "subtree"
+          "reason": "style change"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV id='t'",
@@ -32,29 +33,11 @@
           "reason": "style change"
         },
         {
-          "object": "LayoutBlockFlow DIV id='a'",
+          "object": "LayoutBlockFlow (relative positioned) DIV id='a'",
           "rect": [8, 78, 100, 100],
-          "reason": "subtree"
+          "reason": "style change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='t'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='a'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='a'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='t'",
-      "reason": "style change"
     }
   ]
 }

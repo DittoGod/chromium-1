@@ -7,12 +7,14 @@
 #include <memory>
 #include <utility>
 
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "chrome/browser/background_fetch/background_fetch_delegate_impl.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "components/download/public/background_service/download_metadata.h"
 #include "components/download/public/background_service/download_service.h"
 #include "content/public/browser/background_fetch_response.h"
 #include "content/public/browser/browser_context.h"
+#include "services/network/public/cpp/resource_request_body.h"
 #include "url/origin.h"
 
 BackgroundFetchDownloadClient::BackgroundFetchDownloadClient(
@@ -37,16 +39,7 @@ void BackgroundFetchDownloadClient::OnServiceInitialized(
                   browser_context_->GetBackgroundFetchDelegate())
                   ->GetWeakPtr();
   DCHECK(delegate_);
-
-  // TODO(delphick): Reconnect the outstanding downloads with the content layer
-  // part of background_fetch. For now we just cancel all the downloads.
-  if (downloads.size() > 0) {
-    download::DownloadService* download_service =
-        DownloadServiceFactory::GetInstance()->GetForBrowserContext(
-            browser_context_);
-    for (const auto& download : downloads)
-      download_service->CancelDownload(download.guid);
-  }
+  delegate_->ResumeActiveJobs();
 }
 
 void BackgroundFetchDownloadClient::OnServiceUnavailable() {}
@@ -92,4 +85,11 @@ bool BackgroundFetchDownloadClient::CanServiceRemoveDownloadedFile(
     bool force_delete) {
   // TODO(delphick): Return false if the background fetch hasn't finished yet
   return true;
+}
+
+void BackgroundFetchDownloadClient::GetUploadData(
+    const std::string& guid,
+    download::GetUploadDataCallback callback) {
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), nullptr));
 }

@@ -19,13 +19,16 @@ const base::FilePath::CharType kFutureFileName[] =
 
 constexpr uint64_t BlobDataItem::kUnknownSize;
 
+bool BlobDataItem::DataHandle::IsValid() {
+  return true;
+}
 BlobDataItem::DataHandle::~DataHandle() = default;
 
 // static
 scoped_refptr<BlobDataItem> BlobDataItem::CreateBytes(
     base::span<const char> bytes) {
   auto item =
-      base::WrapRefCounted(new BlobDataItem(Type::kBytes, 0, bytes.length()));
+      base::WrapRefCounted(new BlobDataItem(Type::kBytes, 0, bytes.size()));
   item->bytes_.assign(bytes.begin(), bytes.end());
   return item;
 }
@@ -134,9 +137,15 @@ void BlobDataItem::AllocateBytes() {
 
 void BlobDataItem::PopulateBytes(base::span<const char> data) {
   DCHECK_EQ(type_, Type::kBytesDescription);
-  DCHECK_EQ(length_, data.length());
+  DCHECK_EQ(length_, data.size());
   type_ = Type::kBytes;
   bytes_.assign(data.begin(), data.end());
+}
+
+void BlobDataItem::ShrinkBytes(size_t new_length) {
+  DCHECK_EQ(type_, Type::kBytes);
+  length_ = new_length;
+  bytes_.resize(length_);
 }
 
 void BlobDataItem::PopulateFile(base::FilePath path,
@@ -147,6 +156,18 @@ void BlobDataItem::PopulateFile(base::FilePath path,
   path_ = std::move(path);
   expected_modification_time_ = std::move(expected_modification_time);
   data_handle_ = std::move(data_handle);
+}
+
+void BlobDataItem::ShrinkFile(uint64_t new_length) {
+  DCHECK_EQ(type_, Type::kFile);
+  DCHECK_LE(new_length, length_);
+  length_ = new_length;
+}
+
+void BlobDataItem::GrowFile(uint64_t new_length) {
+  DCHECK_EQ(type_, Type::kFile);
+  DCHECK_GE(new_length, length_);
+  length_ = new_length;
 }
 
 void PrintTo(const BlobDataItem& x, ::std::ostream* os) {

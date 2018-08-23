@@ -11,7 +11,6 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/scoped_task_environment.h"
@@ -22,7 +21,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -39,6 +38,7 @@ using testing::NiceMock;
 using testing::StrictMock;
 using testing::TestWithParam;
 using testing::ValuesIn;
+using testing::_;
 
 using content::BrowserThread;
 using net::EmbeddedTestServer;
@@ -200,7 +200,7 @@ const char kSampleErrorResponsePrinterBusy[] =
 const char kSampleInvalidDocumentTypeResponse[] =
     R"({ "error" : "invalid_document_type" })";
 
-const char kSampleCreatejobResponse[] = R"({ "job_id": "1234" })";
+const char kSampleCreateJobResponse[] = R"({ "job_id": "1234" })";
 
 const char kSampleCapabilitiesResponseWithAnyMimetype[] =
     R"({
@@ -255,7 +255,7 @@ const char kSampleCJTMono[] =
 
 const char* const kTestParams[] = {"8.8.4.4", "2001:4860:4860::8888"};
 
-// Return the representation of the given JSON that would be outputted by
+// Returns the representation of the given JSON that would be outputted by
 // JSONWriter. This ensures the same JSON values are represented by the same
 // string.
 std::string NormalizeJson(const std::string& json) {
@@ -282,7 +282,23 @@ class MockTestURLFetcherFactoryDelegate
 
 class PrivetHTTPTest : public TestWithParam<const char*> {
  public:
-  PrivetHTTPTest() {
+  PrivetHTTPTest()
+      : kInfoURL(GetUrl("/privet/info")),
+        kRegisterStartURL(
+            GetUrl("/privet/register?action=start&user=example%40google.com")),
+        kRegisterGetTokenURL(GetUrl(
+            "/privet/register?action=getClaimToken&user=example%40google.com")),
+        kRegisterCompleteURL(GetUrl(
+            "/privet/register?action=complete&user=example%40google.com")),
+        kCapabilitiesURL(GetUrl("/privet/capabilities")),
+        kSubmitDocURL(GetUrl("/privet/printer/"
+                             "submitdoc?client_name=Chrome&user_name=sample%"
+                             "40gmail.com&job_name=Sample+job+name")),
+        kSubmitDocWithJobIDURL(
+            GetUrl("/privet/printer/"
+                   "submitdoc?client_name=Chrome&user_name=sample%40gmail.com&"
+                   "job_name=Sample+job+name&job_id=1234")),
+        kCreateJobURL(GetUrl("/privet/printer/createjob")) {
     PrivetURLFetcher::ResetTokenMapForTest();
 
     request_context_ = base::MakeRefCounted<net::TestURLRequestContextGetter>(
@@ -301,6 +317,7 @@ class PrivetHTTPTest : public TestWithParam<const char*> {
     return GURL("http://" + host + ":6006" + path);
   }
 
+ protected:
   bool SuccessfulResponseToURL(const GURL& url,
                                const std::string& response) {
     net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
@@ -359,8 +376,8 @@ class PrivetHTTPTest : public TestWithParam<const char*> {
     return SuccessfulResponseToURL(url, response);
   }
 
-  bool SuccessfulResponseToURLAndFilePath(const GURL& url,
-                                          const base::FilePath& file_path,
+  bool SuccessfulResponseToURLAndFileData(const GURL& url,
+                                          const std::string& file_data,
                                           const std::string& response) {
     net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
     if (!fetcher) {
@@ -370,27 +387,24 @@ class PrivetHTTPTest : public TestWithParam<const char*> {
 
     EXPECT_EQ(url, fetcher->GetOriginalURL());
 
-    EXPECT_EQ(file_path, fetcher->upload_file_path());
-    if (file_path != fetcher->upload_file_path())
+    EXPECT_EQ(file_data, fetcher->upload_data());
+    if (file_data != fetcher->upload_data())
       return false;
 
     return SuccessfulResponseToURL(url, response);
   }
 
-
-  void RunFor(base::TimeDelta time_period) {
-    base::CancelableCallback<void()> callback(base::Bind(
-        &PrivetHTTPTest::Stop, base::Unretained(this)));
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, callback.callback(), time_period);
-
-    base::RunLoop().Run();
-    callback.Cancel();
-  }
-
   void Stop() { base::RunLoop::QuitCurrentWhenIdleDeprecated(); }
 
- protected:
+  const GURL kInfoURL;
+  const GURL kRegisterStartURL;
+  const GURL kRegisterGetTokenURL;
+  const GURL kRegisterCompleteURL;
+  const GURL kCapabilitiesURL;
+  const GURL kSubmitDocURL;
+  const GURL kSubmitDocWithJobIDURL;
+  const GURL kCreateJobURL;
+
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   net::TestURLFetcherFactory fetcher_factory_;
@@ -418,16 +432,10 @@ class MockJSONCallback{
 
 class MockRegisterDelegate : public PrivetRegisterOperation::Delegate {
  public:
-  void OnPrivetRegisterClaimToken(
-      PrivetRegisterOperation* operation,
-      const std::string& token,
-      const GURL& url) override {
-    OnPrivetRegisterClaimTokenInternal(token, url);
-  }
-
-  MOCK_METHOD2(OnPrivetRegisterClaimTokenInternal, void(
-      const std::string& token,
-      const GURL& url));
+  MOCK_METHOD3(OnPrivetRegisterClaimToken,
+               void(PrivetRegisterOperation* operation,
+                    const std::string& token,
+                    const GURL& url));
 
   void OnPrivetRegisterError(
       PrivetRegisterOperation* operation,
@@ -444,31 +452,17 @@ class MockRegisterDelegate : public PrivetRegisterOperation::Delegate {
                     PrivetRegisterOperation::FailureReason reason,
                     int printer_http_code));
 
-  void OnPrivetRegisterDone(
-      PrivetRegisterOperation* operation,
-      const std::string& device_id) override {
-    OnPrivetRegisterDoneInternal(device_id);
-  }
-
-  MOCK_METHOD1(OnPrivetRegisterDoneInternal,
-               void(const std::string& device_id));
+  MOCK_METHOD2(OnPrivetRegisterDone,
+               void(PrivetRegisterOperation* operation,
+                    const std::string& device_id));
 };
 
 class MockLocalPrintDelegate : public PrivetLocalPrintOperation::Delegate {
  public:
-  virtual void OnPrivetPrintingDone(
-      const PrivetLocalPrintOperation* print_operation) {
-    OnPrivetPrintingDoneInternal();
-  }
-
-  MOCK_METHOD0(OnPrivetPrintingDoneInternal, void());
-
-  virtual void OnPrivetPrintingError(
-      const PrivetLocalPrintOperation* print_operation, int http_code) {
-    OnPrivetPrintingErrorInternal(http_code);
-  }
-
-  MOCK_METHOD1(OnPrivetPrintingErrorInternal, void(int http_code));
+  MOCK_METHOD1(OnPrivetPrintingDone, void(const PrivetLocalPrintOperation*));
+  MOCK_METHOD2(OnPrivetPrintingError,
+               void(const PrivetLocalPrintOperation* print_operation,
+                    int http_code));
 };
 
 class PrivetInfoTest : public PrivetHTTPTest {
@@ -490,7 +484,7 @@ TEST_P(PrivetInfoTest, SuccessfulInfo) {
 
   net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
   ASSERT_TRUE(fetcher);
-  EXPECT_EQ(GetUrl("/privet/info"), fetcher->GetOriginalURL());
+  EXPECT_EQ(kInfoURL, fetcher->GetOriginalURL());
 
   fetcher->SetResponseString(kSampleInfoResponse);
   fetcher->set_status(net::URLRequestStatus(net::URLRequestStatus::SUCCESS,
@@ -515,7 +509,7 @@ TEST_P(PrivetInfoTest, InfoFailureHTTP) {
 }
 
 class PrivetRegisterTest : public PrivetHTTPTest {
- public:
+ protected:
   void SetUp() override {
     info_operation_ = privet_client_->CreateInfoOperation(
         info_callback_.callback());
@@ -524,7 +518,6 @@ class PrivetRegisterTest : public PrivetHTTPTest {
                                                 &register_delegate_);
   }
 
- protected:
   bool SuccessfulResponseToURL(const GURL& url,
                                const std::string& response) {
     net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
@@ -549,103 +542,84 @@ class PrivetRegisterTest : public PrivetHTTPTest {
   NiceMock<MockJSONCallback> info_callback_;
   std::unique_ptr<PrivetRegisterOperation> register_operation_;
   StrictMock<MockRegisterDelegate> register_delegate_;
+  PrivetURLFetcher::RetryImmediatelyForTest retry_immediately_;
 };
+
+INSTANTIATE_TEST_CASE_P(PrivetTests, PrivetRegisterTest, ValuesIn(kTestParams));
 
 TEST_P(PrivetRegisterTest, RegisterSuccessSimple) {
   register_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/register?"
-                                     "action=start&user=example%40google.com"),
-                              kSampleRegisterStartResponse));
+      SuccessfulResponseToURL(kRegisterStartURL, kSampleRegisterStartResponse));
 
-  EXPECT_CALL(register_delegate_, OnPrivetRegisterClaimTokenInternal(
-      "MySampleToken",
-      GURL("https://domain.com/SoMeUrL")));
+  EXPECT_CALL(register_delegate_,
+              OnPrivetRegisterClaimToken(_, "MySampleToken",
+                                         GURL("https://domain.com/SoMeUrL")));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(
-      GetUrl("/privet/register?"
-             "action=getClaimToken&user=example%40google.com"),
-      kSampleRegisterGetClaimTokenResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kRegisterGetTokenURL,
+                                      kSampleRegisterGetClaimTokenResponse));
 
   register_operation_->CompleteRegistration();
 
-  EXPECT_TRUE(SuccessfulResponseToURL(
-      GetUrl("/privet/register?"
-             "action=complete&user=example%40google.com"),
-      kSampleRegisterCompleteResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kRegisterCompleteURL,
+                                      kSampleRegisterCompleteResponse));
 
-  EXPECT_CALL(register_delegate_, OnPrivetRegisterDoneInternal(
-      "MyDeviceID"));
+  EXPECT_CALL(register_delegate_, OnPrivetRegisterDone(_, "MyDeviceID"));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseRegistered));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseRegistered));
 }
 
 TEST_P(PrivetRegisterTest, RegisterXSRFFailure) {
   register_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/register?"
-                                     "action=start&user=example%40google.com"),
-                              kSampleRegisterStartResponse));
+      SuccessfulResponseToURL(kRegisterStartURL, kSampleRegisterStartResponse));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(
-      GetUrl("/privet/register?"
-             "action=getClaimToken&user=example%40google.com"),
-      kSampleXPrivetErrorResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kRegisterGetTokenURL,
+                                      kSampleXPrivetErrorResponse));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_CALL(register_delegate_, OnPrivetRegisterClaimTokenInternal(
-      "MySampleToken", GURL("https://domain.com/SoMeUrL")));
+  EXPECT_CALL(register_delegate_,
+              OnPrivetRegisterClaimToken(_, "MySampleToken",
+                                         GURL("https://domain.com/SoMeUrL")));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(
-      GetUrl("/privet/register?"
-             "action=getClaimToken&user=example%40google.com"),
-      kSampleRegisterGetClaimTokenResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kRegisterGetTokenURL,
+                                      kSampleRegisterGetClaimTokenResponse));
 }
 
 TEST_P(PrivetRegisterTest, TransientFailure) {
   register_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/register?"
-                                     "action=start&user=example%40google.com"),
-                              kSampleRegisterErrorTransient));
+  // Make the registration request fail the first time and work after that.
+  EXPECT_TRUE(SuccessfulResponseToURL(kRegisterStartURL,
+                                      kSampleRegisterErrorTransient));
 
   EXPECT_CALL(fetcher_delegate_, OnRequestStart(0));
 
-  RunFor(base::TimeDelta::FromSeconds(2));
+  // Ensure the posted retry happens.
+  base::RunLoop().RunUntilIdle();
 
   testing::Mock::VerifyAndClearExpectations(&fetcher_delegate_);
 
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/register?"
-                                     "action=start&user=example%40google.com"),
-                              kSampleRegisterStartResponse));
+      SuccessfulResponseToURL(kRegisterStartURL, kSampleRegisterStartResponse));
 }
 
 TEST_P(PrivetRegisterTest, PermanentFailure) {
   register_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/register?"
-                                     "action=start&user=example%40google.com"),
-                              kSampleRegisterStartResponse));
+      SuccessfulResponseToURL(kRegisterStartURL, kSampleRegisterStartResponse));
 
   EXPECT_CALL(register_delegate_,
               OnPrivetRegisterErrorInternal(
@@ -653,10 +627,8 @@ TEST_P(PrivetRegisterTest, PermanentFailure) {
                   PrivetRegisterOperation::FAILURE_JSON_ERROR,
                   200));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(
-      GetUrl("/privet/register?"
-             "action=getClaimToken&user=example%40google.com"),
-      kSampleRegisterErrorPermanent));
+  EXPECT_TRUE(SuccessfulResponseToURL(kRegisterGetTokenURL,
+                                      kSampleRegisterErrorPermanent));
 }
 
 TEST_P(PrivetRegisterTest, InfoFailure) {
@@ -668,20 +640,18 @@ TEST_P(PrivetRegisterTest, InfoFailure) {
                   PrivetRegisterOperation::FAILURE_TOKEN,
                   -1));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseBadJson));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseBadJson));
 }
 
 TEST_P(PrivetRegisterTest, RegisterCancel) {
+  PrivetRegisterOperationImpl::RunTasksImmediatelyForTesting
+      run_tasks_immediately_for_local_print;
   register_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/register?"
-                                     "action=start&user=example%40google.com"),
-                              kSampleRegisterStartResponse));
+      SuccessfulResponseToURL(kRegisterStartURL, kSampleRegisterStartResponse));
 
   register_operation_->Cancel();
 
@@ -690,9 +660,8 @@ TEST_P(PrivetRegisterTest, RegisterCancel) {
                                      "action=cancel&user=example%40google.com"),
                               kSampleRegisterCancelResponse));
 
-  // Must keep mocks alive for 3 seconds so the cancelation object can be
-  // deleted.
-  RunFor(base::TimeDelta::FromSeconds(3));
+  // Ensure the cancellation object is deleted.
+  base::RunLoop().RunUntilIdle();
 }
 
 class PrivetCapabilitiesTest : public PrivetHTTPTest {
@@ -714,13 +683,12 @@ INSTANTIATE_TEST_CASE_P(PrivetTests,
 TEST_P(PrivetCapabilitiesTest, SuccessfulCapabilities) {
   capabilities_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_CALL(capabilities_callback_, OnPrivetJSONDoneInternal());
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/capabilities"),
-                                      kSampleCapabilitiesResponse));
+  EXPECT_TRUE(
+      SuccessfulResponseToURL(kCapabilitiesURL, kSampleCapabilitiesResponse));
 
   std::string version;
   EXPECT_TRUE(capabilities_callback_.value()->GetString("version", &version));
@@ -730,13 +698,12 @@ TEST_P(PrivetCapabilitiesTest, SuccessfulCapabilities) {
 TEST_P(PrivetCapabilitiesTest, CacheToken) {
   capabilities_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_CALL(capabilities_callback_, OnPrivetJSONDoneInternal());
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/capabilities"),
-                                      kSampleCapabilitiesResponse));
+  EXPECT_TRUE(
+      SuccessfulResponseToURL(kCapabilitiesURL, kSampleCapabilitiesResponse));
 
   capabilities_operation_ = privet_client_->CreateCapabilitiesOperation(
       capabilities_callback_.callback());
@@ -745,43 +712,49 @@ TEST_P(PrivetCapabilitiesTest, CacheToken) {
 
   EXPECT_CALL(capabilities_callback_, OnPrivetJSONDoneInternal());
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/capabilities"),
-                                      kSampleCapabilitiesResponse));
+  EXPECT_TRUE(
+      SuccessfulResponseToURL(kCapabilitiesURL, kSampleCapabilitiesResponse));
 }
 
 TEST_P(PrivetCapabilitiesTest, BadToken) {
   capabilities_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
-
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/capabilities"),
-                                      kSampleXPrivetErrorResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+      SuccessfulResponseToURL(kCapabilitiesURL, kSampleXPrivetErrorResponse));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_CALL(capabilities_callback_, OnPrivetJSONDoneInternal());
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/capabilities"),
-                                      kSampleCapabilitiesResponse));
+  EXPECT_TRUE(
+      SuccessfulResponseToURL(kCapabilitiesURL, kSampleCapabilitiesResponse));
 }
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-// A note on PWG raster conversion: The PWG raster converter used simply
+// A note on PWG raster conversion: The fake PWG raster converter simply returns
+// the input as the converted data. The output isn't checked anyway.
 // converts strings to file paths based on them by appending "test.pdf", since
 // it's easier to test that way. Instead of using a mock, we simply check if the
 // request is uploading a file that is based on this pattern.
 class FakePwgRasterConverter : public printing::PwgRasterConverter {
  public:
-  void Start(base::RefCountedMemory* data,
+  void Start(const base::RefCountedMemory* data,
              const printing::PdfRenderSettings& conversion_settings,
              const printing::PwgRasterSettings& bitmap_settings,
              ResultCallback callback) override {
+    base::MappedReadOnlyRegion memory =
+        base::ReadOnlySharedMemoryRegion::Create(data->size());
+    if (!memory.IsValid()) {
+      ADD_FAILURE() << "Failed to create pwg raster shared memory.";
+      std::move(callback).Run(base::ReadOnlySharedMemoryRegion());
+      return;
+    }
+
+    memcpy(memory.mapping.memory(), data->front(), data->size());
     bitmap_settings_ = bitmap_settings;
-    std::string data_str(data->front_as<char>(), data->size());
-    std::move(callback).Run(
-        true, base::FilePath().AppendASCII(data_str + "test.pdf"));
+    std::move(callback).Run(std::move(memory.region));
   }
 
   const printing::PwgRasterSettings& bitmap_settings() {
@@ -817,6 +790,8 @@ class PrivetLocalPrintTest : public PrivetHTTPTest {
   std::unique_ptr<PrivetLocalPrintOperation> local_print_operation_;
   StrictMock<MockLocalPrintDelegate> local_print_delegate_;
   FakePwgRasterConverter* pwg_converter_;
+  PrivetLocalPrintOperationImpl::RunTasksImmediatelyForTesting
+      run_tasks_immediately_for_local_print_;
 };
 
 INSTANTIATE_TEST_CASE_P(PrivetTests,
@@ -831,19 +806,14 @@ TEST_P(PrivetLocalPrintTest, SuccessfulLocalPrint) {
   local_print_operation_->SetCapabilities(kSampleCapabilitiesResponse);
   local_print_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndData(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com&"
-             "job_name=Sample+job+name"),
-      "Sample print data", kSampleLocalPrintResponse));
+  EXPECT_TRUE(SuccessfulResponseToURLAndData(kSubmitDocURL, "Sample print data",
+                                             kSampleLocalPrintResponse));
 }
 
 TEST_P(PrivetLocalPrintTest, SuccessfulLocalPrintWithAnyMimetype) {
@@ -855,43 +825,31 @@ TEST_P(PrivetLocalPrintTest, SuccessfulLocalPrintWithAnyMimetype) {
       kSampleCapabilitiesResponseWithAnyMimetype);
   local_print_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndData(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com&"
-             "job_name=Sample+job+name"),
-      "Sample print data", kSampleLocalPrintResponse));
+  EXPECT_TRUE(SuccessfulResponseToURLAndData(kSubmitDocURL, "Sample print data",
+                                             kSampleLocalPrintResponse));
 }
 
 TEST_P(PrivetLocalPrintTest, SuccessfulPWGLocalPrint) {
   local_print_operation_->SetUsername("sample@gmail.com");
   local_print_operation_->SetJobname("Sample job name");
-  local_print_operation_->SetData(
-      RefCountedBytesFromString("path/to/"));
+  local_print_operation_->SetData(RefCountedBytesFromString("foobar"));
   local_print_operation_->SetCapabilities(kSampleCapabilitiesResponsePWGOnly);
   local_print_operation_->Start();
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndFilePath(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com"
-             "&job_name=Sample+job+name"),
-      base::FilePath(FILE_PATH_LITERAL("path/to/test.pdf")),
-      kSampleLocalPrintResponse));
+  EXPECT_TRUE(SuccessfulResponseToURLAndFileData(kSubmitDocURL, "foobar",
+                                                 kSampleLocalPrintResponse));
 
   EXPECT_EQ(printing::TRANSFORM_NORMAL,
             pwg_converter_->bitmap_settings().odd_page_transform);
@@ -905,30 +863,24 @@ TEST_P(PrivetLocalPrintTest, SuccessfulPWGLocalPrint) {
 TEST_P(PrivetLocalPrintTest, SuccessfulPWGLocalPrintDuplex) {
   local_print_operation_->SetUsername("sample@gmail.com");
   local_print_operation_->SetJobname("Sample job name");
-  local_print_operation_->SetData(RefCountedBytesFromString("path/to/"));
+  local_print_operation_->SetData(RefCountedBytesFromString("foobar"));
   local_print_operation_->SetTicket(kSampleCJTDuplex);
   local_print_operation_->SetCapabilities(
       kSampleCapabilitiesResponsePWGSettings);
   local_print_operation_->Start();
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseWithCreatejob));
-
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+      SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseWithCreatejob));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
   EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(
-      GetUrl("/privet/printer/createjob"), kSampleCJTDuplex,
-      kSampleCreatejobResponse));
+      kCreateJobURL, kSampleCJTDuplex, kSampleCreateJobResponse));
 
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndFilePath(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com"
-             "&job_name=Sample+job+name&job_id=1234"),
-      base::FilePath(FILE_PATH_LITERAL("path/to/test.pdf")),
-      kSampleLocalPrintResponse));
+  EXPECT_TRUE(SuccessfulResponseToURLAndFileData(
+      kSubmitDocWithJobIDURL, "foobar", kSampleLocalPrintResponse));
 
   EXPECT_EQ(printing::TRANSFORM_ROTATE_180,
             pwg_converter_->bitmap_settings().odd_page_transform);
@@ -942,30 +894,24 @@ TEST_P(PrivetLocalPrintTest, SuccessfulPWGLocalPrintDuplex) {
 TEST_P(PrivetLocalPrintTest, SuccessfulPWGLocalPrintMono) {
   local_print_operation_->SetUsername("sample@gmail.com");
   local_print_operation_->SetJobname("Sample job name");
-  local_print_operation_->SetData(RefCountedBytesFromString("path/to/"));
+  local_print_operation_->SetData(RefCountedBytesFromString("foobar"));
   local_print_operation_->SetTicket(kSampleCJTMono);
   local_print_operation_->SetCapabilities(
       kSampleCapabilitiesResponsePWGSettings);
   local_print_operation_->Start();
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseWithCreatejob));
-
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+      SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseWithCreatejob));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(
-      GetUrl("/privet/printer/createjob"), kSampleCJTMono,
-      kSampleCreatejobResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+  EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(kCreateJobURL, kSampleCJTMono,
+                                                 kSampleCreateJobResponse));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndFilePath(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com"
-             "&job_name=Sample+job+name&job_id=1234"),
-      base::FilePath(FILE_PATH_LITERAL("path/to/test.pdf")),
-      kSampleLocalPrintResponse));
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
+
+  EXPECT_TRUE(SuccessfulResponseToURLAndFileData(
+      kSubmitDocWithJobIDURL, "foobar", kSampleLocalPrintResponse));
 
   EXPECT_EQ(printing::TRANSFORM_NORMAL,
             pwg_converter_->bitmap_settings().odd_page_transform);
@@ -979,30 +925,24 @@ TEST_P(PrivetLocalPrintTest, SuccessfulPWGLocalPrintMono) {
 TEST_P(PrivetLocalPrintTest, SuccessfulPWGLocalPrintMonoToGRAY8Printer) {
   local_print_operation_->SetUsername("sample@gmail.com");
   local_print_operation_->SetJobname("Sample job name");
-  local_print_operation_->SetData(RefCountedBytesFromString("path/to/"));
+  local_print_operation_->SetData(RefCountedBytesFromString("foobar"));
   local_print_operation_->SetTicket(kSampleCJTMono);
   local_print_operation_->SetCapabilities(
       kSampleCapabilitiesResponsePWGSettingsMono);
   local_print_operation_->Start();
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseWithCreatejob));
-
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+      SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseWithCreatejob));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(
-      GetUrl("/privet/printer/createjob"), kSampleCJTMono,
-      kSampleCreatejobResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+  EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(kCreateJobURL, kSampleCJTMono,
+                                                 kSampleCreateJobResponse));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndFilePath(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com"
-             "&job_name=Sample+job+name&job_id=1234"),
-      base::FilePath(FILE_PATH_LITERAL("path/to/test.pdf")),
-      kSampleLocalPrintResponse));
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
+
+  EXPECT_TRUE(SuccessfulResponseToURLAndFileData(
+      kSubmitDocWithJobIDURL, "foobar", kSampleLocalPrintResponse));
 
   EXPECT_EQ(printing::TRANSFORM_NORMAL,
             pwg_converter_->bitmap_settings().odd_page_transform);
@@ -1022,23 +962,18 @@ TEST_P(PrivetLocalPrintTest, SuccessfulLocalPrintWithCreatejob) {
   local_print_operation_->SetCapabilities(kSampleCapabilitiesResponse);
   local_print_operation_->Start();
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseWithCreatejob));
-
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+      SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseWithCreatejob));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURLAndJSONData(GetUrl("/privet/printer/createjob"),
-                                         kSampleCJT, kSampleCreatejobResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+  EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(kCreateJobURL, kSampleCJT,
+                                                 kSampleCreateJobResponse));
+
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
 
   EXPECT_TRUE(SuccessfulResponseToURLAndData(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com&"
-             "job_name=Sample+job+name&job_id=1234"),
-      "Sample print data", kSampleLocalPrintResponse));
+      kSubmitDocWithJobIDURL, "Sample print data", kSampleLocalPrintResponse));
 }
 
 TEST_P(PrivetLocalPrintTest, SuccessfulLocalPrintWithOverlongName) {
@@ -1051,17 +986,15 @@ TEST_P(PrivetLocalPrintTest, SuccessfulLocalPrintWithOverlongName) {
       RefCountedBytesFromString("Sample print data"));
   local_print_operation_->Start();
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseWithCreatejob));
-
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+      SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseWithCreatejob));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURLAndJSONData(GetUrl("/privet/printer/createjob"),
-                                         kSampleCJT, kSampleCreatejobResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+  EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(kCreateJobURL, kSampleCJT,
+                                                 kSampleCreateJobResponse));
+
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
 
   EXPECT_TRUE(SuccessfulResponseToURLAndData(
       GetUrl("/privet/printer/submitdoc?"
@@ -1076,34 +1009,25 @@ TEST_P(PrivetLocalPrintTest, PDFPrintInvalidDocumentTypeRetry) {
   local_print_operation_->SetJobname("Sample job name");
   local_print_operation_->SetTicket(kSampleCJT);
   local_print_operation_->SetCapabilities(kSampleCapabilitiesResponse);
-  local_print_operation_->SetData(
-      RefCountedBytesFromString("sample/path/"));
+  local_print_operation_->SetData(RefCountedBytesFromString("sample_data"));
   local_print_operation_->Start();
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseWithCreatejob));
+  EXPECT_TRUE(
+      SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseWithCreatejob));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
+
+  EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(kCreateJobURL, kSampleCJT,
+                                                 kSampleCreateJobResponse));
 
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+      SuccessfulResponseToURLAndData(kSubmitDocWithJobIDURL, "sample_data",
+                                     kSampleInvalidDocumentTypeResponse));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURLAndJSONData(GetUrl("/privet/printer/createjob"),
-                                         kSampleCJT, kSampleCreatejobResponse));
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDone(_));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndData(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com&"
-             "job_name=Sample+job+name&job_id=1234"),
-      "sample/path/", kSampleInvalidDocumentTypeResponse));
-
-  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
-
-  EXPECT_TRUE(SuccessfulResponseToURLAndFilePath(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com&"
-             "job_name=Sample+job+name&job_id=1234"),
-      base::FilePath(FILE_PATH_LITERAL("sample/path/test.pdf")),
-      kSampleLocalPrintResponse));
+  EXPECT_TRUE(SuccessfulResponseToURLAndFileData(
+      kSubmitDocWithJobIDURL, "sample_data", kSampleLocalPrintResponse));
 }
 
 TEST_P(PrivetLocalPrintTest, LocalPrintRetryOnInvalidJobID) {
@@ -1115,26 +1039,20 @@ TEST_P(PrivetLocalPrintTest, LocalPrintRetryOnInvalidJobID) {
       RefCountedBytesFromString("Sample print data"));
   local_print_operation_->Start();
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/info"),
-                                      kSampleInfoResponseWithCreatejob));
-
   EXPECT_TRUE(
-      SuccessfulResponseToURL(GetUrl("/privet/info"), kSampleInfoResponse));
+      SuccessfulResponseToURL(kInfoURL, kSampleInfoResponseWithCreatejob));
 
-  EXPECT_TRUE(
-      SuccessfulResponseToURLAndJSONData(GetUrl("/privet/printer/createjob"),
-                                         kSampleCJT, kSampleCreatejobResponse));
+  EXPECT_TRUE(SuccessfulResponseToURL(kInfoURL, kSampleInfoResponse));
 
-  EXPECT_TRUE(SuccessfulResponseToURLAndData(
-      GetUrl("/privet/printer/submitdoc?"
-             "client_name=Chrome&user_name=sample%40gmail.com&"
-             "job_name=Sample+job+name&job_id=1234"),
-      "Sample print data", kSampleErrorResponsePrinterBusy));
+  EXPECT_TRUE(SuccessfulResponseToURLAndJSONData(kCreateJobURL, kSampleCJT,
+                                                 kSampleCreateJobResponse));
 
-  RunFor(base::TimeDelta::FromSeconds(3));
+  EXPECT_TRUE(SuccessfulResponseToURLAndData(kSubmitDocWithJobIDURL,
+                                             "Sample print data",
+                                             kSampleErrorResponsePrinterBusy));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(GetUrl("/privet/printer/createjob"),
-                                      kSampleCreatejobResponse));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(SuccessfulResponseToURL(kCreateJobURL, kSampleCreateJobResponse));
 }
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
@@ -1152,7 +1070,7 @@ class PrivetHttpWithServerTest : public ::testing::Test,
         std::make_unique<EmbeddedTestServer>(EmbeddedTestServer::TYPE_HTTP);
 
     base::FilePath test_data_dir;
-    ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+    ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
     server_->ServeFilesFromDirectory(
         test_data_dir.Append(FILE_PATH_LITERAL("chrome/test/data")));
     ASSERT_TRUE(server_->Start());

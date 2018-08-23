@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_CHROME_CONTENT_BROWSER_CLIENT_EXTENSIONS_PART_H_
 #define CHROME_BROWSER_EXTENSIONS_CHROME_CONTENT_BROWSER_CLIENT_EXTENSIONS_PART_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "chrome/browser/chrome_content_browser_client_parts.h"
+#include "content/public/common/resource_type.h"
 #include "ui/base/page_transition_types.h"
 
 namespace content {
@@ -33,14 +36,21 @@ class ChromeContentBrowserClientExtensionsPart
 
   // Corresponds to the ChromeContentBrowserClient function of the same name.
   static GURL GetEffectiveURL(Profile* profile, const GURL& url);
+  static bool ShouldCompareEffectiveURLsForSiteInstanceSelection(
+      content::BrowserContext* browser_context,
+      content::SiteInstance* candidate_site_instance,
+      bool is_main_frame,
+      const GURL& candidate_url,
+      const GURL& destination_url);
   static bool ShouldUseProcessPerSite(Profile* profile,
                                       const GURL& effective_url);
+  static bool ShouldUseSpareRenderProcessHost(Profile* profile,
+                                              const GURL& site_url);
   static bool DoesSiteRequireDedicatedProcess(
       content::BrowserContext* browser_context,
       const GURL& effective_site_url);
   static bool ShouldLockToOrigin(content::BrowserContext* browser_context,
                                  const GURL& effective_site_url);
-  static bool ShouldBypassDocumentBlocking(const url::Origin& initiator);
   static bool CanCommitURL(content::RenderProcessHost* process_host,
                            const GURL& url);
   static bool IsSuitableHost(Profile* profile,
@@ -77,6 +87,11 @@ class ChromeContentBrowserClientExtensionsPart
   static bool ShouldFrameShareParentSiteInstanceDespiteTopDocumentIsolation(
       const GURL& url,
       content::SiteInstance* parent_site_instance);
+
+  static void LogInitiatorSchemeBypassingDocumentBlocking(
+      const url::Origin& initiator_origin,
+      int render_process_id,
+      content::ResourceType resource_type);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ChromeContentBrowserClientExtensionsPartTest,

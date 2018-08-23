@@ -9,7 +9,7 @@
 #include "content/public/common/referrer.h"
 #include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "storage/common/blob_storage/blob_handle.h"
-#include "third_party/WebKit/public/platform/modules/fetch/fetch_api_request.mojom.h"
+#include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom.h"
 
 namespace mojo {
 
@@ -21,16 +21,6 @@ struct EnumTraits<blink::mojom::RequestContextType,
 
   static bool FromMojom(blink::mojom::RequestContextType input,
                         content::RequestContextType* out);
-};
-
-template <>
-struct EnumTraits<blink::mojom::ServiceWorkerFetchType,
-                  content::ServiceWorkerFetchType> {
-  static blink::mojom::ServiceWorkerFetchType ToMojom(
-      content::ServiceWorkerFetchType input);
-
-  static bool FromMojom(blink::mojom::ServiceWorkerFetchType input,
-                        content::ServiceWorkerFetchType* out);
 };
 
 template <>
@@ -72,20 +62,10 @@ struct StructTraits<blink::mojom::FetchAPIRequestDataView,
     return request.headers;
   }
 
-  static const std::string& blob_uuid(
+  // content::ServiceWorkerFetchRequest does not support the request body.
+  static blink::mojom::SerializedBlobPtr blob(
       const content::ServiceWorkerFetchRequest& request) {
-    return request.blob_uuid;
-  }
-
-  static uint64_t blob_size(const content::ServiceWorkerFetchRequest& request) {
-    return request.blob_size;
-  }
-
-  static blink::mojom::BlobPtr blob(
-      const content::ServiceWorkerFetchRequest& request) {
-    if (!request.blob)
-      return nullptr;
-    return request.blob->Clone();
+    return nullptr;
   }
 
   static const content::Referrer& referrer(
@@ -126,9 +106,9 @@ struct StructTraits<blink::mojom::FetchAPIRequestDataView,
     return request.is_reload;
   }
 
-  static content::ServiceWorkerFetchType fetch_type(
+  static bool is_history_navigation(
       const content::ServiceWorkerFetchRequest& request) {
-    return request.fetch_type;
+    return request.is_history_navigation;
   }
 
   static bool Read(blink::mojom::FetchAPIRequestDataView data,

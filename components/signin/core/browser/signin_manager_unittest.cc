@@ -13,11 +13,14 @@
 #include "base/compiler_specific.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
+#include "components/signin/core/browser/device_id_helper.h"
 #include "components/signin/core/browser/fake_account_fetcher_service.h"
 #include "components/signin/core/browser/fake_gaia_cookie_manager_service.h"
 #include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
@@ -29,10 +32,6 @@
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/cookies/cookie_monster.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_request.h"
-#include "net/url_request/url_request_context_getter.h"
-#include "net/url_request/url_request_status.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -82,18 +81,16 @@ class SigninManagerTest : public testing::Test {
  public:
   SigninManagerTest()
       : test_signin_client_(&user_prefs_),
+        token_service_(&user_prefs_),
         cookie_manager_service_(&token_service_,
                                 GaiaConstants::kChromeSource,
                                 &test_signin_client_),
-        url_fetcher_factory_(nullptr) {
-    test_signin_client_.SetURLRequestContext(
-        new net::TestURLRequestContextGetter(loop_.task_runner()));
-    cookie_manager_service_.Init(&url_fetcher_factory_);
+        account_consistency_(signin::AccountConsistencyMethod::kDisabled) {
     AccountFetcherService::RegisterPrefs(user_prefs_.registry());
     AccountTrackerService::RegisterPrefs(user_prefs_.registry());
     SigninManagerBase::RegisterProfilePrefs(user_prefs_.registry());
     SigninManagerBase::RegisterPrefs(local_state_.registry());
-    account_tracker_.Initialize(&test_signin_client_);
+    account_tracker_.Initialize(&user_prefs_, base::FilePath());
     account_fetcher_.Initialize(&test_signin_client_, &token_service_,
                                 &account_tracker_,
                                 std::make_unique<TestImageDecoder>());
@@ -115,6 +112,7 @@ class SigninManagerTest : public testing::Test {
 
   AccountTrackerService* account_tracker() { return &account_tracker_; }
   FakeAccountFetcherService* account_fetcher() { return &account_fetcher_; }
+  PrefService* prefs() { return &user_prefs_; }
 
   // Seed the account tracker with information from logged in user.  Normally
   // this is done by UI code before calling SigninManager.  Returns the string
@@ -131,7 +129,7 @@ class SigninManagerTest : public testing::Test {
     manager_ = std::make_unique<SigninManager>(
         &test_signin_client_, &token_service_, &account_tracker_,
         &cookie_manager_service_, nullptr /* signin_error_controller */,
-        signin::AccountConsistencyMethod::kDisabled);
+        account_consistency_);
     manager_->Initialize(&local_state_);
     manager_->AddObserver(&test_observer_);
   }
@@ -166,16 +164,16 @@ class SigninManagerTest : public testing::Test {
   base::MessageLoop loop_;
   sync_preferences::TestingPrefServiceSyncable user_prefs_;
   TestingPrefServiceSimple local_state_;
-  FakeProfileOAuth2TokenService token_service_;
   TestSigninClient test_signin_client_;
+  FakeProfileOAuth2TokenService token_service_;
   AccountTrackerService account_tracker_;
   FakeGaiaCookieManagerService cookie_manager_service_;
   FakeAccountFetcherService account_fetcher_;
-  net::FakeURLFetcherFactory url_fetcher_factory_;
   std::unique_ptr<SigninManager> manager_;
   TestSigninManagerObserver test_observer_;
   std::vector<std::string> oauth_tokens_fetched_;
   std::vector<std::string> cookies_;
+  signin::AccountConsistencyMethod account_consistency_;
 };
 
 TEST_F(SigninManagerTest, SignInWithRefreshToken) {
@@ -256,6 +254,79 @@ TEST_F(SigninManagerTest, SignOut) {
   EXPECT_FALSE(manager_->IsAuthenticated());
   EXPECT_TRUE(manager_->GetAuthenticatedAccountInfo().email.empty());
   EXPECT_TRUE(manager_->GetAuthenticatedAccountId().empty());
+}
+
+TEST_F(SigninManagerTest, SignOutRevoke) {
+  CreateSigninManager();
+  std::string main_account_id =
+      AddToAccountTracker("main_id", "user@gmail.com");
+  std::string other_account_id =
+      AddToAccountTracker("other_id", "other@gmail.com");
+  token_service_.UpdateCredentials(main_account_id, "token");
+  token_service_.UpdateCredentials(other_account_id, "token");
+  manager_->OnExternalSigninCompleted("user@gmail.com");
+  EXPECT_TRUE(manager_->IsAuthenticated());
+  EXPECT_EQ(main_account_id, manager_->GetAuthenticatedAccountId());
+
+  manager_->SignOut(signin_metrics::SIGNOUT_TEST,
+                    signin_metrics::SignoutDelete::IGNORE_METRIC);
+
+  // Tokens are revoked.
+  EXPECT_FALSE(manager_->IsAuthenticated());
+  EXPECT_TRUE(token_service_.GetAccounts().empty());
+}
+
+TEST_F(SigninManagerTest, SignOutDiceNoRevoke) {
+  account_consistency_ = signin::AccountConsistencyMethod::kDice;
+  CreateSigninManager();
+  std::string main_account_id =
+      AddToAccountTracker("main_id", "user@gmail.com");
+  std::string other_account_id =
+      AddToAccountTracker("other_id", "other@gmail.com");
+  token_service_.UpdateCredentials(main_account_id, "token");
+  token_service_.UpdateCredentials(other_account_id, "token");
+  manager_->OnExternalSigninCompleted("user@gmail.com");
+  EXPECT_TRUE(manager_->IsAuthenticated());
+  EXPECT_EQ(main_account_id, manager_->GetAuthenticatedAccountId());
+
+  manager_->SignOut(signin_metrics::SIGNOUT_TEST,
+                    signin_metrics::SignoutDelete::IGNORE_METRIC);
+
+  // Tokens are not revoked.
+  EXPECT_FALSE(manager_->IsAuthenticated());
+  std::vector<std::string> expected_tokens = {main_account_id,
+                                              other_account_id};
+  EXPECT_EQ(expected_tokens, token_service_.GetAccounts());
+}
+
+TEST_F(SigninManagerTest, SignOutDiceWithError) {
+  account_consistency_ = signin::AccountConsistencyMethod::kDice;
+  CreateSigninManager();
+  std::string main_account_id =
+      AddToAccountTracker("main_id", "user@gmail.com");
+  std::string other_account_id =
+      AddToAccountTracker("other_id", "other@gmail.com");
+  token_service_.UpdateCredentials(main_account_id, "token");
+  token_service_.UpdateCredentials(other_account_id, "token");
+  manager_->OnExternalSigninCompleted("user@gmail.com");
+
+  GoogleServiceAuthError error(
+      GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS);
+  token_service_.UpdateAuthErrorForTesting(main_account_id, error);
+  token_service_.UpdateAuthErrorForTesting(other_account_id, error);
+  ASSERT_TRUE(token_service_.RefreshTokenHasError(main_account_id));
+  ASSERT_TRUE(token_service_.RefreshTokenHasError(other_account_id));
+
+  EXPECT_TRUE(manager_->IsAuthenticated());
+  EXPECT_EQ(main_account_id, manager_->GetAuthenticatedAccountId());
+
+  manager_->SignOut(signin_metrics::SIGNOUT_TEST,
+                    signin_metrics::SignoutDelete::IGNORE_METRIC);
+
+  // Only main token is revoked.
+  EXPECT_FALSE(manager_->IsAuthenticated());
+  std::vector<std::string> expected_tokens = {other_account_id};
+  EXPECT_EQ(expected_tokens, token_service_.GetAccounts());
 }
 
 TEST_F(SigninManagerTest, SignOutWhileProhibited) {
@@ -443,7 +514,7 @@ TEST_F(SigninManagerTest, GaiaIdMigration) {
     update->Append(std::move(dict));
 
     account_tracker()->Shutdown();
-    account_tracker()->Initialize(signin_client());
+    account_tracker()->Initialize(prefs(), base::FilePath());
 
     client_prefs->SetString(prefs::kGoogleServicesAccountId, email);
 
@@ -473,7 +544,7 @@ TEST_F(SigninManagerTest, VeryOldProfileGaiaIdMigration) {
     update->Append(std::move(dict));
 
     account_tracker()->Shutdown();
-    account_tracker()->Initialize(signin_client());
+    account_tracker()->Initialize(prefs(), base::FilePath());
 
     client_prefs->ClearPref(prefs::kGoogleServicesAccountId);
     client_prefs->SetString(prefs::kGoogleServicesUsername, email);
@@ -503,7 +574,7 @@ TEST_F(SigninManagerTest, GaiaIdMigrationCrashInTheMiddle) {
     update->Append(std::move(dict));
 
     account_tracker()->Shutdown();
-    account_tracker()->Initialize(signin_client());
+    account_tracker()->Initialize(prefs(), base::FilePath());
 
     client_prefs->SetString(prefs::kGoogleServicesAccountId, gaia_id);
 

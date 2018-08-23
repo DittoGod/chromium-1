@@ -11,8 +11,8 @@
 
 #include "base/macros.h"
 #include "base/synchronization/cancellation_flag.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
@@ -56,7 +56,7 @@ void ResetShortcutsOnBlockingThread() {
   base::AssertBlockingAllowed();
   // Get full path of chrome.
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe))
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe))
     return;
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
   for (int location = ShellUtil::SHORTCUT_LOCATION_FIRST;
@@ -261,7 +261,7 @@ void ProfileResetter::ResetExtensions() {
   std::vector<std::string> brandcode_extensions;
   master_settings_->GetExtensions(&brandcode_extensions);
 
-  ExtensionService* extension_service =
+  extensions::ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile_)->extension_service();
   DCHECK(extension_service);
   extension_service->DisableUserExtensionsExcept(brandcode_extensions);
@@ -355,7 +355,7 @@ std::vector<ShortcutCommand> GetChromeLaunchShortcuts(
   base::AssertBlockingAllowed();
   // Get full path of chrome.
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe))
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe))
     return std::vector<ShortcutCommand>();
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
   std::vector<ShortcutCommand> shortcuts;

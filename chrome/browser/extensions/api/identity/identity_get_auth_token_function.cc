@@ -16,7 +16,7 @@
 #include "chrome/browser/extensions/api/identity/identity_constants.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/account_tracker_service_factory.h"
-#include "chrome/browser/signin/chrome_signin_client_factory.h"
+#include "chrome/browser/signin/chrome_device_id_helper.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
@@ -58,8 +58,6 @@ const char* const kPublicSessionAllowedOrigins[] = {
 
 }  // namespace
 
-namespace identity = api::identity;
-
 IdentityGetAuthTokenFunction::IdentityGetAuthTokenFunction()
     :
 #if defined(OS_CHROMEOS)
@@ -86,8 +84,8 @@ bool IdentityGetAuthTokenFunction::RunAsync() {
     return false;
   }
 
-  std::unique_ptr<identity::GetAuthToken::Params> params(
-      identity::GetAuthToken::Params::Create(*args_));
+  std::unique_ptr<api::identity::GetAuthToken::Params> params(
+      api::identity::GetAuthToken::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   interactive_ = params->details.get() &&
       params->details->interactive.get() &&
@@ -293,8 +291,8 @@ void IdentityGetAuthTokenFunction::StartSigninFlow() {
   // Start listening for the primary account being available and display a
   // login prompt.
   GetIdentityManager()->GetPrimaryAccountWhenAvailable(
-      base::Bind(&IdentityGetAuthTokenFunction::OnPrimaryAccountAvailable,
-                 base::Unretained(this)));
+      base::BindOnce(&IdentityGetAuthTokenFunction::OnPrimaryAccountAvailable,
+                     base::Unretained(this)));
 
   ShowLoginPopup();
 }
@@ -686,7 +684,7 @@ void IdentityGetAuthTokenFunction::StartGaiaRequest(
     const std::string& login_access_token) {
   DCHECK(!login_access_token.empty());
   mint_token_flow_.reset(CreateMintTokenFlow());
-  mint_token_flow_->Start(GetProfile()->GetRequestContext(),
+  mint_token_flow_->Start(GetProfile()->GetURLLoaderFactory(),
                           login_access_token);
 }
 
@@ -706,10 +704,8 @@ void IdentityGetAuthTokenFunction::ShowOAuthApprovalDialog(
 }
 
 OAuth2MintTokenFlow* IdentityGetAuthTokenFunction::CreateMintTokenFlow() {
-  SigninClient* signin_client =
-      ChromeSigninClientFactory::GetForProfile(GetProfile());
   std::string signin_scoped_device_id =
-      signin_client->GetSigninScopedDeviceId();
+      GetSigninScopedDeviceIdForProfile(GetProfile());
   OAuth2MintTokenFlow* mint_token_flow = new OAuth2MintTokenFlow(
       this,
       OAuth2MintTokenFlow::Parameters(

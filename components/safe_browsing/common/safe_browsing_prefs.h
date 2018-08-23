@@ -9,16 +9,15 @@
 
 #include "base/feature_list.h"
 #include "base/values.h"
+#include "components/prefs/pref_member.h"
 
 class PrefRegistrySimple;
 class PrefService;
+class GURL;
 
 namespace prefs {
 // Boolean that is true when SafeBrowsing is enabled.
 extern const char kSafeBrowsingEnabled[];
-
-// Boolean that tell us whether Safe Browsing extended reporting is enabled.
-extern const char kSafeBrowsingExtendedReportingEnabled[];
 
 // Boolean that tells us whether users are given the option to opt in to Safe
 // Browsing extended reporting. This is exposed as a preference that can be
@@ -26,6 +25,9 @@ extern const char kSafeBrowsingExtendedReportingEnabled[];
 extern const char kSafeBrowsingExtendedReportingOptInAllowed[];
 
 // A dictionary mapping incident types to a dict of incident key:digest pairs.
+// The key is a string: a filename or pref name. Digests are 4 bytes. This pref
+// is only set/updated if Chrome (Windows only) notices certain security
+// incidents, e.g. the user downloaded binaries with invalid signatures.
 extern const char kSafeBrowsingIncidentsSent[];
 
 // Boolean that is true when the SafeBrowsing interstitial should not allow
@@ -49,18 +51,26 @@ extern const char kSafeBrowsingScoutGroupSelected[];
 // collects data for malware detection.
 extern const char kSafeBrowsingScoutReportingEnabled[];
 
+// Dictionary containing safe browsing triggers and the list of times they have
+// fired recently. The keys are TriggerTypes (4-byte ints) and the values are
+// lists of doubles.
+extern const char kSafeBrowsingTriggerEventTimestamps[];
+
 // Dictionary that records the origin and navigation ID pairs of unhandled sync
-// password reuses.
+// password reuses. The keys are origin strings and the ID values are 8-byte
+// ints. Only set/update if a Chrome Sync user reuses their Gaia password on
+// phishing site.
 extern const char kSafeBrowsingUnhandledSyncPasswordReuses[];
 
 // List of domains where Safe Browsing should trust. That means Safe Browsing
 // won't check for malware/phishing/Uws on resources on these domains, or
-// trigger warnings.
+// trigger warnings. Used for enterprise only.
 extern const char kSafeBrowsingWhitelistDomains[];
 
 // String indicating the URL where password protection service should send user
 // to change their password if they've been phished. Password protection service
-// also captures new password on this page in a change password event.
+// also captures new password on this page in a change password event. Used for
+// enterprise only.
 extern const char kPasswordProtectionChangePasswordURL[];
 
 // List of string indicating the URL(s) users use to log in. Password protection
@@ -74,10 +84,9 @@ extern const char kPasswordProtectionLoginURLs[];
 // enterprise policy.
 extern const char kPasswordProtectionWarningTrigger[];
 
-// Integer indicating the password protection at-risk account flagging trigger.
-// This is managed by enterprise policy and has no effect on users who are not
-// managed by enterprise policy.
-extern const char kPasswordProtectionRiskTrigger[];
+// Last time Chrome refreshes advanced protection status for sign-in users (in
+// microseconds);
+extern const char kAdvancedProtectionLastRefreshInUs[];
 }
 
 namespace safe_browsing {
@@ -158,11 +167,6 @@ ExtendedReportingLevel GetExtendedReportingLevel(const PrefService& prefs);
 // currently in effect. The specific pref in-use may change through experiments.
 const char* GetExtendedReportingPrefName(const PrefService& prefs);
 
-// Initializes Safe Browsing preferences based on data such as experiment state,
-// command line flags, etc.
-// TODO: this is temporary (crbug.com/662944)
-void InitializeSafeBrowsingPrefs(PrefService* prefs);
-
 // Returns whether the user is able to modify the Safe Browsing Extended
 // Reporting opt-in.
 bool IsExtendedReportingOptInAllowed(const PrefService& prefs);
@@ -172,6 +176,10 @@ bool IsExtendedReportingOptInAllowed(const PrefService& prefs);
 // regardless of which specific one is set.
 bool IsExtendedReportingEnabled(const PrefService& prefs);
 
+// Returns whether the active Extended Reporting pref is currently managed by
+// enterprise policy, meaning the user can't change it.
+bool IsExtendedReportingPolicyManaged(const PrefService& prefs);
+
 // Returns whether the currently-active Extended Reporting pref is Scout.
 bool IsScout(const PrefService& prefs);
 
@@ -180,6 +188,9 @@ void RecordExtendedReportingMetrics(const PrefService& prefs);
 
 // Registers user preferences related to Safe Browsing.
 void RegisterProfilePrefs(PrefRegistrySimple* registry);
+
+// Registers local state prefs related to Safe Browsing.
+void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
 // Sets the currently active Safe Browsing Extended Reporting preference to the
 // specified value. The |location| indicates the UI where the change was
@@ -217,6 +228,38 @@ void GetSafeBrowsingWhitelistDomainsPref(
 void CanonicalizeDomainList(
     const base::ListValue& raw_domain_list,
     std::vector<std::string>* out_canonicalized_domain_list);
+
+// Helper function to determine if |url| matches Safe Browsing whitelist domains
+// (a.k. a prefs::kSafeBrowsingWhitelistDomains).
+// Called on IO thread.
+bool IsURLWhitelistedByPolicy(const GURL& url,
+                              StringListPrefMember* pref_member);
+
+// Helper function to determine if |url| matches Safe Browsing whitelist domains
+// (a.k. a prefs::kSafeBrowsingWhitelistDomains).
+// Called on UI thread.
+bool IsURLWhitelistedByPolicy(const GURL& url, const PrefService& pref);
+
+// Helper function to get the pref value of password protection login URLs.
+void GetPasswordProtectionLoginURLsPref(const PrefService& prefs,
+                                        std::vector<GURL>* out_login_url_list);
+
+// Helper function that returns true if |url| matches any password protection
+// login URLs. Returns false otherwise.
+bool MatchesPasswordProtectionLoginURL(const GURL& url,
+                                       const PrefService& prefs);
+
+// Helper function to get the pref value of password protection change password
+// URL.
+GURL GetPasswordProtectionChangePasswordURLPref(const PrefService& prefs);
+
+// Helper function that returns true if |url| matches password protection
+// change password URL. Returns false otherwise.
+bool MatchesPasswordProtectionChangePasswordURL(const GURL& url,
+                                                const PrefService& prefs);
+
+// Helper function to match a |target_url| against |url_list|.
+bool MatchesURLList(const GURL& target_url, const std::vector<GURL> url_list);
 
 }  // namespace safe_browsing
 

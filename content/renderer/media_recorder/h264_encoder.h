@@ -5,7 +5,8 @@
 #ifndef CONTENT_RENDERER_MEDIA_RECORDER_H264_ENCODER_H_
 #define CONTENT_RENDERER_MEDIA_RECORDER_H264_ENCODER_H_
 
-#include "content/public/common/features.h"
+#include "base/single_thread_task_runner.h"
+#include "content/public/common/buildflags.h"
 
 #if !BUILDFLAG(RTC_USE_H264)
 #error RTC_USE_H264 should be defined.

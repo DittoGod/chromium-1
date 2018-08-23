@@ -16,8 +16,8 @@ namespace content {
 class DownloadManager;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace prefs {
@@ -51,12 +51,14 @@ class ServicesDelegate {
   // ServicesDelegate will use its built-in service creation code.
   class ServicesCreator {
    public:
+    virtual bool CanCreateDatabaseManager() = 0;
     virtual bool CanCreateDownloadProtectionService() = 0;
     virtual bool CanCreateIncidentReportingService() = 0;
     virtual bool CanCreateResourceRequestDetector() = 0;
 
     // Caller takes ownership of the returned object. Cannot use std::unique_ptr
     // because services may not be implemented for some build configs.
+    virtual SafeBrowsingDatabaseManager* CreateDatabaseManager() = 0;
     virtual DownloadProtectionService* CreateDownloadProtectionService() = 0;
     virtual IncidentReportingService* CreateIncidentReportingService() = 0;
     virtual ResourceRequestDetector* CreateResourceRequestDetector() = 0;
@@ -74,15 +76,18 @@ class ServicesDelegate {
 
   virtual ~ServicesDelegate() {}
 
-  virtual const scoped_refptr<SafeBrowsingDatabaseManager>&
-  v4_local_database_manager() const = 0;
+  virtual const scoped_refptr<SafeBrowsingDatabaseManager>& database_manager()
+      const = 0;
 
   // Initializes internal state using the ServicesCreator.
-  virtual void Initialize(bool v4_enabled = false) = 0;
+  virtual void Initialize() = 0;
 
-  // Creates the CSD service for the given |context_getter|.
+  // Creates the CSD service for the given |url_loader_factory|.
   virtual void InitializeCsdService(
-      net::URLRequestContextGetter* context_getter) = 0;
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) = 0;
+
+  virtual void SetDatabaseManagerForTest(
+      SafeBrowsingDatabaseManager* database_manager) = 0;
 
   // Shuts down the download service.
   virtual void ShutdownServices() = 0;
@@ -104,8 +109,8 @@ class ServicesDelegate {
   virtual DownloadProtectionService* GetDownloadService() = 0;
 
   virtual void StartOnIOThread(
-    net::URLRequestContextGetter* url_request_context_getter,
-    const V4ProtocolConfig& v4_config) = 0;
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      const V4ProtocolConfig& v4_config) = 0;
   virtual void StopOnIOThread(bool shutdown) = 0;
 
   virtual void CreatePasswordProtectionService(Profile* profile) = 0;

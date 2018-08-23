@@ -7,7 +7,6 @@
 #include <memory>
 #include <utility>
 
-#include "ash/resources/grit/ash_resources.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "base/bind.h"
@@ -63,7 +62,8 @@ class BluetoothPairingNotificationDelegate
 
   // message_center::NotificationDelegate overrides.
   void Close(bool by_user) override;
-  void ButtonClick(int button_index) override;
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override;
 
  private:
   // Buttons that appear in notifications.
@@ -100,13 +100,18 @@ void BluetoothPairingNotificationDelegate::Close(bool by_user) {
     device->CancelPairing();
 }
 
-void BluetoothPairingNotificationDelegate::ButtonClick(int button_index) {
-  VLOG(1) << "Pairing notification, button click: " << button_index;
+void BluetoothPairingNotificationDelegate::Click(
+    const base::Optional<int>& button_index,
+    const base::Optional<base::string16>& reply) {
+  if (!button_index)
+    return;
+
+  VLOG(1) << "Pairing notification, button click: " << *button_index;
   // If the device object still exists, send the appropriate response either
   // confirming or rejecting the pairing.
   BluetoothDevice* device = adapter_->GetDevice(address_);
   if (device) {
-    switch (button_index) {
+    switch (*button_index) {
       case BUTTON_ACCEPT:
         device->ConfirmPairing();
         break;
@@ -272,7 +277,7 @@ void BluetoothNotificationController::NotifyAdapterDiscoverable() {
           l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_BLUETOOTH_DISCOVERABLE,
                                      base::UTF8ToUTF16(adapter_->GetName()),
                                      base::UTF8ToUTF16(adapter_->GetAddress())),
-          gfx::Image(), base::string16() /* display source */, GURL(),
+          base::string16() /* display source */, GURL(),
           message_center::NotifierId(
               message_center::NotifierId::SYSTEM_COMPONENT, kNotifierBluetooth),
           optional, nullptr, kNotificationBluetoothIcon,
@@ -296,7 +301,7 @@ void BluetoothNotificationController::NotifyPairing(
       Notification::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE,
           kBluetoothDevicePairingNotificationId, base::string16() /* title */,
-          message, gfx::Image(), base::string16() /* display source */, GURL(),
+          message, base::string16() /* display source */, GURL(),
           message_center::NotifierId(
               message_center::NotifierId::SYSTEM_COMPONENT, kNotifierBluetooth),
           optional,
@@ -323,7 +328,7 @@ void BluetoothNotificationController::NotifyPairedDevice(
           kBluetoothDevicePairedNotificationId, base::string16() /* title */,
           l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_BLUETOOTH_PAIRED,
                                      device->GetNameForDisplay()),
-          gfx::Image(), base::string16() /* display source */, GURL(),
+          base::string16() /* display source */, GURL(),
           message_center::NotifierId(
               message_center::NotifierId::SYSTEM_COMPONENT, kNotifierBluetooth),
           optional, nullptr, kNotificationBluetoothIcon,

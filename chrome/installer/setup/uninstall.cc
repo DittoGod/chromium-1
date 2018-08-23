@@ -7,6 +7,7 @@
 #include "chrome/installer/setup/uninstall.h"
 
 #include <windows.h>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -236,7 +237,7 @@ DeleteResult DeleteEmptyDir(const base::FilePath& path) {
 // Get the user data directory.
 base::FilePath GetUserDataDir(const Product& product) {
   base::FilePath path;
-  if (!PathService::Get(chrome::DIR_USER_DATA, &path))
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &path))
     return base::FilePath();
   return path;
 }
@@ -299,7 +300,7 @@ bool MoveSetupOutOfInstallFolder(const InstallerState& installer_state,
 
   base::FilePath tmp_dir;
   base::FilePath temp_file;
-  if (!PathService::Get(base::DIR_TEMP, &tmp_dir)) {
+  if (!base::PathService::Get(base::DIR_TEMP, &tmp_dir)) {
     NOTREACHED();
     return false;
   }
@@ -392,7 +393,7 @@ DeleteResult DeleteChromeFilesAndFolders(const InstallerState& installer_state,
 InstallStatus IsChromeActiveOrUserCancelled(
     const InstallerState& installer_state,
     const Product& product) {
-  int32_t exit_code = content::RESULT_CODE_NORMAL_EXIT;
+  int32_t exit_code = service_manager::RESULT_CODE_NORMAL_EXIT;
   base::CommandLine options(base::CommandLine::NO_PROGRAM);
   options.AppendSwitch(installer::switches::kUninstall);
 
@@ -571,12 +572,6 @@ void RemoveBlacklistState() {
                                  install_static::GetRegistryPath().append(
                                      blacklist::kRegistryBeaconKeyName),
                                  0);  // wow64_access
-  // The following key is no longer used (https://crbug.com/631771). This
-  // cleanup is being left in for a time though.
-  InstallUtil::DeleteRegistryKey(
-      HKEY_CURRENT_USER,
-      install_static::GetRegistryPath().append(L"\\BLFinchList"),
-      0);  // wow64_access
 }
 
 // Removes the browser's persistent state in the Windows registry for the
@@ -637,6 +632,16 @@ bool DeleteChromeRegistrationKeys(const InstallerState& installer_state,
   // would otherwise try to figure out the currently installed suffix).
   reg_app_id.append(install_static::GetBaseAppId() + browser_entry_suffix);
   InstallUtil::DeleteRegistryKey(root, reg_app_id, WorkItem::kWow64Default);
+
+  // Delete Software\Classes\CLSID\|toast_activator_clsid|.
+  base::string16 toast_activator_reg_path =
+      InstallUtil::GetToastActivatorRegistryPath();
+  if (!toast_activator_reg_path.empty()) {
+    InstallUtil::DeleteRegistryKey(root, toast_activator_reg_path,
+                                   WorkItem::kWow64Default);
+  } else {
+    LOG(DFATAL) << "Cannot retrieve the toast activator registry path";
+  }
 
   // Delete all Start Menu Internet registrations that refer to this Chrome.
   {

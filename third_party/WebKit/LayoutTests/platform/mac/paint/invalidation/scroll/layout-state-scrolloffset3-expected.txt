@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,34 +18,16 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow DIV id='target'",
-          "rect": [100, 118, 34, 50],
-          "reason": "geometry"
+          "object": "InlineTextBox 'before'",
+          "rect": [100, 118, 34, 18],
+          "reason": "disappeared"
         },
         {
-          "object": "LayoutText #text",
-          "rect": [100, 118, 34, 18],
-          "reason": "full"
+          "object": "InlineTextBox 'after'",
+          "rect": [100, 118, 30, 18],
+          "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'after'",
-      "reason": "full"
     }
   ]
 }

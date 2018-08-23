@@ -7,19 +7,17 @@
 #include "ios/chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
-#import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/ui/ntp/ntp_util.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive/adaptive_toolbar_coordinator+subclassing.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive/adaptive_toolbar_view_controller.h"
-#import "ios/chrome/browser/ui/toolbar/clean/toolbar_button_factory.h"
-#import "ios/chrome/browser/ui/toolbar/clean/toolbar_button_visibility_configuration.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_button_factory.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_button_visibility_configuration.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_tools_menu_button.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/tools_menu_button_observer_bridge.h"
 #import "ios/chrome/browser/ui/toolbar/clean/toolbar_mediator.h"
-#import "ios/chrome/browser/ui/toolbar/clean/toolbar_tools_menu_button.h"
-#import "ios/chrome/browser/ui/toolbar/public/web_toolbar_controller_constants.h"
-#import "ios/chrome/browser/ui/toolbar/tools_menu_button_observer_bridge.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
-#include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+#import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -39,6 +37,7 @@
 
 @implementation AdaptiveToolbarCoordinator
 @synthesize dispatcher = _dispatcher;
+@synthesize longPressDelegate = _longPressDelegate;
 @synthesize mediator = _mediator;
 @synthesize started = _started;
 @synthesize toolsMenuButtonObserverBridge = _toolsMenuButtonObserverBridge;
@@ -57,9 +56,9 @@
 
   self.started = YES;
 
+  self.viewController.longPressDelegate = self.longPressDelegate;
+
   self.mediator = [[ToolbarMediator alloc] init];
-  self.mediator.voiceSearchProvider =
-      ios::GetChromeBrowserProvider()->GetVoiceSearchProvider();
   self.mediator.consumer = self.viewController;
   self.mediator.webStateList = self.webStateList;
   self.mediator.bookmarkModel =
@@ -72,11 +71,23 @@
       toolbarButton:self.viewController.toolsMenuButton];
 }
 
+- (void)stop {
+  [super stop];
+  self.toolsMenuButtonObserverBridge = nil;
+  [self.mediator disconnect];
+  self.mediator = nil;
+}
+
+#pragma mark - Properties
+
+- (void)setLongPressDelegate:(id<PopupMenuLongPressDelegate>)longPressDelegate {
+  _longPressDelegate = longPressDelegate;
+  self.viewController.longPressDelegate = longPressDelegate;
+}
+
 #pragma mark - SideSwipeToolbarSnapshotProviding
 
-- (UIImage*)toolbarSideSwipeSnapshotForTab:(Tab*)tab {
-  web::WebState* webState = tab.webState;
-
+- (UIImage*)toolbarSideSwipeSnapshotForWebState:(web::WebState*)webState {
   [self updateToolbarForSideSwipeSnapshot:webState];
 
   UIImage* toolbarSnapshot = CaptureViewWithOption(
@@ -88,16 +99,26 @@
   return toolbarSnapshot;
 }
 
-#pragma mark - ToolbarCoordinating
+#pragma mark - NewTabPageControllerDelegate
 
-- (void)setToolbarBackgroundAlpha:(CGFloat)alpha {
-  // TODO(crbug.com/803379): Implement that.
+- (void)setToolbarBackgroundToIncognitoNTPColorWithAlpha:(CGFloat)alpha {
+  // No-op, not needed in UI refresh.
+}
+
+- (void)setScrollProgressForTabletOmnibox:(CGFloat)progress {
+  [self.viewController setScrollProgressForTabletOmnibox:progress];
 }
 
 #pragma mark - ToolbarCommands
 
 - (void)triggerToolsMenuButtonAnimation {
   [self.viewController.toolsMenuButton triggerAnimation];
+}
+
+#pragma mark - ToolbarCoordinatee
+
+- (id<PopupMenuUIUpdating>)popupMenuUIUpdater {
+  return self.viewController;
 }
 
 #pragma mark - Protected
@@ -119,9 +140,7 @@
   BOOL isNTP = IsVisibleUrlNewTabPage(webState);
 
   [self.mediator updateConsumerForWebState:webState];
-  if (webState != self.webStateList->GetActiveWebState() || isNTP) {
-    [self.viewController updateForSideSwipeSnapshotOnNTP:isNTP];
-  }
+  [self.viewController updateForSideSwipeSnapshotOnNTP:isNTP];
 }
 
 - (void)resetToolbarAfterSideSwipeSnapshot {

@@ -178,6 +178,7 @@ void UserManagerBase::UserLoggedIn(const AccountId& account_id,
   } else {
     switch (user_type) {
       case USER_TYPE_REGULAR:  // fallthrough
+      case USER_TYPE_CHILD:    // fallthrough
       case USER_TYPE_ACTIVE_DIRECTORY:
         if (account_id != GetOwnerAccountId() && !user &&
             (AreEphemeralUsersEnabled() || browser_restart)) {
@@ -202,10 +203,6 @@ void UserManagerBase::UserLoggedIn(const AccountId& account_id,
 
       case USER_TYPE_KIOSK_APP:
         KioskAppLoggedIn(user);
-        break;
-
-      case USER_TYPE_CHILD:
-        RegularUserLoggedIn(account_id, USER_TYPE_CHILD);
         break;
 
       case USER_TYPE_ARC_KIOSK_APP:
@@ -918,6 +915,9 @@ void UserManagerBase::RegularUserLoggedIn(const AccountId& account_id,
   active_user_ =
       RemoveRegularOrSupervisedUserFromList(account_id, false /* notify */);
 
+  if (active_user_ && active_user_->GetType() != user_type)
+    active_user_->UpdateType(user_type);
+
   // If the user was not found on the user list, create a new user.
   SetIsCurrentUserNew(!active_user_);
   if (IsCurrentUserNew()) {
@@ -934,6 +934,7 @@ void UserManagerBase::RegularUserLoggedIn(const AccountId& account_id,
   }
 
   AddUserRecord(active_user_);
+  known_user::SetIsEphemeralUser(active_user_->GetAccountId(), false);
 
   // Make sure that new data is persisted to Local State.
   GetLocalState()->CommitPendingWrite();
@@ -946,6 +947,7 @@ void UserManagerBase::RegularUserLoggedInAsEphemeral(
   SetIsCurrentUserNew(true);
   is_current_user_ephemeral_regular_user_ = true;
   active_user_ = User::CreateRegularUser(account_id, user_type);
+  known_user::SetIsEphemeralUser(active_user_->GetAccountId(), true);
 }
 
 void UserManagerBase::NotifyOnLogin() {
@@ -1075,6 +1077,8 @@ void UserManagerBase::ResetProfileEverInitialized(const AccountId& account_id) {
 
 void UserManagerBase::Initialize() {
   UserManager::Initialize();
+  if (!HasBrowserRestarted())
+    known_user::CleanEphemeralUsers();
   CallUpdateLoginState();
 }
 
@@ -1117,14 +1121,15 @@ void UserManagerBase::UpdateUserAccountLocale(const AccountId& account_id,
                                               const std::string& locale) {
   std::unique_ptr<std::string> resolved_locale(new std::string());
   if (!locale.empty() && locale != GetApplicationLocale()) {
-    // base::Passed will nullptr out |resolved_locale|, so cache the underlying
+    // std::move will nullptr out |resolved_locale|, so cache the underlying
     // ptr.
     std::string* raw_resolved_locale = resolved_locale.get();
-    ScheduleResolveLocale(locale,
-                          base::Bind(&UserManagerBase::DoUpdateAccountLocale,
-                                     weak_factory_.GetWeakPtr(), account_id,
-                                     base::Passed(&resolved_locale)),
-                          raw_resolved_locale);
+    ScheduleResolveLocale(
+        locale,
+        base::BindOnce(&UserManagerBase::DoUpdateAccountLocale,
+                       weak_factory_.GetWeakPtr(), account_id,
+                       std::move(resolved_locale)),
+        raw_resolved_locale);
   } else {
     resolved_locale.reset(new std::string(locale));
     DoUpdateAccountLocale(account_id, std::move(resolved_locale));

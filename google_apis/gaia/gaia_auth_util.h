@@ -36,6 +36,8 @@ struct ListedAccount {
 
 // Perform basic canonicalization of |email_address|, taking into account that
 // gmail does not consider '.' or caps inside a username to matter.
+// If |email_address| is not a valid, returns it in lower case without
+// additional canonicalization.
 std::string CanonicalizeEmail(const std::string& email_address);
 
 // Returns the canonical form of the given domain.
@@ -52,12 +54,7 @@ bool AreEmailsSame(const std::string& email1, const std::string& email2);
 // Extract the domain part from the canonical form of the given email.
 std::string ExtractDomainName(const std::string& email);
 
-// Returns true if |url| matches the GAIA origin URL.
 bool IsGaiaSignonRealm(const GURL& url);
-
-// Returns true if the URL corresponds to a URL used during a Chrome sign-in
-// flow.
-bool ShouldSkipSavePasswordForGaiaURL(const GURL& url);
 
 // Parses JSON data returned by /ListAccounts call, returning a vector of
 // email/valid pairs.  An email addresses is considered valid if a passive

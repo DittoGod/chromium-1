@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -377,80 +378,6 @@
           "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) div id='html' class='outerBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow div class='innerBox'",
-      "reason": "geometry"
     }
   ]
 }

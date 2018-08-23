@@ -26,8 +26,13 @@ network::mojom::NetworkContext* TestStoragePartition::GetNetworkContext() {
   return network_context_;
 }
 
-scoped_refptr<SharedURLLoaderFactory>
+scoped_refptr<network::SharedURLLoaderFactory>
 TestStoragePartition::GetURLLoaderFactoryForBrowserProcess() {
+  return nullptr;
+}
+
+std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+TestStoragePartition::GetURLLoaderFactoryForBrowserProcessIOThread() {
   return nullptr;
 }
 
@@ -72,9 +77,18 @@ CacheStorageContext* TestStoragePartition::GetCacheStorageContext() {
   return cache_storage_context_;
 }
 
+GeneratedCodeCacheContext*
+TestStoragePartition::GetGeneratedCodeCacheContext() {
+  return generated_code_cache_context_;
+}
+
 PlatformNotificationContext*
 TestStoragePartition::GetPlatformNotificationContext() {
   return nullptr;
+}
+
+WebPackageContext* TestStoragePartition::GetWebPackageContext() {
+  return web_package_context_;
 }
 
 #if !defined(OS_ANDROID)
@@ -109,7 +123,7 @@ void TestStoragePartition::ClearData(
     uint32_t remove_mask,
     uint32_t quota_storage_remove_mask,
     const OriginMatcherFunction& origin_matcher,
-    const CookieMatcherFunction& cookie_matcher,
+    network::mojom::CookieDeletionFilterPtr cookie_deletion_filter,
     const base::Time begin,
     const base::Time end,
     base::OnceClosure callback) {}
@@ -121,6 +135,8 @@ void TestStoragePartition::ClearHttpAndMediaCaches(
     base::OnceClosure callback) {}
 
 void TestStoragePartition::Flush() {}
+
+void TestStoragePartition::ResetURLLoaderFactories() {}
 
 void TestStoragePartition::ClearBluetoothAllowedDevicesMapForTesting() {}
 

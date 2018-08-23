@@ -5,7 +5,9 @@
 #ifndef CONTENT_RENDERER_INDEXED_DB_INDEXED_DB_DATABASE_CALLBACKS_IMPL_H_
 #define CONTENT_RENDERER_INDEXED_DB_INDEXED_DB_DATABASE_CALLBACKS_IMPL_H_
 
+#include "base/single_thread_task_runner.h"
 #include "content/common/indexed_db/indexed_db.mojom.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace blink {
 class WebIDBDatabaseCallbacks;
@@ -17,8 +19,7 @@ class IndexedDBDatabaseCallbacksImpl
     : public indexed_db::mojom::DatabaseCallbacks {
  public:
   explicit IndexedDBDatabaseCallbacksImpl(
-      std::unique_ptr<blink::WebIDBDatabaseCallbacks> callbacks,
-      scoped_refptr<base::SingleThreadTaskRunner> callback_runner);
+      std::unique_ptr<blink::WebIDBDatabaseCallbacks> callbacks);
   ~IndexedDBDatabaseCallbacksImpl() override;
 
   // indexed_db::mojom::DatabaseCallbacks implementation
@@ -31,8 +32,7 @@ class IndexedDBDatabaseCallbacksImpl
   void Changes(indexed_db::mojom::ObserverChangesPtr changes) override;
 
  private:
-  scoped_refptr<base::SingleThreadTaskRunner> callback_runner_;
-  blink::WebIDBDatabaseCallbacks* callbacks_;
+  std::unique_ptr<blink::WebIDBDatabaseCallbacks> callbacks_;
 
   DISALLOW_COPY_AND_ASSIGN(IndexedDBDatabaseCallbacksImpl);
 };

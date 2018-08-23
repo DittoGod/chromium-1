@@ -17,6 +17,7 @@
 #include "base/compiler_specific.h"
 #include "base/component_export.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "mojo/public/cpp/bindings/lib/buffer.h"
 #include "mojo/public/cpp/bindings/lib/message_internal.h"
 #include "mojo/public/cpp/bindings/lib/unserialized_message_context.h"
@@ -210,6 +211,16 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) Message {
         generic_context.release()->template SafeCast<MessageType>());
   }
 
+#if defined(ENABLE_IPC_FUZZER)
+  const char* interface_name() const { return interface_name_; }
+  void set_interface_name(const char* interface_name) {
+    interface_name_ = interface_name;
+  }
+
+  const char* method_name() const { return method_name_; }
+  void set_method_name(const char* method_name) { method_name_ = method_name; }
+#endif
+
  private:
   ScopedMessageHandle handle_;
 
@@ -228,6 +239,11 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) Message {
 
   // Indicates whether this Message object is serialized.
   bool serialized_ = false;
+
+#if defined(ENABLE_IPC_FUZZER)
+  const char* interface_name_ = nullptr;
+  const char* method_name_ = nullptr;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(Message);
 };

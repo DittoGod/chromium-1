@@ -16,15 +16,15 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/apps/app_info_dialog.h"
-#include "chrome/browser/ui/bookmarks/bookmark_bar_constants.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/webui/app_launcher_login_handler.h"
 #include "chrome/browser/ui/webui/ntp/app_launcher_handler.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -32,15 +32,15 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
+#include "services/identity/public/cpp/identity_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/template_expressions.h"
@@ -108,7 +108,7 @@ std::string GetNewTabBackgroundCSS(const ui::ThemeProvider& theme_provider,
   if (alignment & ThemeProperties::ALIGN_TOP) {
     // The bar is detached, so we must offset the background by the bar size
     // if it's a top-aligned bar.
-    int offset = chrome::kNTPBookmarkBarHeight;
+    int offset = GetLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT);
 
     if (alignment & ThemeProperties::ALIGN_LEFT)
       return "left " + base::IntToString(-offset) + "px";
@@ -457,7 +457,7 @@ void NTPResourceCache::CreateNewTabHTML() {
 
   load_time_data.SetBoolean(
       "isUserSignedIn",
-      SigninManagerFactory::GetForProfile(profile_)->IsAuthenticated());
+      IdentityManagerFactory::GetForProfile(profile_)->HasPrimaryAccount());
 
   // Load the new tab page appropriate for this build.
   base::StringPiece new_tab_html(

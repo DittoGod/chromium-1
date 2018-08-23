@@ -20,13 +20,6 @@
 #include "ios/web_view/internal/web_view_browser_state.h"
 
 namespace ios_web_view {
-namespace {
-
-void DoNothingOnErrorCallback(WebDataServiceWrapper::ErrorType error_type,
-                              sql::InitStatus status,
-                              const std::string& diagnostics) {}
-
-}  // namespace
 
 // static
 WebDataServiceWrapper* WebViewWebDataServiceWrapperFactory::GetForBrowserState(
@@ -45,7 +38,17 @@ WebViewWebDataServiceWrapperFactory::GetAutofillWebDataForBrowserState(
     ServiceAccessType access_type) {
   WebDataServiceWrapper* wrapper =
       GetForBrowserState(browser_state, access_type);
-  return wrapper ? wrapper->GetAutofillWebData() : nullptr;
+  return wrapper ? wrapper->GetProfileAutofillWebData() : nullptr;
+}
+
+// static
+scoped_refptr<autofill::AutofillWebDataService>
+WebViewWebDataServiceWrapperFactory::GetAutofillWebDataForAccount(
+    WebViewBrowserState* browser_state,
+    ServiceAccessType access_type) {
+  WebDataServiceWrapper* wrapper =
+      GetForBrowserState(browser_state, access_type);
+  return wrapper ? wrapper->GetAccountAutofillWebData() : nullptr;
 }
 
 // static
@@ -79,8 +82,7 @@ WebViewWebDataServiceWrapperFactory::BuildServiceInstanceFor(
       browser_state_path,
       ApplicationContext::GetInstance()->GetApplicationLocale(),
       web::WebThread::GetTaskRunnerForThread(web::WebThread::UI),
-      base::Callback<void(syncer::ModelType)>(),
-      base::BindRepeating(&DoNothingOnErrorCallback));
+      base::Callback<void(syncer::ModelType)>(), base::DoNothing());
 }
 
 bool WebViewWebDataServiceWrapperFactory::ServiceIsNULLWhileTesting() const {

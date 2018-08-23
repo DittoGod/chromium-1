@@ -163,6 +163,8 @@ cr.define('test_util', function() {
         settings.ContentSetting.BLOCK;
     defaults[settings.ContentSettingsTypes.SENSORS].setting =
         settings.ContentSetting.ALLOW;
+    defaults[settings.ContentSettingsTypes.USB_DEVICES].setting =
+        settings.ContentSetting.ASK;
     defaultsList.forEach((override) => {
       defaults[override.setting] = override.value;
     });
@@ -181,6 +183,35 @@ cr.define('test_util', function() {
     };
   }
 
+  /**
+   * Helper to create a mock SiteGroup.
+   * @param {!string} eTLDPlus1Name The eTLD+1 of all the origins provided in
+   *     |originList|.
+   * @param {!Array<string>} originList A list of the origins with the same
+   *     eTLD+1.
+   * @return {SiteGroup}
+   */
+  function createSiteGroup(eTLDPlus1Name, originList) {
+    const originInfoList = originList.map(origin => createOriginInfo(origin));
+    return {
+      etldPlus1: eTLDPlus1Name,
+      origins: originInfoList,
+      numCookies: 0,
+    };
+  }
+
+  function createOriginInfo(origin, override) {
+    if (override === undefined)
+      override = {};
+    return Object.assign(
+        {
+          origin: origin,
+          engagement: 0,
+          usage: 0,
+        },
+        override);
+  }
+
   return {
     eventToPromise: eventToPromise,
     fakeDataBind: fakeDataBind,
@@ -189,6 +220,8 @@ cr.define('test_util', function() {
     createDefaultContentSetting: createDefaultContentSetting,
     createRawSiteException: createRawSiteException,
     createSiteSettingsPrefs: createSiteSettingsPrefs,
+    createSiteGroup: createSiteGroup,
+    createOriginInfo: createOriginInfo,
   };
 
 });

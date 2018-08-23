@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <memory>
 
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -18,10 +19,9 @@
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
 #include "base/timer/timer.h"
 #include "components/gcm_driver/features.h"
@@ -40,6 +40,9 @@
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
+#include "services/network/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest-spi.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
@@ -80,6 +83,8 @@ const char kDeleteTokenResponse[] = "token=foo";
 const int kTestTokenInvalidationPeriod = 5;
 const char kGroupName[] = "Enabled";
 const char kInvalidateTokenTrialName[] = "InvalidateTokenTrial";
+
+const char kRegisterUrl[] = "https://android.clients.google.com/c2dm/register3";
 
 // Helper for building arbitrary data messages.
 MCSMessage BuildDownstreamMessage(
@@ -181,14 +186,14 @@ class AutoAdvancingTestClock : public base::Clock {
   explicit AutoAdvancingTestClock(base::TimeDelta auto_increment_time_delta);
   ~AutoAdvancingTestClock() override;
 
-  base::Time Now() override;
+  base::Time Now() const override;
   void Advance(TimeDelta delta);
   int call_count() const { return call_count_; }
 
  private:
-  int call_count_;
+  mutable int call_count_;
   base::TimeDelta auto_increment_time_delta_;
-  base::Time now_;
+  mutable base::Time now_;
 
   DISALLOW_COPY_AND_ASSIGN(AutoAdvancingTestClock);
 };
@@ -201,7 +206,7 @@ AutoAdvancingTestClock::AutoAdvancingTestClock(
 AutoAdvancingTestClock::~AutoAdvancingTestClock() {
 }
 
-base::Time AutoAdvancingTestClock::Now() {
+base::Time AutoAdvancingTestClock::Now() const {
   call_count_++;
   now_ += auto_increment_time_delta_;
   return now_;
@@ -213,10 +218,10 @@ void AutoAdvancingTestClock::Advance(base::TimeDelta delta) {
 
 class FakeGCMInternalsBuilder : public GCMInternalsBuilder {
  public:
-  FakeGCMInternalsBuilder(base::TimeDelta clock_step);
+  explicit FakeGCMInternalsBuilder(base::TimeDelta clock_step);
   ~FakeGCMInternalsBuilder() override;
 
-  std::unique_ptr<base::Clock> BuildClock() override;
+  base::Clock* GetClock() override;
   std::unique_ptr<MCSClient> BuildMCSClient(
       const std::string& version,
       base::Clock* clock,
@@ -226,22 +231,22 @@ class FakeGCMInternalsBuilder : public GCMInternalsBuilder {
   std::unique_ptr<ConnectionFactory> BuildConnectionFactory(
       const std::vector<GURL>& endpoints,
       const net::BackoffEntry::Policy& backoff_policy,
-      net::HttpNetworkSession* gcm_network_session,
-      net::HttpNetworkSession* http_network_session,
+      base::RepeatingCallback<
+          void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+          get_socket_factory_callback,
       GCMStatsRecorder* recorder) override;
 
  private:
-  base::TimeDelta clock_step_;
+  AutoAdvancingTestClock clock_;
 };
 
 FakeGCMInternalsBuilder::FakeGCMInternalsBuilder(base::TimeDelta clock_step)
-    : clock_step_(clock_step) {
-}
+    : clock_(clock_step) {}
 
 FakeGCMInternalsBuilder::~FakeGCMInternalsBuilder() {}
 
-std::unique_ptr<base::Clock> FakeGCMInternalsBuilder::BuildClock() {
-  return base::WrapUnique<base::Clock>(new AutoAdvancingTestClock(clock_step_));
+base::Clock* FakeGCMInternalsBuilder::GetClock() {
+  return &clock_;
 }
 
 std::unique_ptr<MCSClient> FakeGCMInternalsBuilder::BuildMCSClient(
@@ -258,8 +263,9 @@ std::unique_ptr<ConnectionFactory>
 FakeGCMInternalsBuilder::BuildConnectionFactory(
     const std::vector<GURL>& endpoints,
     const net::BackoffEntry::Policy& backoff_policy,
-    net::HttpNetworkSession* gcm_network_session,
-    net::HttpNetworkSession* http_network_session,
+    base::RepeatingCallback<
+        void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+        get_socket_factory_callback,
     GCMStatsRecorder* recorder) {
   return base::WrapUnique<ConnectionFactory>(new FakeConnectionFactory());
 }
@@ -304,7 +310,6 @@ class GCMClientImplTest : public testing::Test,
                            net::HttpStatusCode response_code);
   void CompleteRegistration(const std::string& registration_id);
   void CompleteUnregistration(const std::string& app_id);
-  void VerifyPendingRequestFetcherDeleted();
 
   bool ExistsRegistration(const std::string& app_id) const;
   void AddRegistration(const std::string& app_id,
@@ -400,10 +405,13 @@ class GCMClientImplTest : public testing::Test,
   void PumpLoopUntilIdle();
   bool CreateUniqueTempDir();
   AutoAdvancingTestClock* clock() const {
-    return reinterpret_cast<AutoAdvancingTestClock*>(gcm_client_->clock_.get());
+    return static_cast<AutoAdvancingTestClock*>(gcm_client_->clock_);
   }
   net::TestURLFetcherFactory* url_fetcher_factory() {
     return &url_fetcher_factory_;
+  }
+  network::TestURLLoaderFactory* url_loader_factory() {
+    return &test_url_loader_factory_;
   }
   base::TestMockTimeTaskRunner* task_runner() {
     return task_runner_.get();
@@ -430,10 +438,10 @@ class GCMClientImplTest : public testing::Test,
   net::TestURLFetcherFactory url_fetcher_factory_;
 
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
-  base::ThreadTaskRunnerHandle task_runner_handle_;
 
   // Injected to GCM client.
   scoped_refptr<net::TestURLRequestContextGetter> url_request_context_getter_;
+  network::TestURLLoaderFactory test_url_loader_factory_;
   base::test::ScopedFeatureList scoped_feature_list_;
   base::FieldTrialList field_trial_list_;
   std::map<std::string, base::FieldTrial*> trials_;
@@ -442,8 +450,8 @@ class GCMClientImplTest : public testing::Test,
 GCMClientImplTest::GCMClientImplTest()
     : last_event_(NONE),
       last_result_(GCMClient::UNKNOWN_ERROR),
-      task_runner_(new base::TestMockTimeTaskRunner),
-      task_runner_handle_(task_runner_),
+      task_runner_(new base::TestMockTimeTaskRunner(
+          base::TestMockTimeTaskRunner::Type::kBoundToThread)),
       url_request_context_getter_(
           new net::TestURLRequestContextGetter(task_runner_)),
       field_trial_list_(nullptr) {}
@@ -563,11 +571,10 @@ void GCMClientImplTest::CompleteCheckinImpl(
   std::string response_string;
   response.SerializeToString(&response_string);
 
-  net::TestURLFetcher* fetcher = url_fetcher_factory_.GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  fetcher->set_response_code(response_code);
-  fetcher->SetResponseString(response_string);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+  EXPECT_TRUE(url_loader_factory()->SimulateResponseForPendingRequest(
+      gservices_settings().GetCheckinURL(),
+      network::URLLoaderCompletionStatus(net::OK),
+      network::CreateResourceResponseHead(response_code), response_string));
   // Give a chance for GCMStoreImpl::Backend to finish persisting data.
   PumpLoopUntilIdle();
 }
@@ -576,11 +583,11 @@ void GCMClientImplTest::CompleteRegistration(
     const std::string& registration_id) {
   std::string response(kRegistrationResponsePrefix);
   response.append(registration_id);
-  net::TestURLFetcher* fetcher = url_fetcher_factory_.GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  fetcher->set_response_code(net::HTTP_OK);
-  fetcher->SetResponseString(response);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+
+  EXPECT_TRUE(url_loader_factory()->SimulateResponseForPendingRequest(
+      GURL(kRegisterUrl), network::URLLoaderCompletionStatus(net::OK),
+      network::CreateResourceResponseHead(net::HTTP_OK), response));
+
   // Give a chance for GCMStoreImpl::Backend to finish persisting data.
   PumpLoopUntilIdle();
 }
@@ -589,18 +596,13 @@ void GCMClientImplTest::CompleteUnregistration(
     const std::string& app_id) {
   std::string response(kUnregistrationResponsePrefix);
   response.append(app_id);
-  net::TestURLFetcher* fetcher = url_fetcher_factory_.GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  fetcher->set_response_code(net::HTTP_OK);
-  fetcher->SetResponseString(response);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+
+  EXPECT_TRUE(url_loader_factory()->SimulateResponseForPendingRequest(
+      GURL(kRegisterUrl), network::URLLoaderCompletionStatus(net::OK),
+      network::CreateResourceResponseHead(net::HTTP_OK), response));
+
   // Give a chance for GCMStoreImpl::Backend to finish persisting data.
   PumpLoopUntilIdle();
-}
-
-void GCMClientImplTest::VerifyPendingRequestFetcherDeleted() {
-  net::TestURLFetcher* fetcher = url_fetcher_factory_.GetFetcherByID(0);
-  EXPECT_FALSE(fetcher);
 }
 
 bool GCMClientImplTest::ExistsRegistration(const std::string& app_id) const {
@@ -624,9 +626,11 @@ void GCMClientImplTest::InitializeGCMClient() {
   GCMClient::ChromeBuildInfo chrome_build_info;
   chrome_build_info.version = kChromeVersion;
   chrome_build_info.product_category_for_subtypes = kProductCategoryForSubtypes;
-  gcm_client_->Initialize(chrome_build_info, gcm_store_path(), task_runner_,
-                          url_request_context_getter_,
-                          base::WrapUnique<Encryptor>(new FakeEncryptor), this);
+  gcm_client_->Initialize(
+      chrome_build_info, gcm_store_path(), task_runner_, base::DoNothing(),
+      base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+          &test_url_loader_factory_),
+      base::WrapUnique<Encryptor>(new FakeEncryptor), this);
 }
 
 void GCMClientImplTest::StartGCMClient() {
@@ -833,17 +837,47 @@ TEST_F(GCMClientImplTest, SerializeAndDeserialize) {
   gcm_info->sender_ids = senders;
   gcm_info->last_validated = clock()->Now();
 
-  std::string serialized_key = gcm_info->GetSerializedKey();
-  std::string serialized_value = gcm_info->GetSerializedValue(kRegistrationId);
   auto gcm_info_deserialized = std::make_unique<GCMRegistrationInfo>();
-  std::string registration_id_deserialized;
-  ASSERT_TRUE(gcm_info_deserialized->Deserialize(
-      serialized_key, serialized_value, &registration_id_deserialized));
+  std::string gcm_registration_id_deserialized;
+  {
+    std::string serialized_key = gcm_info->GetSerializedKey();
+    std::string serialized_value =
+        gcm_info->GetSerializedValue(kRegistrationId);
+
+    ASSERT_TRUE(gcm_info_deserialized->Deserialize(
+        serialized_key, serialized_value, &gcm_registration_id_deserialized));
+  }
 
   EXPECT_EQ(gcm_info->app_id, gcm_info_deserialized->app_id);
   EXPECT_EQ(gcm_info->sender_ids, gcm_info_deserialized->sender_ids);
   EXPECT_EQ(gcm_info->last_validated, gcm_info_deserialized->last_validated);
-  EXPECT_EQ(kRegistrationId, registration_id_deserialized);
+  EXPECT_EQ(kRegistrationId, gcm_registration_id_deserialized);
+
+  auto instance_id_info = std::make_unique<InstanceIDTokenInfo>();
+  instance_id_info->app_id = kExtensionAppId;
+  instance_id_info->last_validated = clock()->Now();
+  instance_id_info->authorized_entity = "different_sender";
+  instance_id_info->scope = "scope";
+
+  auto instance_id_info_deserialized = std::make_unique<InstanceIDTokenInfo>();
+  std::string instance_id_registration_id_deserialized;
+  {
+    std::string serialized_key = instance_id_info->GetSerializedKey();
+    std::string serialized_value =
+        instance_id_info->GetSerializedValue(kRegistrationId);
+
+    ASSERT_TRUE(instance_id_info_deserialized->Deserialize(
+        serialized_key, serialized_value,
+        &instance_id_registration_id_deserialized));
+  }
+
+  EXPECT_EQ(instance_id_info->app_id, instance_id_info_deserialized->app_id);
+  EXPECT_EQ(instance_id_info->last_validated,
+            instance_id_info_deserialized->last_validated);
+  EXPECT_EQ(instance_id_info->authorized_entity,
+            instance_id_info_deserialized->authorized_entity);
+  EXPECT_EQ(instance_id_info->scope, instance_id_info_deserialized->scope);
+  EXPECT_EQ(kRegistrationId, instance_id_registration_id_deserialized);
 }
 
 TEST_F(GCMClientImplTest, RegisterApp) {
@@ -861,7 +895,7 @@ TEST_F(GCMClientImplTest, RegisterApp) {
   EXPECT_TRUE(ExistsRegistration(kExtensionAppId));
 }
 
-TEST_F(GCMClientImplTest, DISABLED_RegisterAppFromCache) {
+TEST_F(GCMClientImplTest, RegisterAppFromCache) {
   EXPECT_FALSE(ExistsRegistration(kExtensionAppId));
 
   std::vector<std::string> senders;
@@ -1017,7 +1051,7 @@ TEST_F(GCMClientImplTest, DeletePendingRequestsWhenStopping) {
 
   gcm_client()->Stop();
   PumpLoopUntilIdle();
-  VerifyPendingRequestFetcherDeleted();
+  EXPECT_EQ(0, url_loader_factory()->NumPending());
 }
 
 TEST_F(GCMClientImplTest, DispatchDownstreamMessage) {
@@ -1674,11 +1708,11 @@ void GCMClientInstanceIDTest::DeleteToken(const std::string& app_id,
 
 void GCMClientInstanceIDTest::CompleteDeleteToken() {
   std::string response(kDeleteTokenResponse);
-  net::TestURLFetcher* fetcher = url_fetcher_factory()->GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  fetcher->set_response_code(net::HTTP_OK);
-  fetcher->SetResponseString(response);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+
+  EXPECT_TRUE(url_loader_factory()->SimulateResponseForPendingRequest(
+      GURL(kRegisterUrl), network::URLLoaderCompletionStatus(net::OK),
+      network::CreateResourceResponseHead(net::HTTP_OK), response));
+
   // Give a chance for GCMStoreImpl::Backend to finish persisting data.
   PumpLoopUntilIdle();
 }

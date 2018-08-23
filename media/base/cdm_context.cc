@@ -4,13 +4,18 @@
 
 #include "media/base/cdm_context.h"
 
+#include "media/base/callback_registry.h"
+
 namespace media {
 
 CdmContext::CdmContext() = default;
 
 CdmContext::~CdmContext() = default;
 
-void IgnoreCdmAttached(bool /* success */) {}
+std::unique_ptr<CallbackRegistration> CdmContext::RegisterNewKeyCB(
+    base::RepeatingClosure new_key_cb) {
+  return nullptr;
+}
 
 Decryptor* CdmContext::GetDecryptor() {
   return nullptr;
@@ -26,8 +31,12 @@ CdmProxyContext* CdmContext::GetCdmProxyContext() {
 }
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
-void* CdmContext::GetClassIdentifier() const {
+#if defined(OS_ANDROID)
+MediaCryptoContext* CdmContext::GetMediaCryptoContext() {
   return nullptr;
 }
+#endif
+
+void IgnoreCdmAttached(bool /* success */) {}
 
 }  // namespace media

@@ -2,11 +2,11 @@
 set -ex
 
 SCRIPT_DIR=$(dirname $(readlink -f "$0"))
-WPT_ROOT=$(readlink -f $SCRIPT_DIR/../..)
+WPT_ROOT=$(readlink -f $SCRIPT_DIR/..)
 cd $WPT_ROOT
 
 main() {
-    cd css
+    cd $WPT_ROOT/css
 
     if [ -z $VENV ]; then
         VENV=tools/_virtualenv
@@ -41,17 +41,8 @@ main() {
     # Install dependencies
     $VENV/bin/pip install -r requirements.txt
 
-    # Fetch hg submodules if they're not there
-    if [ ! -d tools/apiclient ]; then
-        $VENV/bin/hg clone https://hg.csswg.org/dev/apiclient tools/apiclient
-    fi
-
-    if [ ! -d tools/w3ctestlib ]; then
-        $VENV/bin/hg clone https://hg.csswg.org/dev/w3ctestlib tools/w3ctestlib
-    fi
-
     # Run the build script
     $VENV/bin/python tools/build.py "$@"
 }
 
-main
+main "$@"

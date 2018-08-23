@@ -40,8 +40,8 @@ KeepAliveDelegate::KeepAliveDelegate(
 KeepAliveDelegate::~KeepAliveDelegate() {}
 
 void KeepAliveDelegate::SetTimersForTest(
-    std::unique_ptr<base::Timer> injected_ping_timer,
-    std::unique_ptr<base::Timer> injected_liveness_timer) {
+    std::unique_ptr<base::RetainingOneShotTimer> injected_ping_timer,
+    std::unique_ptr<base::RetainingOneShotTimer> injected_liveness_timer) {
   ping_timer_ = std::move(injected_ping_timer);
   liveness_timer_ = std::move(injected_liveness_timer);
 }
@@ -56,10 +56,10 @@ void KeepAliveDelegate::Start() {
 
   // Use injected mock timers, if provided.
   if (!ping_timer_) {
-    ping_timer_.reset(new base::Timer(true, false));
+    ping_timer_.reset(new base::RetainingOneShotTimer());
   }
   if (!liveness_timer_) {
-    liveness_timer_.reset(new base::Timer(true, false));
+    liveness_timer_.reset(new base::RetainingOneShotTimer());
   }
 
   ping_timer_->Start(
@@ -155,15 +155,22 @@ void KeepAliveDelegate::OnMessage(const CastMessage& message) {
   if (started_)
     ResetTimers();
 
-  // PING and PONG messages are intercepted and handled by KeepAliveDelegate
+  // Keep-alive messages are intercepted and handled by KeepAliveDelegate
   // here. All other messages are passed through to |inner_delegate_|.
-  CastMessageType payload_type = ParseMessageType(message);
-  if (payload_type == CastMessageType::kPing) {
-    DVLOG(2) << "Received PING.";
-    if (started_)
-      SendKeepAliveMessage(pong_message_, CastMessageType::kPong);
-  } else if (payload_type == CastMessageType::kPong) {
-    DVLOG(2) << "Received PONG.";
+  // Keep-alive messages are assumed to be in the form { "type": "PING|PONG" }.
+  if (message.namespace_() == kHeartbeatNamespace) {
+    const char* ping_message_type =
+        CastMessageTypeToString(CastMessageType::kPing);
+    if (message.payload_utf8().find(ping_message_type) != std::string::npos) {
+      DVLOG(2) << "Received PING.";
+      if (started_)
+        SendKeepAliveMessage(pong_message_, CastMessageType::kPong);
+    } else {
+      DCHECK_NE(std::string::npos,
+                message.payload_utf8().find(
+                    CastMessageTypeToString(CastMessageType::kPong)));
+      DVLOG(2) << "Received PONG.";
+    }
   } else {
     inner_delegate_->OnMessage(message);
   }

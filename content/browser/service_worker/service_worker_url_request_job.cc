@@ -20,7 +20,7 @@
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/browser/resource_context_impl.h"
@@ -106,12 +106,6 @@ net::NetLogEventType RequestJobResultToNetEventType(
       return n::SERVICE_WORKER_ERROR_BAD_DELEGATE;
     case m::REQUEST_JOB_ERROR_REQUEST_BODY_BLOB_FAILED:
       return n::SERVICE_WORKER_ERROR_REQUEST_BODY_BLOB_FAILED;
-    // We can't log if there's no request; fallthrough.
-    case m::REQUEST_JOB_ERROR_NO_REQUEST:
-    // Obsolete types; fallthrough.
-    case m::REQUEST_JOB_ERROR_DESTROYED:
-    case m::REQUEST_JOB_ERROR_DESTROYED_WITH_BLOB:
-    case m::REQUEST_JOB_ERROR_DESTROYED_WITH_STREAM:
     // Invalid type.
     case m::NUM_REQUEST_JOB_RESULT_TYPES:
       NOTREACHED() << result;
@@ -330,7 +324,6 @@ ServiceWorkerURLRequestJob::ServiceWorkerURLRequestJob(
     RequestContextType request_context_type,
     network::mojom::RequestContextFrameType frame_type,
     scoped_refptr<network::ResourceRequestBody> body,
-    ServiceWorkerFetchType fetch_type,
     Delegate* delegate)
     : net::URLRequestJob(request, network_delegate),
       delegate_(delegate),
@@ -350,7 +343,6 @@ ServiceWorkerURLRequestJob::ServiceWorkerURLRequestJob(
       frame_type_(frame_type),
       fall_back_required_(false),
       body_(body),
-      fetch_type_(fetch_type),
       weak_factory_(this) {
   DCHECK(delegate_) << "ServiceWorkerURLRequestJob requires a delegate";
 }
@@ -361,6 +353,7 @@ ServiceWorkerURLRequestJob::~ServiceWorkerURLRequestJob() {
 
   if (!ShouldRecordResult())
     return;
+
   ServiceWorkerMetrics::URLRequestJobResult result =
       ServiceWorkerMetrics::REQUEST_JOB_ERROR_KILLED;
   if (response_body_type_ == STREAM)
@@ -554,54 +547,41 @@ void ServiceWorkerURLRequestJob::StartRequest() {
   NOTREACHED();
 }
 
-std::unique_ptr<ServiceWorkerFetchRequest>
-ServiceWorkerURLRequestJob::CreateFetchRequest() {
-  std::string blob_uuid;
-  uint64_t blob_size = 0;
-  if (HasRequestBody())
-    CreateRequestBodyBlob(&blob_uuid, &blob_size);
-  auto request = std::make_unique<ServiceWorkerFetchRequest>();
-  request->mode = request_mode_;
-  request->is_main_resource_load = IsMainResourceLoad();
-  request->request_context_type = request_context_type_;
-  request->frame_type = frame_type_;
+std::unique_ptr<network::ResourceRequest>
+ServiceWorkerURLRequestJob::CreateResourceRequest() {
+  // The network::ResourceRequest will be passed to the renderer and be
+  // converted to blink::WebServiceWorkerRequest in
+  // ServiceWorkerContextClient::ToWebServiceWorkerRequest. So make sure the
+  // fields set here are consistent with the fields read there.
+  auto request = std::make_unique<network::ResourceRequest>();
   request->url = request_->url();
   request->method = request_->method();
-  const net::HttpRequestHeaders& headers = request_->extra_request_headers();
-  for (net::HttpRequestHeaders::Iterator it(headers); it.GetNext();) {
-    if (ServiceWorkerContext::IsExcludedHeaderNameForFetchEvent(it.name()))
-      continue;
-    request->headers[it.name()] = it.value();
+
+  for (net::HttpRequestHeaders::Iterator it(request_->extra_request_headers());
+       it.GetNext();) {
+    request->headers.SetHeader(it.name(), it.value());
   }
-  request->blob_uuid = blob_uuid;
-  request->blob_size = blob_size;
-  request->blob = request_body_blob_handle_;
-  request->credentials_mode = credentials_mode_;
-  request->cache_mode = ServiceWorkerFetchRequest::GetCacheModeFromLoadFlags(
-      request_->load_flags());
-  request->redirect_mode = redirect_mode_;
-  request->integrity = integrity_;
-  request->keepalive = keepalive_;
-  request->client_id = client_id_;
+
+  request->referrer = GURL(request_->referrer());
+  request->referrer_policy = request_->referrer_policy();
+  request->fetch_request_mode = request_mode_;
+  request->resource_type = resource_type_;
+  request->fetch_credentials_mode = credentials_mode_;
+  request->load_flags = request_->load_flags();
+  request->fetch_redirect_mode = redirect_mode_;
+  request->fetch_request_context_type = request_context_type_;
+  request->fetch_frame_type = frame_type_;
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request_);
-  if (info) {
-    request->is_reload = ui::PageTransitionCoreTypeIs(
-        info->GetPageTransition(), ui::PAGE_TRANSITION_RELOAD);
-    request->referrer =
-        Referrer(GURL(request_->referrer()), info->GetReferrerPolicy());
-  } else {
-    CHECK(
-        request_->referrer_policy() ==
-        net::URLRequest::CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE);
-    request->referrer =
-        Referrer(GURL(request_->referrer()), blink::kWebReferrerPolicyDefault);
-  }
-  request->fetch_type = fetch_type_;
+  if (info)
+    request->transition_type = info->GetPageTransition();
+  request->fetch_integrity = integrity_;
+  request->keepalive = keepalive_;
   return request;
 }
 
-void ServiceWorkerURLRequestJob::CreateRequestBodyBlob(std::string* blob_uuid,
-                                                       uint64_t* blob_size) {
+blink::mojom::BlobPtr ServiceWorkerURLRequestJob::CreateRequestBodyBlob(
+    std::string* blob_uuid,
+    uint64_t* blob_size) {
   DCHECK(HasRequestBody());
   auto blob_builder =
       std::make_unique<storage::BlobDataBuilder>(base::GenerateGUID());
@@ -619,8 +599,7 @@ void ServiceWorkerURLRequestJob::CreateRequestBodyBlob(std::string* blob_uuid,
   storage::BlobImpl::Create(std::make_unique<storage::BlobDataHandle>(
                                 *request_body_blob_data_handle_),
                             MakeRequest(&blob_ptr));
-  request_body_blob_handle_ =
-      base::MakeRefCounted<storage::BlobHandle>(std::move(blob_ptr));
+  return blob_ptr;
 }
 
 bool ServiceWorkerURLRequestJob::ShouldRecordNavigationMetrics(
@@ -677,11 +656,10 @@ void ServiceWorkerURLRequestJob::DidPrepareFetchEvent(
 }
 
 void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
-    ServiceWorkerStatusCode status,
+    blink::ServiceWorkerStatusCode status,
     ServiceWorkerFetchDispatcher::FetchEventResult fetch_result,
-    const ServiceWorkerResponse& response,
+    blink::mojom::FetchAPIResponsePtr response,
     blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream,
-    blink::mojom::BlobPtr body_as_blob,
     scoped_refptr<ServiceWorkerVersion> version) {
   // Do not clear |fetch_dispatcher_| if it has dispatched a navigation preload
   // request to keep the network::mojom::URLLoader related objects in it,
@@ -689,6 +667,10 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
   // calling respondWith().
   if (!did_navigation_preload_) {
     fetch_dispatcher_.reset();
+  }
+  if (IsMainResourceLoad()) {
+    ReportDestination(
+        ServiceWorkerMetrics::MainResourceRequestDestination::kServiceWorker);
   }
   ServiceWorkerMetrics::RecordFetchEventStatus(IsMainResourceLoad(), status);
 
@@ -700,7 +682,7 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
     return;
   }
 
-  if (status != SERVICE_WORKER_OK) {
+  if (status != blink::ServiceWorkerStatusCode::kOk) {
     RecordResult(ServiceWorkerMetrics::REQUEST_JOB_ERROR_FETCH_EVENT_DISPATCH);
     if (IsMainResourceLoad()) {
       // Using the service worker failed, so fallback to network.
@@ -729,9 +711,9 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
 
   // A response with status code 0 is Blink telling us to respond with network
   // error.
-  if (response.status_code == 0) {
-    RecordStatusZeroResponseError(response.error);
-    NotifyStartError(ServiceWorkerResponseErrorToNetStatus(response.error));
+  if (response->status_code == 0) {
+    RecordStatusZeroResponseError(response->error);
+    NotifyStartError(ServiceWorkerResponseErrorToNetStatus(response->error));
     return;
   }
 
@@ -751,7 +733,7 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
   // Process stream using Mojo's data pipe.
   if (!body_as_stream.is_null()) {
     SetResponseBodyType(STREAM);
-    SetResponse(response);
+    SetResponse(std::move(response));
     data_pipe_reader_.reset(new ServiceWorkerDataPipeReader(
         this, version, std::move(body_as_stream)));
     data_pipe_reader_->Start();
@@ -759,12 +741,14 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
   }
 
   // Set up a request for reading the blob.
-  // |body_as_blob| must be kept around until we call this to ensure that
-  // it's alive.
-  if (!response.blob_uuid.empty() && blob_storage_context_) {
+  // TODO(falken): Can we just read |response->blob->blob| directly like in
+  // ServiceWorkerNavigationLoader?
+  if (response->blob && blob_storage_context_) {
+    DCHECK(!response->blob->uuid.empty());
+    DCHECK(response->blob->blob.is_valid());
     SetResponseBodyType(BLOB);
     std::unique_ptr<storage::BlobDataHandle> blob_data_handle =
-        blob_storage_context_->GetBlobDataFromUUID(response.blob_uuid);
+        blob_storage_context_->GetBlobDataFromUUID(response->blob->uuid);
     if (!blob_data_handle) {
       // The renderer gave us a bad blob UUID.
       RecordResult(ServiceWorkerMetrics::REQUEST_JOB_ERROR_BAD_BLOB);
@@ -775,7 +759,7 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
     blob_reader_->Start(std::move(blob_data_handle), request()->context());
   }
 
-  SetResponse(response);
+  SetResponse(std::move(response));
   if (!blob_reader_) {
     RecordResult(ServiceWorkerMetrics::REQUEST_JOB_HEADERS_ONLY_RESPONSE);
     CommitResponseHeader();
@@ -783,31 +767,36 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
 }
 
 void ServiceWorkerURLRequestJob::SetResponse(
-    const ServiceWorkerResponse& response) {
-  response_url_list_ = response.url_list;
-  fetch_response_type_ = response.response_type;
-  cors_exposed_header_names_ = response.cors_exposed_header_names;
-  response_time_ = response.response_time;
-  CreateResponseHeader(response.status_code, response.status_text,
-                       response.headers);
+    blink::mojom::FetchAPIResponsePtr response) {
+  response_url_list_ = std::move(response->url_list);
+  fetch_response_type_ = response->response_type;
+  cors_exposed_header_names_ = std::move(response->cors_exposed_header_names);
+  response_time_ = response->response_time;
+  CreateResponseHeader(response->status_code, response->status_text,
+                       std::move(response->headers));
   load_timing_info_.receive_headers_end = base::TimeTicks::Now();
 
-  response_is_in_cache_storage_ = response.is_in_cache_storage;
-  response_cache_storage_cache_name_ = response.cache_storage_cache_name;
+  response_is_in_cache_storage_ = response->is_in_cache_storage;
+  if (response->cache_storage_cache_name) {
+    response_cache_storage_cache_name_ =
+        std::move(*(response->cache_storage_cache_name));
+  } else {
+    response_cache_storage_cache_name_.clear();
+  }
 }
 
 void ServiceWorkerURLRequestJob::CreateResponseHeader(
     int status_code,
     const std::string& status_text,
-    const ServiceWorkerHeaderMap& headers) {
+    ResponseHeaderMap headers) {
   // Build a string instead of using HttpResponseHeaders::AddHeader on
   // each header, since AddHeader has O(n^2) performance.
   std::string buf(base::StringPrintf("HTTP/1.1 %d %s\r\n", status_code,
                                      status_text.c_str()));
-  for (const auto& item : headers) {
-    buf.append(item.first);
+  for (auto& item : headers) {
+    buf.append(std::move(item.first));
     buf.append(": ");
-    buf.append(item.second);
+    buf.append(std::move(item.second));
     buf.append("\r\n");
   }
   buf.append("\r\n");
@@ -828,8 +817,8 @@ void ServiceWorkerURLRequestJob::CommitResponseHeader() {
 void ServiceWorkerURLRequestJob::DeliverErrorResponse() {
   // TODO(falken): Print an error to the console of the ServiceWorker and of
   // the requesting page.
-  CreateResponseHeader(
-      500, "Service Worker Response Error", ServiceWorkerHeaderMap());
+  CreateResponseHeader(500, "Service Worker Response Error",
+                       ResponseHeaderMap());
   CommitResponseHeader();
 }
 
@@ -850,7 +839,7 @@ void ServiceWorkerURLRequestJob::FinalizeFallbackToRenderer() {
   if (ShouldRecordResult())
     RecordResult(ServiceWorkerMetrics::REQUEST_JOB_FALLBACK_FOR_CORS);
   CreateResponseHeader(400, "Service Worker Fallback Required",
-                       ServiceWorkerHeaderMap());
+                       ResponseHeaderMap());
   response_type_ = ResponseType::FALLBACK_TO_RENDERER;
   CommitResponseHeader();
 }
@@ -965,6 +954,11 @@ void ServiceWorkerURLRequestJob::RequestBodyFileSizesResolved(bool success) {
   if (!success) {
     RecordResult(
         ServiceWorkerMetrics::REQUEST_JOB_ERROR_REQUEST_BODY_BLOB_FAILED);
+    if (IsMainResourceLoad()) {
+      ReportDestination(ServiceWorkerMetrics::MainResourceRequestDestination::
+                            kErrorRequestBodyFailed);
+    }
+
     // TODO(falken): This and below should probably be NotifyStartError, not
     // DeliverErrorResponse. But changing it causes
     // ServiceWorkerURLRequestJobTest.DeletedProviderHostBeforeFetchEvent to
@@ -979,6 +973,10 @@ void ServiceWorkerURLRequestJob::RequestBodyFileSizesResolved(bool success) {
       delegate_->GetServiceWorkerVersion(&result);
   if (!active_worker) {
     RecordResult(result);
+    if (IsMainResourceLoad()) {
+      ReportDestination(ServiceWorkerMetrics::MainResourceRequestDestination::
+                            kErrorNoActiveWorkerFromDelegate);
+    }
     DeliverErrorResponse();
     return;
   }
@@ -987,10 +985,24 @@ void ServiceWorkerURLRequestJob::RequestBodyFileSizesResolved(bool success) {
       active_worker->status() == ServiceWorkerVersion::ACTIVATED;
   initial_worker_status_ = active_worker->running_status();
 
+  std::unique_ptr<network::ResourceRequest> resource_request =
+      CreateResourceRequest();
+  std::string blob_uuid;
+  uint64_t blob_size = 0;
+  blink::mojom::BlobPtr blob;
+  if (HasRequestBody()) {
+    // TODO(falken): Could we just set |resource_request->request_body| to
+    // |body_| directly, and not construct a new blob? But I think the
+    // renderer-side might need to know the size of the body.
+    blob = CreateRequestBodyBlob(&blob_uuid, &blob_size);
+  }
+
   DCHECK(!fetch_dispatcher_);
+  if (IsMainResourceLoad())
+    delegate_->WillDispatchFetchEventForMainResource();
   fetch_dispatcher_ = std::make_unique<ServiceWorkerFetchDispatcher>(
-      CreateFetchRequest(), base::WrapRefCounted(active_worker), resource_type_,
-      request()->net_log(),
+      std::move(resource_request), blob_uuid, blob_size, std::move(blob),
+      client_id_, base::WrapRefCounted(active_worker), request()->net_log(),
       base::BindOnce(&ServiceWorkerURLRequestJob::DidPrepareFetchEvent,
                      weak_factory_.GetWeakPtr(),
                      base::WrapRefCounted(active_worker)),
@@ -1011,6 +1023,12 @@ void ServiceWorkerURLRequestJob::RequestBodyFileSizesResolved(bool success) {
 
 void ServiceWorkerURLRequestJob::OnNavigationPreloadResponse() {
   nav_preload_metrics_->ReportNavigationPreloadFinished();
+}
+
+void ServiceWorkerURLRequestJob::ReportDestination(
+    ServiceWorkerMetrics::MainResourceRequestDestination destination) {
+  DCHECK(IsMainResourceLoad());
+  delegate_->ReportDestination(destination);
 }
 
 }  // namespace content

@@ -12,11 +12,12 @@
 #include "base/strings/string_split.h"
 #include "content/browser/cache_storage/cache_storage_context_impl.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "storage/browser/quota/quota_client.h"
 #include "storage/browser/quota/quota_manager.h"
-#include "third_party/WebKit/common/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -77,9 +78,8 @@ void GotUsageAndQuotaDataCallback(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::BindOnce(ReportUsageAndQuotaDataOnUIThread,
-                     base::Passed(std::move(callback)), code, usage, quota,
-                     std::move(usage_breakdown)));
+      base::BindOnce(ReportUsageAndQuotaDataOnUIThread, std::move(callback),
+                     code, usage, quota, std::move(usage_breakdown)));
 }
 
 void GetUsageAndQuotaOnIOThread(
@@ -89,8 +89,7 @@ void GetUsageAndQuotaOnIOThread(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   manager->GetUsageAndQuotaWithBreakdown(
       url, blink::mojom::StorageType::kTemporary,
-      base::Bind(&GotUsageAndQuotaDataCallback,
-                 base::Passed(std::move(callback))));
+      base::BindOnce(&GotUsageAndQuotaDataCallback, std::move(callback)));
 }
 }  // namespace
 
@@ -334,7 +333,7 @@ void StorageHandler::GetUsageAndQuota(
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::BindOnce(&GetUsageAndQuotaOnIOThread, base::RetainedRef(manager),
-                     origin_url, base::Passed(std::move(callback))));
+                     origin_url, std::move(callback)));
 }
 
 Response StorageHandler::TrackCacheStorageForOrigin(const std::string& origin) {

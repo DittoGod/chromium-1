@@ -7,7 +7,6 @@
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_util.h"
@@ -41,6 +40,7 @@
 #include "content/public/common/resource_type.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/switches.h"
@@ -49,8 +49,8 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
-#include "third_party/WebKit/public/web/WebContextMenuData.h"
+#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/web/web_context_menu_data.h"
 
 using content::ResourceType;
 using content::WebContents;
@@ -142,7 +142,7 @@ class DelayLoadStartAndExecuteJavascript
       : public content::NavigationThrottle,
         public base::SupportsWeakPtr<WillStartRequestObserverThrottle> {
    public:
-    WillStartRequestObserverThrottle(content::NavigationHandle* handle)
+    explicit WillStartRequestObserverThrottle(content::NavigationHandle* handle)
         : NavigationThrottle(handle) {}
     ~WillStartRequestObserverThrottle() override {}
 
@@ -207,9 +207,6 @@ class WebNavigationApiTest : public ExtensionApiTest {
 
     FrameNavigationState::set_allow_extension_scheme(true);
 
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kAllowLegacyExtensionManifests);
-
     host_resolver()->AddRule("*", "127.0.0.1");
   }
 
@@ -221,17 +218,23 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, Api) {
   ASSERT_TRUE(RunExtensionTest("webnavigation/api")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, GetFrame) {
+// Flaky on Windows. See http://crbug.com/874782
+#if defined(OS_WIN)
+#define MAYBE_GetFrame DISABLED_GetFrame
+#else
+#define MAYBE_GetFrame GetFrame
+#endif
+IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, MAYBE_GetFrame) {
   ASSERT_TRUE(RunExtensionTest("webnavigation/getFrame")) << message_;
 }
+#undef MAYBE_GetFrame
 
 IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, ClientRedirect) {
   ASSERT_TRUE(RunExtensionTest("webnavigation/clientRedirect"))
       << message_;
 }
 
-// http://crbug.com/660288
-IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, DISABLED_ServerRedirect) {
+IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, ServerRedirect) {
   ASSERT_TRUE(StartEmbeddedTestServer());
   ASSERT_TRUE(RunExtensionTest("webnavigation/serverRedirect"))
       << message_;
@@ -239,11 +242,31 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, DISABLED_ServerRedirect) {
 
 IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, Download) {
   ASSERT_TRUE(StartEmbeddedTestServer());
-  ASSERT_TRUE(RunExtensionTest("webnavigation/download"))
-      << message_;
+  content::DownloadManager* download_manager =
+      content::BrowserContext::GetDownloadManager(browser()->profile());
+  content::DownloadTestObserverTerminal observer(
+      download_manager, 1,
+      content::DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_FAIL);
+  bool result = RunExtensionTest("webnavigation/download");
+  observer.WaitForFinished();
+  ASSERT_TRUE(result) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, ServerRedirectSingleProcess) {
+  // TODO(lukasza): https://crbug.com/671734: In the long-term, //chrome-layer
+  // tests should only be run with site-per-process - remove the early return
+  // below when fixing https://crbug.com/870761 and removing the
+  // not_site_per_process_browser_tests step.
+  //
+  // This test has its expectations in
+  // serverRedirectSingleProcess/test_serverRedirectSingleProcess.js.  The
+  // expectations include exact |processId| ("exact" meaning that one cannot use
+  // a wildcard - the verification is done via chrome.test.checkDeepEq).
+  // Inclusion of |processId| means that the expectation change in
+  // site-per-process mode.
+  if (!content::AreAllSitesIsolatedForTesting())
+    return;
+
   ASSERT_TRUE(StartEmbeddedTestServer());
 
   // Set max renderers to 1 to force running out of processes.
@@ -339,7 +362,16 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, MAYBE_UserAction) {
   GURL url = extension->GetResourceURL(
       "a.html?" + base::IntToString(embedded_test_server()->port()));
 
+  // Register an observer for the navigation in the subframe, so the test
+  // can wait until it is fully complete. Otherwise the context menu
+  // navigation is non-deterministic on which process it will get associated
+  // with, leading to test flakiness.
+  content::TestNavigationManager nav_manager(
+      tab, embedded_test_server()->GetURL(
+               "/extensions/api_test/webnavigation/userAction/subframe.html"));
   ui_test_utils::NavigateToURL(browser(), url);
+  nav_manager.WaitForNavigationFinished();
+  EXPECT_TRUE(nav_manager.was_successful());
 
   // This corresponds to "Open link in new tab".
   content::ContextMenuParams params;
@@ -500,8 +532,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, DISABLED_CrossProcessFragment) {
       << message_;
 }
 
-// crbug.com/708139.
-IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, DISABLED_CrossProcessHistory) {
+IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, CrossProcessHistory) {
   ASSERT_TRUE(StartEmbeddedTestServer());
 
   // See crossProcessHistory/e.html.

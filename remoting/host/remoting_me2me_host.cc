@@ -26,17 +26,16 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringize_macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "build/build_config.h"
 #include "components/policy/policy_constants.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_listener.h"
 #include "jingle/glue/thread_wrapper.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/incoming_broker_client_invitation.h"
-#include "mojo/edk/embedder/platform_channel_pair.h"
-#include "mojo/edk/embedder/scoped_ipc_support.h"
+#include "mojo/core/embedder/scoped_ipc_support.h"
+#include "mojo/public/cpp/platform/platform_channel.h"
+#include "mojo/public/cpp/system/invitation.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/url_util.h"
 #include "net/socket/client_socket_factory.h"
@@ -100,6 +99,7 @@
 #include "remoting/protocol/transport_context.h"
 #include "remoting/signaling/push_notification_subscriber.h"
 #include "remoting/signaling/xmpp_signal_strategy.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/webrtc/rtc_base/scoped_ref_ptr.h"
 
 #if defined(OS_POSIX)
@@ -430,7 +430,7 @@ class HostProcess : public ConfigWatcher::Delegate,
   scoped_refptr<HostProcess> self_;
 
 #if defined(REMOTING_MULTI_PROCESS)
-  std::unique_ptr<mojo::edk::ScopedIPCSupport> ipc_support_;
+  std::unique_ptr<mojo::core::ScopedIPCSupport> ipc_support_;
 
   // Accessed on the UI thread.
   std::unique_ptr<IPC::ChannelProxy> daemon_channel_;
@@ -492,18 +492,18 @@ bool HostProcess::InitWithCommandLine(const base::CommandLine* cmd_line) {
   // Mojo keeps the task runner passed to it alive forever, so an
   // AutoThreadTaskRunner should not be passed to it. Otherwise, the process may
   // never shut down cleanly.
-  ipc_support_ = std::make_unique<mojo::edk::ScopedIPCSupport>(
+  ipc_support_ = std::make_unique<mojo::core::ScopedIPCSupport>(
       context_->network_task_runner()->task_runner(),
-      mojo::edk::ScopedIPCSupport::ShutdownPolicy::FAST);
+      mojo::core::ScopedIPCSupport::ShutdownPolicy::FAST);
 
-  auto invitation =
-      mojo::edk::IncomingBrokerClientInvitation::AcceptFromCommandLine(
-          mojo::edk::TransportProtocol::kLegacy);
+  auto endpoint =
+      mojo::PlatformChannel::RecoverPassedEndpointFromCommandLine(*cmd_line);
+  auto invitation = mojo::IncomingInvitation::Accept(std::move(endpoint));
 
   // Connect to the daemon process.
   daemon_channel_ = IPC::ChannelProxy::Create(
       invitation
-          ->ExtractMessagePipe(cmd_line->GetSwitchValueASCII(kMojoPipeToken))
+          .ExtractMessagePipe(cmd_line->GetSwitchValueASCII(kMojoPipeToken))
           .release(),
       IPC::Channel::MODE_CLIENT, this, context_->network_task_runner(),
       base::ThreadTaskRunnerHandle::Get());
@@ -1431,9 +1431,8 @@ void HostProcess::InitializeSignaling() {
       oauth_credentials(new OAuthTokenGetter::OAuthAuthorizationCredentials(
           xmpp_server_config_.username, oauth_refresh_token_,
           use_service_account_));
-  oauth_token_getter_.reset(
-      new OAuthTokenGetterImpl(std::move(oauth_credentials),
-                               context_->url_request_context_getter(), false));
+  oauth_token_getter_.reset(new OAuthTokenGetterImpl(
+      std::move(oauth_credentials), context_->url_loader_factory(), false));
   signaling_connector_.reset(new SignalingConnector(
       xmpp_signal_strategy, std::move(dns_blackhole_checker),
       oauth_token_getter_.get(),
@@ -1727,9 +1726,9 @@ int HostProcessMain() {
   // Create the main message loop and start helper threads.
   base::MessageLoopForUI message_loop;
   std::unique_ptr<ChromotingHostContext> context =
-      ChromotingHostContext::Create(
-          new AutoThreadTaskRunner(message_loop.task_runner(),
-                                   base::MessageLoop::QuitWhenIdleClosure()));
+      ChromotingHostContext::Create(new AutoThreadTaskRunner(
+          message_loop.task_runner(),
+          base::RunLoop::QuitCurrentWhenIdleClosureDeprecated()));
   if (!context)
     return kInitializationFailed;
 

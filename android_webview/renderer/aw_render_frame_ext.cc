@@ -14,18 +14,18 @@
 #include "content/public/renderer/document_state.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebSize.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebElementCollection.h"
-#include "third_party/WebKit/public/web/WebFrameWidget.h"
-#include "third_party/WebKit/public/web/WebHitTestResult.h"
-#include "third_party/WebKit/public/web/WebImageCache.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebMeaningfulLayout.h"
-#include "third_party/WebKit/public/web/WebNode.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_size.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_element_collection.h"
+#include "third_party/blink/public/web/web_frame_widget.h"
+#include "third_party/blink/public/web/web_hit_test_result.h"
+#include "third_party/blink/public/web/web_image_cache.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_meaningful_layout.h"
+#include "third_party/blink/public/web/web_node.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "url/url_canon.h"
 #include "url/url_constants.h"
 #include "url/url_util.h"
@@ -142,23 +142,21 @@ void PopulateHitTestData(const GURL& absolute_link_url,
 
 AwRenderFrameExt::AwRenderFrameExt(content::RenderFrame* render_frame)
     : content::RenderFrameObserver(render_frame) {
-  registry_ = std::make_unique<service_manager::BinderRegistry>();
-
   // TODO(sgurun) do not create a password autofill agent (change
   // autofill agent to store a weakptr).
   autofill::PasswordAutofillAgent* password_autofill_agent =
-      new autofill::PasswordAutofillAgent(render_frame, registry_.get());
+      new autofill::PasswordAutofillAgent(render_frame, &registry_);
   new autofill::AutofillAgent(render_frame, password_autofill_agent, nullptr,
-                              registry_.get());
+                              &registry_);
 }
 
 AwRenderFrameExt::~AwRenderFrameExt() {
 }
 
-void AwRenderFrameExt::OnInterfaceRequestForFrame(
+bool AwRenderFrameExt::OnAssociatedInterfaceRequestForFrame(
     const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle* interface_pipe) {
-  registry_->TryBindInterface(interface_name, interface_pipe);
+    mojo::ScopedInterfaceEndpointHandle* handle) {
+  return registry_.TryBindInterface(interface_name, handle);
 }
 
 void AwRenderFrameExt::DidCommitProvisionalLoad(

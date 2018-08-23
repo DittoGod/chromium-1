@@ -46,6 +46,10 @@ _ACCESSIBILITY_PRIVATE_EXTERNS = (
     ChromeRootPath(
         'third_party/closure_compiler/externs/accessibility_private.js'))
 
+# Audio API externs file.
+_AUDIO_EXTERNS = (
+    ChromeRootPath('third_party/closure_compiler/externs/audio.js'))
+
 # Automation API externs file.
 _AUTOMATION_EXTERNS = (
     ChromeRootPath('third_party/closure_compiler/externs/automation.js'))
@@ -53,6 +57,14 @@ _AUTOMATION_EXTERNS = (
 # MetricsPrivate externs file.
 _METRICS_PRIVATE_EXTERNS = (
     ChromeRootPath('third_party/closure_compiler/externs/metrics_private.js'))
+
+# Settings private API externs file.
+_SETTINGS_PRIVATE_EXTERNS = (
+    ChromeRootPath('third_party/closure_compiler/externs/settings_private.js'))
+
+# Additional chrome api externs file.
+_CHROME_EXTERNS = (
+    ChromeRootPath('third_party/closure_compiler/externs/chrome.js'))
 
 # Additional chrome extension api externs file.
 _CHROME_EXTENSIONS_EXTERNS = (
@@ -64,12 +76,14 @@ _COMMON_EXTERNS = [
     CVoxPath('common/externs.js'),
     CVoxPath('common/chrome_extension_externs.js'),
     CVoxPath('chromevox/background/externs.js'),
-    CVoxPath('chromevox/injected/externs.js'),
     CVoxPath('host/chrome/externs.js'),
     _ACCESSIBILITY_PRIVATE_EXTERNS,
+    _AUDIO_EXTERNS,
     _AUTOMATION_EXTERNS,
+    _CHROME_EXTERNS,
     _CHROME_EXTENSIONS_EXTERNS,
-    _METRICS_PRIVATE_EXTERNS]
+    _METRICS_PRIVATE_EXTERNS,
+    _SETTINGS_PRIVATE_EXTERNS,]
 
 # List of top-level scripts and externs that we can check.
 _TOP_LEVEL_SCRIPTS = [
@@ -102,7 +116,7 @@ def CheckChromeVox(changed_files=None):
            os.path.relpath(
                os.path.join(
                    _CHROME_SOURCE_DIR,
-                   'chrome/third_party/chromevox/third_party/closure-library/'
+                   'third_party/chromevox/third_party/closure-library/'
                    'closure/goog'))]
   sources = ReadSources(roots, need_source_text=True,
                         exclude=[re.compile('testing')])

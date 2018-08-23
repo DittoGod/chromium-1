@@ -28,7 +28,7 @@ SyncUsernameTestBase::SyncUsernameTestBase()
       signin_manager_(&signin_client_, &account_tracker_) {
   SigninManagerBase::RegisterProfilePrefs(prefs_.registry());
   AccountTrackerService::RegisterPrefs(prefs_.registry());
-  account_tracker_.Initialize(&signin_client_);
+  account_tracker_.Initialize(&prefs_, base::FilePath());
 }
 
 SyncUsernameTestBase::~SyncUsernameTestBase() {}
@@ -55,6 +55,16 @@ PasswordForm SyncUsernameTestBase::SimpleNonGaiaForm(const char* username) {
   PasswordForm form;
   form.signon_realm = "https://site.com";
   form.username_value = base::ASCIIToUTF16(username);
+  return form;
+}
+
+// static
+PasswordForm SyncUsernameTestBase::SimpleNonGaiaForm(const char* username,
+                                                     const char* origin) {
+  PasswordForm form;
+  form.signon_realm = "https://site.com";
+  form.username_value = base::ASCIIToUTF16(username);
+  form.origin = GURL(origin);
   return form;
 }
 

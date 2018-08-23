@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 
+#include "base/bind_helpers.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -37,8 +38,8 @@ const int kTestDataSize = arraysize(kTestData) - 1;
 void ReadFromReader(LocalFileStreamReader* reader,
                     std::string* data, size_t size,
                     int* result) {
-  ASSERT_TRUE(reader != NULL);
-  ASSERT_TRUE(result != NULL);
+  ASSERT_TRUE(reader != nullptr);
+  ASSERT_TRUE(result != nullptr);
   *result = net::OK;
   net::TestCompletionCallback callback;
   size_t total_bytes_read = 0;
@@ -58,7 +59,6 @@ void ReadFromReader(LocalFileStreamReader* reader,
 }
 
 void NeverCalled(int) { ADD_FAILURE(); }
-void EmptyCallback() {}
 
 void QuitLoop() {
   base::RunLoop::QuitCurrentWhenIdleDeprecated();
@@ -68,8 +68,7 @@ void QuitLoop() {
 
 class LocalFileStreamReaderTest : public testing::Test {
  public:
-  LocalFileStreamReaderTest()
-      : file_thread_("FileUtilProxyTestFileThread") {}
+  LocalFileStreamReaderTest() : file_thread_("TestFileThread") {}
 
   void SetUp() override {
     ASSERT_TRUE(file_thread_.Start());
@@ -120,8 +119,8 @@ class LocalFileStreamReaderTest : public testing::Test {
   }
 
   void EnsureFileTaskFinished() {
-    file_task_runner()->PostTaskAndReply(
-        FROM_HERE, base::Bind(&EmptyCallback), base::Bind(&QuitLoop));
+    file_task_runner()->PostTaskAndReply(FROM_HERE, base::DoNothing(),
+                                         base::BindOnce(&QuitLoop));
     base::RunLoop().Run();
   }
 
@@ -187,7 +186,7 @@ TEST_F(LocalFileStreamReaderTest, GetLengthAfterModified) {
     result = callback.WaitForResult();
   ASSERT_EQ(net::ERR_UPLOAD_FILE_CHANGED, result);
 
-  // With NULL expected modification time this should work.
+  // With nullptr expected modification time this should work.
   reader.reset(CreateFileReader(test_path(), 0, base::Time()));
   result = reader->GetLength(callback.callback());
   if (result == net::ERR_IO_PENDING)
@@ -247,7 +246,7 @@ TEST_F(LocalFileStreamReaderTest, ReadAfterModified) {
   EXPECT_EQ(net::OK, result);
   EXPECT_EQ(kTestData, data);
 
-  // And with NULL expected modification time this should work.
+  // And with nullptr expected modification time this should work.
   data.clear();
   reader.reset(CreateFileReader(test_path(), 0, base::Time()));
   ReadFromReader(reader.get(), &data, kTestDataSize, &result);

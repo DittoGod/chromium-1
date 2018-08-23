@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
@@ -16,7 +16,7 @@
 #include "extensions/browser/api/serial/serial_event_dispatcher.h"
 #include "extensions/common/api/serial.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/device/public/interfaces/constants.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 using content::BrowserThread;

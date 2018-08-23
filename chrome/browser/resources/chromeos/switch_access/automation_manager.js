@@ -41,11 +41,10 @@ function AutomationManager(desktop) {
   this.scopeStack_ = [];
 
   /**
-   * Moves to the appropriate node in the accessibility tree.
-   *
-   * @private {!AutomationTreeWalker}
+   * Keeps track of when we're visiting the current scope as an actionable node.
+   * @private {boolean}
    */
-  this.treeWalker_ = this.createTreeWalker_(desktop);
+  this.visitingScopeAsActionable_ = false;
 
   this.init_();
 }
@@ -54,6 +53,7 @@ function AutomationManager(desktop) {
  * Highlight colors for the focus ring to distinguish between different types
  * of nodes.
  *
+ * @enum {string}
  * @const
  */
 AutomationManager.Color = {
@@ -64,15 +64,9 @@ AutomationManager.Color = {
 
 AutomationManager.prototype = {
   /**
-   * Set this.node_, this.root_, and this.desktop_ to the desktop node, and
-   * creates an initial tree walker.
-   *
    * @private
    */
   init_: function() {
-    console.log('AutomationNode for desktop is loaded');
-    this.printNode_(this.node_);
-
     this.desktop_.addEventListener(
         chrome.automation.EventType.FOCUS, this.handleFocusChange_.bind(this),
         false);
@@ -95,21 +89,18 @@ AutomationManager.prototype = {
   handleFocusChange_: function(event) {
     if (this.node_ === event.target)
       return;
-    console.log('Focus changed');
 
     // Rebuild scope stack and set scope for focused node.
     this.buildScopeStack_(event.target);
 
     // Move to focused node.
     this.node_ = event.target;
-    this.treeWalker_ = this.createTreeWalker_(this.scope_, this.node_);
 
     // In case the node that gained focus is not a subtreeLeaf.
-    if (AutomationPredicate.isSubtreeLeaf(this.node_, this.scope_)) {
-      this.printNode_(this.node_);
+    if (SwitchAccessPredicate.isSubtreeLeaf(this.node_, this.scope_))
       this.updateFocusRing_();
-    } else
-      this.moveToNode(true);
+    else
+      this.moveForward();
   },
 
   /**
@@ -135,7 +126,7 @@ AutomationManager.prototype = {
       let ancestor = ancestorList.pop();
       if (ancestor.role === chrome.automation.RoleType.DESKTOP)
         continue;
-      if (AutomationPredicate.isGroup(ancestor, this.scope_)) {
+      if (SwitchAccessPredicate.isGroup(ancestor, this.scope_)) {
         this.scopeStack_.push(this.scope_);
         this.scope_ = ancestor;
       }
@@ -164,7 +155,6 @@ AutomationManager.prototype = {
     if (!removedByRWA && treeChange.target !== this.node_)
       return;
 
-    console.log('Node removed');
     chrome.accessibilityPrivate.setFocusRing([]);
 
     // Current node not invalid until after treeChange callback, so move to
@@ -173,28 +163,94 @@ AutomationManager.prototype = {
     // moves to it or focus changes to it), won't need to move to a new node.
     window.setTimeout(function() {
       if (!this.node_.role)
-        this.moveToNode(true);
+        this.moveForward();
     }.bind(this), 100);
   },
 
   /**
-   * Set this.node_ to the next/previous interesting node, and then highlight
-   * it on the screen. If no interesting node is found, set this.node_ to the
-   * first/last interesting node. If |doNext| is true, will search for next
-   * node. Otherwise, will search for previous node.
-   *
-   * @param {boolean} doNext
+   * Find the next interesting node, and update |this.node_|. If there is no
+   * next node, |this.node_| will be set equal to |this.scope_| to loop again.
    */
-  moveToNode: function(doNext) {
+  moveForward: function() {
     // If node is invalid, set node to last valid scope.
     this.startAtValidNode_();
 
-    let node = this.treeWalker_.moveToNode(doNext);
-    if (node) {
-      this.node_ = node;
-      this.printNode_(this.node_);
-      this.updateFocusRing_();
+    let treeWalker = new AutomationTreeWalker(
+        this.node_, constants.Dir.FORWARD,
+        SwitchAccessPredicate.restrictions(this.scope_));
+
+    // Special case: Scope is actionable.
+    if (this.node_ === this.scope_ &&
+        SwitchAccessPredicate.isActionable(this.node_) &&
+        !this.visitingScopeAsActionable_) {
+      this.showScopeAsActionable_();
+      return;
     }
+    this.visitingScopeAsActionable_ = false;
+
+    let node = treeWalker.next().node;
+    // If treeWalker returns undefined, that means we're at the end of the tree
+    // and we should start over.
+    if (!node)
+      node = this.scope_;
+
+    this.setCurrentNode_(node);
+  },
+
+  /**
+   * Find the previous interesting node and update |this.node_|. If there is no
+   * previous node, |this.node_| will be set to the youngest descendant in the
+   * SwitchAccess scope tree to loop again.
+   */
+  moveBackward: function() {
+    // If node is invalid, set node to last valid scope.
+    this.startAtValidNode_();
+
+    let treeWalker = new AutomationTreeWalker(
+        this.node_, constants.Dir.BACKWARD,
+        SwitchAccessPredicate.restrictions(this.scope_));
+
+    // Special case: Scope is actionable
+    if (this.node_ === this.scope_ && this.visitingScopeAsActionable_) {
+      this.visitingScopeAsActionable_ = false;
+      this.setCurrentNode_(this.node_);
+      return;
+    }
+
+    let node = treeWalker.next().node;
+
+    // Special case: Scope is actionable
+    if (node === this.scope_ && SwitchAccessPredicate.isActionable(node)) {
+      this.showScopeAsActionable_();
+      return;
+    }
+
+    // If treeWalker returns undefined, that means we're at the end of the tree
+    // and we should start over.
+    if (!node)
+      node = this.youngestDescendant_(this.scope_);
+
+    this.setCurrentNode_(node);
+  },
+
+  /**
+   * Set |this.node_| to |node|, and update its appearance onscreen.
+   *
+   * @param {!chrome.automation.AutomationNode} node
+   */
+  setCurrentNode_: function(node) {
+    this.node_ = node;
+    this.updateFocusRing_();
+  },
+
+  /**
+   * Show the current scope as an actionable item.
+   */
+  showScopeAsActionable_: function() {
+    this.node_ = this.scope_;
+    this.visitingScopeAsActionable_ = true;
+
+    this.updateFocusRing_(AutomationManager.Color.LEAF);
   },
 
   /**
@@ -210,6 +266,12 @@ AutomationManager.prototype = {
       return;
 
     if (this.node_ === this.scope_) {
+      // If we're visiting the scope as actionable, perform the default action.
+      if (this.visitingScopeAsActionable_) {
+        this.node_.doDefault();
+        return;
+      }
+
       // Don't let user select the top-level root node (i.e., the desktop node).
       if (this.scopeStack_.length === 0)
         return;
@@ -220,45 +282,43 @@ AutomationManager.prototype = {
         this.scope_ = this.scopeStack_.pop();
       } while (!this.scope_.role && this.scopeStack_.length > 0);
 
-      this.treeWalker_ = this.createTreeWalker_(this.scope_, this.node_);
       this.updateFocusRing_();
-      console.log('Moved to previous scope');
-      this.printNode_(this.node_);
       return;
     }
 
-    if (AutomationPredicate.isGroup(this.node_, this.scope_)) {
+    if (SwitchAccessPredicate.isGroup(this.node_, this.scope_)) {
       this.scopeStack_.push(this.scope_);
       this.scope_ = this.node_;
-      this.treeWalker_ = this.createTreeWalker_(this.scope_);
-      console.log('Entered scope');
-      this.moveToNode(true);
+      this.moveForward();
       return;
     }
 
     this.node_.doDefault();
-    console.log('Performed default action');
-    console.log('\n');
   },
 
   /**
    * Set the focus ring for the current node and determine the color for it.
    *
+   * @param {AutomationManager.Color=} opt_color
    * @private
    */
-  updateFocusRing_: function() {
+  updateFocusRing_: function(opt_color) {
     let color;
     if (this.node_ === this.scope_)
       color = AutomationManager.Color.SCOPE;
-    else if (AutomationPredicate.isGroup(this.node_, this.scope_))
+    else if (SwitchAccessPredicate.isGroup(this.node_, this.scope_))
       color = AutomationManager.Color.GROUP;
     else
       color = AutomationManager.Color.LEAF;
+
+    color = opt_color || color;
     chrome.accessibilityPrivate.setFocusRing([this.node_.location], color);
   },
 
   /**
-   * If this.node_ is invalid, set this.node_ to a valid scope. Will check the
+   * Checks if this.node_ is valid. If so, do nothing.
+   *
+   * If this.node_ is not valid, set this.node_ to a valid scope. Will check the
    * current scope and past scopes until a valid scope is found. this.node_
    * is set to that valid scope.
    *
@@ -267,7 +327,6 @@ AutomationManager.prototype = {
   startAtValidNode_: function() {
     if (this.node_.role)
       return;
-    console.log('Finding new valid node');
 
     // Current node is invalid, but current scope is still valid, so set node
     // to the current scope.
@@ -281,36 +340,6 @@ AutomationManager.prototype = {
       this.node_ = this.scopeStack_.pop();
       this.scope_ = this.node_;
     }
-    this.treeWalker_ = this.createTreeWalker_(this.scope_);
-  },
-
-  /**
-   * Create an AutomationTreeWalker for the subtree with |scope| as its root.
-   * If |opt_start| is defined, the tree walker will start walking the tree
-   * from |opt_start|; otherwise, it will start from |scope|.
-   *
-   * @param {!chrome.automation.AutomationNode} scope
-   * @param {!chrome.automation.AutomationNode=} opt_start
-   * @private
-   * @return {!AutomationTreeWalker}
-   */
-  createTreeWalker_: function(scope, opt_start) {
-    // If no explicit start node, start walking the tree from |scope|.
-    let start = opt_start || scope;
-
-    let leafPred = function(node) {
-      return (node !== scope &&
-              AutomationPredicate.isSubtreeLeaf(node, scope)) ||
-          !AutomationPredicate.isInterestingSubtree(node);
-    };
-    let visitPred = function(node) {
-      // Avoid visiting the top-level root node (i.e., the desktop node).
-      return node !== this.desktop_ &&
-          AutomationPredicate.isSubtreeLeaf(node, scope);
-    }.bind(this);
-
-    let restrictions = {leaf: leafPred, visit: visitPred};
-    return new AutomationTreeWalker(start, scope, restrictions);
   },
 
   // TODO(elichtenberg): Move print functions to a custom logger class. Only
@@ -343,50 +372,19 @@ AutomationManager.prototype = {
   },
 
   /**
-   * Move to the next sibling of this.node_ if it has one.
+   * Get the youngest descendant of |node|, if it has one within the current
+   * scope.
+   *
+   * @param {!chrome.automation.AutomationNode} node
+   * @return {!chrome.automation.AutomationNode}
+   * @private
    */
-  debugMoveToNext: function() {
-    let next = this.treeWalker_.debugMoveToNext(this.node_);
-    if (next) {
-      this.node_ = next;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
-  },
+  youngestDescendant_: function(node) {
+    let leaf = SwitchAccessPredicate.leaf(this.scope_);
 
-  /**
-   * Move to the previous sibling of this.node_ if it has one.
-   */
-  debugMoveToPrevious: function() {
-    let prev = this.treeWalker_.debugMoveToPrevious(this.node_);
-    if (prev) {
-      this.node_ = prev;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
-  },
+    while (node.lastChild && !leaf(node))
+      node = node.lastChild;
 
-  /**
-   * Move to the first child of this.node_ if it has one.
-   */
-  debugMoveToFirstChild: function() {
-    let child = this.treeWalker_.debugMoveToFirstChild(this.node_);
-    if (child) {
-      this.node_ = child;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
-  },
-
-  /**
-   * Move to the parent of this.node_ if it has one.
-   */
-  debugMoveToParent: function() {
-    let parent = this.treeWalker_.debugMoveToParent(this.node_);
-    if (parent) {
-      this.node_ = parent;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
+    return node;
   }
 };

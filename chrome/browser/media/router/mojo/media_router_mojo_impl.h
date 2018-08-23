@@ -127,6 +127,12 @@ class MediaRouterMojoImpl : public MediaRouterBase,
 
   content::BrowserContext* context() const { return context_; }
 
+  // mojom::MediaRouter implementation.
+  void OnSinksReceived(MediaRouteProviderId provider_id,
+                       const std::string& media_source,
+                       const std::vector<MediaSinkInternal>& internal_sinks,
+                       const std::vector<url::Origin>& origins) override;
+
   // Mojo pointers to media route providers. Providers are added via
   // RegisterMediaRouteProvider().
   base::flat_map<MediaRouteProviderId, mojom::MediaRouteProviderPtr>
@@ -223,7 +229,7 @@ class MediaRouterMojoImpl : public MediaRouterBase,
     // we need more fine-grained associations between sinks and origins.
     std::vector<url::Origin> origins_;
 
-    base::ObserverList<MediaSinksObserver> observers_;
+    base::ObserverList<MediaSinksObserver>::Unchecked observers_;
 
     DISALLOW_COPY_AND_ASSIGN(MediaSinksQuery);
   };
@@ -281,7 +287,7 @@ class MediaRouterMojoImpl : public MediaRouterBase,
     base::flat_map<MediaRouteProviderId, std::vector<MediaRoute::Id>>
         providers_to_joinable_routes_;
 
-    base::ObserverList<MediaRoutesObserver> observers_;
+    base::ObserverList<MediaRoutesObserver>::Unchecked observers_;
 
     DISALLOW_COPY_AND_ASSIGN(MediaRoutesQuery);
   };
@@ -327,10 +333,6 @@ class MediaRouterMojoImpl : public MediaRouterBase,
 
   // mojom::MediaRouter implementation.
   void OnIssue(const IssueInfo& issue) override;
-  void OnSinksReceived(MediaRouteProviderId provider_id,
-                       const std::string& media_source,
-                       const std::vector<MediaSinkInternal>& internal_sinks,
-                       const std::vector<url::Origin>& origins) override;
   void OnRoutesUpdated(
       MediaRouteProviderId provider_id,
       const std::vector<MediaRoute>& routes,
@@ -340,19 +342,29 @@ class MediaRouterMojoImpl : public MediaRouterBase,
                                  SinkAvailability availability) override;
   void OnPresentationConnectionStateChanged(
       const std::string& route_id,
-      content::PresentationConnectionState state) override;
+      media_router::mojom::MediaRouter::PresentationConnectionState state)
+      override;
   void OnPresentationConnectionClosed(
       const std::string& route_id,
-      content::PresentationConnectionCloseReason reason,
+      media_router::mojom::MediaRouter::PresentationConnectionCloseReason
+          reason,
       const std::string& message) override;
   void OnRouteMessagesReceived(
       const std::string& route_id,
-      const std::vector<content::PresentationConnectionMessage>& messages)
-      override;
+      std::vector<mojom::RouteMessagePtr> messages) override;
   void OnMediaRemoterCreated(
       int32_t tab_id,
       media::mojom::MirrorServiceRemoterPtr remoter,
       media::mojom::MirrorServiceRemotingSourceRequest source_request) override;
+  void GetMediaSinkServiceStatus(
+      mojom::MediaRouter::GetMediaSinkServiceStatusCallback callback) override;
+  void GetMirroringServiceHostForTab(
+      int32_t target_tab_id,
+      mirroring::mojom::MirroringServiceHostRequest request) override;
+  void GetMirroringServiceHostForDesktop(
+      int32_t initiator_tab_id,
+      const std::string& desktop_stream_id,
+      mirroring::mojom::MirroringServiceHostRequest request) override;
 
   // Result callback when Mojo TerminateRoute is invoked.
   // |route_id|: ID of MediaRoute passed to the TerminateRoute request.
@@ -404,8 +416,9 @@ class MediaRouterMojoImpl : public MediaRouterBase,
   base::flat_map<MediaSource::Id, std::unique_ptr<MediaRoutesQuery>>
       routes_queries_;
 
-  base::flat_map<MediaRoute::Id,
-                 std::unique_ptr<base::ObserverList<RouteMessageObserver>>>
+  using RouteMessageObserverList =
+      base::ObserverList<RouteMessageObserver>::Unchecked;
+  base::flat_map<MediaRoute::Id, std::unique_ptr<RouteMessageObserverList>>
       message_observers_;
 
   // GUID unique to each browser run. Component extension uses this to detect

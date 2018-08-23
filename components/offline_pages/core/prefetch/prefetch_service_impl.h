@@ -22,20 +22,31 @@ class PrefetchServiceImpl : public PrefetchService {
       std::unique_ptr<PrefetchDispatcher> dispatcher,
       std::unique_ptr<PrefetchGCMHandler> gcm_handler,
       std::unique_ptr<PrefetchNetworkRequestFactory> network_request_factory,
+      OfflinePageModel* offline_page_model,
       std::unique_ptr<PrefetchStore> prefetch_store,
       std::unique_ptr<SuggestedArticlesObserver> suggested_articles_observer,
       std::unique_ptr<PrefetchDownloader> prefetch_downloader,
       std::unique_ptr<PrefetchImporter> prefetch_importer,
       std::unique_ptr<PrefetchBackgroundTaskHandler> background_task_handler,
-      std::unique_ptr<PrefetchConfiguration> prefetch_configuration);
+      std::unique_ptr<PrefetchConfiguration> prefetch_configuration,
+      std::unique_ptr<ThumbnailFetcher> thumbnail_fetcher);
 
   ~PrefetchServiceImpl() override;
 
   // PrefetchService implementation:
+  // Externally used functions.
+  void SetContentSuggestionsService(
+      ntp_snippets::ContentSuggestionsService* content_suggestions) override;
+  void SetSuggestionProvider(
+      SuggestionsProvider* suggestions_provider) override;
+  void NewSuggestionsAvailable() override;
+  void RemoveSuggestion(GURL url) override;
+  PrefetchGCMHandler* GetPrefetchGCMHandler() override;
+  // Internal usage only functions.
   OfflineMetricsCollector* GetOfflineMetricsCollector() override;
   PrefetchDispatcher* GetPrefetchDispatcher() override;
-  PrefetchGCMHandler* GetPrefetchGCMHandler() override;
   PrefetchNetworkRequestFactory* GetPrefetchNetworkRequestFactory() override;
+  OfflinePageModel* GetOfflinePageModel() override;
   PrefetchStore* GetPrefetchStore() override;
   SuggestedArticlesObserver* GetSuggestedArticlesObserver() override;
   OfflineEventLogger* GetLogger() override;
@@ -43,6 +54,7 @@ class PrefetchServiceImpl : public PrefetchService {
   PrefetchImporter* GetPrefetchImporter() override;
   PrefetchBackgroundTaskHandler* GetPrefetchBackgroundTaskHandler() override;
   PrefetchConfiguration* GetPrefetchConfiguration() override;
+  ThumbnailFetcher* GetThumbnailFetcher() override;
 
   // KeyedService implementation:
   void Shutdown() override;
@@ -54,6 +66,7 @@ class PrefetchServiceImpl : public PrefetchService {
   std::unique_ptr<PrefetchDispatcher> prefetch_dispatcher_;
   std::unique_ptr<PrefetchGCMHandler> prefetch_gcm_handler_;
   std::unique_ptr<PrefetchNetworkRequestFactory> network_request_factory_;
+  OfflinePageModel* offline_page_model_;
   std::unique_ptr<PrefetchStore> prefetch_store_;
   std::unique_ptr<SuggestedArticlesObserver> suggested_articles_observer_;
   std::unique_ptr<PrefetchDownloader> prefetch_downloader_;
@@ -61,6 +74,7 @@ class PrefetchServiceImpl : public PrefetchService {
   std::unique_ptr<PrefetchBackgroundTaskHandler>
       prefetch_background_task_handler_;
   std::unique_ptr<PrefetchConfiguration> prefetch_configuration_;
+  std::unique_ptr<ThumbnailFetcher> thumbnail_fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(PrefetchServiceImpl);
 };

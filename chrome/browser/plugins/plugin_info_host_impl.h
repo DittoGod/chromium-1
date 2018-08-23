@@ -21,8 +21,9 @@
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
 #include "components/prefs/pref_member.h"
 #include "content/public/browser/browser_message_filter.h"
-#include "extensions/features/features.h"
-#include "media/media_features.h"
+#include "content/public/browser/browser_thread.h"
+#include "extensions/buildflags/buildflags.h"
+#include "media/media_buildflags.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 
 class GURL;
@@ -134,7 +135,7 @@ class PluginInfoHostImpl
                      const GURL& url,
                      const url::Origin& origin,
                      const std::string& mime_type,
-                     const GetPluginInfoCallback& callback) override;
+                     GetPluginInfoCallback callback) override;
 
   // |params| wraps the parameters passed to |OnGetPluginInfo|, because
   // |base::Bind| doesn't support the required arity <http://crbug.com/98542>.

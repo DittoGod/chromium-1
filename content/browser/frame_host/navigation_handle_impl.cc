@@ -6,14 +6,16 @@
 
 #include <iterator>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/time/time.h"
 #include "content/browser/appcache/appcache_navigation_handle.h"
 #include "content/browser/appcache/appcache_service_impl.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/devtools/render_frame_devtools_agent_host.h"
 #include "content/browser/frame_host/ancestor_throttle.h"
-#include "content/browser/frame_host/data_url_navigation_throttle.h"
+#include "content/browser/frame_host/blocked_scheme_navigation_throttle.h"
 #include "content/browser/frame_host/debug_urls.h"
 #include "content/browser/frame_host/form_submission_throttle.h"
 #include "content/browser/frame_host/frame_tree_node.h"
@@ -22,7 +24,10 @@
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/frame_host/navigator_delegate.h"
+#include "content/browser/frame_host/origin_policy_throttle.h"
+#include "content/browser/frame_host/webui_navigation_throttle.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
+#include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_navigation_handle.h"
 #include "content/common/child_process_host_impl.h"
@@ -44,6 +49,15 @@ namespace content {
 
 namespace {
 
+// Default timeout for the READY_TO_COMMIT -> COMMIT transition.
+// Chosen based on the Navigation.ReadyToCommitUntilCommit UMA.
+constexpr base::TimeDelta kDefaultCommitTimeout =
+    base::TimeDelta::FromSeconds(10);
+
+// Timeout for the READY_TO_COMMIT -> COMMIT transition.
+// Overrideable via SetCommitTimeoutForTesting.
+base::TimeDelta g_commit_timeout = kDefaultCommitTimeout;
+
 // Use this to get a new unique ID for a NavigationHandle during construction.
 // The returned ID is guaranteed to be nonzero (zero is the "no ID" indicator).
 int64_t CreateUniqueHandleID() {
@@ -57,19 +71,29 @@ void UpdateThrottleCheckResult(
   *to_update = result;
 }
 
-#define LOG_NAVIGATION_TIMING_HISTOGRAM(histogram, transition, value)       \
-  do {                                                                      \
-    UMA_HISTOGRAM_TIMES("Navigation." histogram, value);                    \
-    if (transition & ui::PAGE_TRANSITION_FORWARD_BACK) {                    \
-      UMA_HISTOGRAM_TIMES("Navigation." histogram ".BackForward", value);   \
-    } else if (ui::PageTransitionCoreTypeIs(transition,                     \
-                                            ui::PAGE_TRANSITION_RELOAD)) {  \
-      UMA_HISTOGRAM_TIMES("Navigation." histogram ".Reload", value);        \
-    } else if (ui::PageTransitionIsNewNavigation(transition)) {             \
-      UMA_HISTOGRAM_TIMES("Navigation." histogram ".NewNavigation", value); \
-    } else {                                                                \
-      NOTREACHED() << "Invalid page transition: " << transition;            \
-    }                                                                       \
+// TODO(csharrison,nasko): This macro is incorrect for subframe navigations,
+// which will only have subframe-specific transition types. This means that all
+// subframes currently are tagged as NewNavigations.
+#define LOG_NAVIGATION_TIMING_HISTOGRAM(histogram, transition, value,      \
+                                        max_time)                          \
+  do {                                                                     \
+    const base::TimeDelta kMinTime = base::TimeDelta::FromMilliseconds(1); \
+    const int kBuckets = 50;                                               \
+    UMA_HISTOGRAM_CUSTOM_TIMES("Navigation." histogram, value, kMinTime,   \
+                               max_time, kBuckets);                        \
+    if (transition & ui::PAGE_TRANSITION_FORWARD_BACK) {                   \
+      UMA_HISTOGRAM_CUSTOM_TIMES("Navigation." histogram ".BackForward",   \
+                                 value, kMinTime, max_time, kBuckets);     \
+    } else if (ui::PageTransitionCoreTypeIs(transition,                    \
+                                            ui::PAGE_TRANSITION_RELOAD)) { \
+      UMA_HISTOGRAM_CUSTOM_TIMES("Navigation." histogram ".Reload", value, \
+                                 kMinTime, max_time, kBuckets);            \
+    } else if (ui::PageTransitionIsNewNavigation(transition)) {            \
+      UMA_HISTOGRAM_CUSTOM_TIMES("Navigation." histogram ".NewNavigation", \
+                                 value, kMinTime, max_time, kBuckets);     \
+    } else {                                                               \
+      NOTREACHED() << "Invalid page transition: " << transition;           \
+    }                                                                      \
   } while (0)
 
 void LogIsSameProcess(ui::PageTransition transition, bool is_same_process) {
@@ -107,24 +131,25 @@ std::unique_ptr<NavigationHandleImpl> NavigationHandleImpl::Create(
     bool started_from_context_menu,
     CSPDisposition should_check_main_world_csp,
     bool is_form_submission,
-    const base::Optional<std::string>& suggested_filename,
     std::unique_ptr<NavigationUIData> navigation_ui_data,
     const std::string& method,
+    net::HttpRequestHeaders request_headers,
     scoped_refptr<network::ResourceRequestBody> resource_request_body,
     const Referrer& sanitized_referrer,
     bool has_user_gesture,
     ui::PageTransition transition,
     bool is_external_protocol,
     RequestContextType request_context_type,
-    blink::WebMixedContentContextType mixed_content_context_type) {
+    blink::WebMixedContentContextType mixed_content_context_type,
+    const base::TimeTicks& input_start) {
   return std::unique_ptr<NavigationHandleImpl>(new NavigationHandleImpl(
       url, redirect_chain, frame_tree_node, is_renderer_initiated,
       is_same_document, navigation_start, pending_nav_entry_id,
       started_from_context_menu, should_check_main_world_csp,
-      is_form_submission, suggested_filename, std::move(navigation_ui_data),
-      method, resource_request_body, sanitized_referrer, has_user_gesture,
-      transition, is_external_protocol, request_context_type,
-      mixed_content_context_type));
+      is_form_submission, std::move(navigation_ui_data), method,
+      std::move(request_headers), resource_request_body, sanitized_referrer,
+      has_user_gesture, transition, is_external_protocol, request_context_type,
+      mixed_content_context_type, input_start));
 }
 
 NavigationHandleImpl::NavigationHandleImpl(
@@ -138,16 +163,17 @@ NavigationHandleImpl::NavigationHandleImpl(
     bool started_from_context_menu,
     CSPDisposition should_check_main_world_csp,
     bool is_form_submission,
-    const base::Optional<std::string>& suggested_filename,
     std::unique_ptr<NavigationUIData> navigation_ui_data,
     const std::string& method,
+    net::HttpRequestHeaders request_headers,
     scoped_refptr<network::ResourceRequestBody> resource_request_body,
     const Referrer& sanitized_referrer,
     bool has_user_gesture,
     ui::PageTransition transition,
     bool is_external_protocol,
     RequestContextType request_context_type,
-    blink::WebMixedContentContextType mixed_content_context_type)
+    blink::WebMixedContentContextType mixed_content_context_type,
+    const base::TimeTicks& input_start)
     : url_(url),
       has_user_gesture_(has_user_gesture),
       transition_(transition),
@@ -163,28 +189,30 @@ NavigationHandleImpl::NavigationHandleImpl(
       connection_info_(net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN),
       original_url_(url),
       method_(method),
+      request_headers_(std::move(request_headers)),
       state_(INITIAL),
-      is_transferring_(false),
       frame_tree_node_(frame_tree_node),
       next_index_(0),
       navigation_start_(navigation_start),
+      input_start_(input_start),
       pending_nav_entry_id_(pending_nav_entry_id),
       request_context_type_(request_context_type),
       mixed_content_context_type_(mixed_content_context_type),
       navigation_ui_data_(std::move(navigation_ui_data)),
       navigation_id_(CreateUniqueHandleID()),
-      should_replace_current_entry_(false),
       redirect_chain_(redirect_chain),
-      is_download_(false),
-      is_stream_(false),
-      started_from_context_menu_(started_from_context_menu),
       reload_type_(ReloadType::NONE),
       restore_type_(RestoreType::NONE),
       navigation_type_(NAVIGATION_TYPE_UNKNOWN),
       should_check_main_world_csp_(should_check_main_world_csp),
-      is_form_submission_(is_form_submission),
       expected_render_process_host_id_(ChildProcessHost::kInvalidUniqueID),
-      suggested_filename_(suggested_filename),
+      is_transferring_(false),
+      is_form_submission_(is_form_submission),
+      should_replace_current_entry_(false),
+      is_download_(false),
+      is_stream_(false),
+      started_from_context_menu_(started_from_context_menu),
+      is_same_process_(true),
       weak_factory_(this) {
   TRACE_EVENT_ASYNC_BEGIN2("navigation", "NavigationHandle", this,
                            "frame_tree_node",
@@ -334,6 +362,10 @@ const base::TimeTicks& NavigationHandleImpl::NavigationStart() {
   return navigation_start_;
 }
 
+const base::TimeTicks& NavigationHandleImpl::NavigationInputStart() {
+  return input_start_;
+}
+
 bool NavigationHandleImpl::IsPost() {
   return method_ == "POST";
 }
@@ -368,17 +400,23 @@ net::Error NavigationHandleImpl::GetNetErrorCode() {
 }
 
 RenderFrameHostImpl* NavigationHandleImpl::GetRenderFrameHost() {
-  // TODO(mkwst): Change this to check against 'READY_TO_COMMIT' once
-  // ReadyToCommitNavigation is available whether or not PlzNavigate is
-  // enabled. https://crbug.com/621856
-  CHECK_GE(state_, WILL_PROCESS_RESPONSE)
-      << "This accessor should only be called after a response has been "
-         "delivered for processing.";
+  // Only allow the RenderFrameHost to be retrieved once it has been set for
+  // this navigation.  This will happens either at WillProcessResponse time for
+  // regular navigations or at WillFailRequest time for error pages.
+  CHECK_GE(state_, WILL_FAIL_REQUEST)
+      << "This accessor should only be called after a RenderFrameHost has been "
+         "picked for this navigation.";
+  static_assert(WILL_FAIL_REQUEST < WILL_PROCESS_RESPONSE,
+                "WillFailRequest state should come before WillProcessResponse");
   return render_frame_host_;
 }
 
 bool NavigationHandleImpl::IsSameDocument() {
   return is_same_document_;
+}
+
+const net::HttpRequestHeaders& NavigationHandleImpl::GetRequestHeaders() {
+  return request_headers_;
 }
 
 const net::HttpResponseHeaders* NavigationHandleImpl::GetResponseHeaders() {
@@ -477,9 +515,11 @@ NavigationHandleImpl::CallWillRedirectRequestForTesting(
 
 NavigationThrottle::ThrottleCheckResult
 NavigationHandleImpl::CallWillFailRequestForTesting(
+    RenderFrameHost* render_frame_host,
     base::Optional<net::SSLInfo> ssl_info) {
   NavigationThrottle::ThrottleCheckResult result = NavigationThrottle::DEFER;
-  WillFailRequest(ssl_info, base::Bind(&UpdateThrottleCheckResult, &result));
+  WillFailRequest(static_cast<RenderFrameHostImpl*>(render_frame_host),
+                  ssl_info, base::Bind(&UpdateThrottleCheckResult, &result));
 
   // Reset the callback to ensure it will not be called later.
   complete_callback_.Reset();
@@ -488,7 +528,7 @@ NavigationHandleImpl::CallWillFailRequestForTesting(
 
 NavigationThrottle::ThrottleCheckResult
 NavigationHandleImpl::CallWillProcessResponseForTesting(
-    content::RenderFrameHost* render_frame_host,
+    RenderFrameHost* render_frame_host,
     const std::string& raw_response_headers) {
   scoped_refptr<net::HttpResponseHeaders> headers =
       new net::HttpResponseHeaders(raw_response_headers);
@@ -557,9 +597,17 @@ NavigationData* NavigationHandleImpl::GetNavigationData() {
   return navigation_data_.get();
 }
 
-void NavigationHandleImpl::SetOnDeferCallbackForTesting(
-    const base::Closure& on_defer_callback) {
-  on_defer_callback_for_testing_ = on_defer_callback;
+void NavigationHandleImpl::RegisterSubresourceOverride(
+    mojom::TransferrableURLLoaderPtr transferrable_loader) {
+  if (!transferrable_loader)
+    return;
+
+  NavigationRequest* request = frame_tree_node_->navigation_request();
+  if (!request)
+    request = frame_tree_node_->current_frame_host()->navigation_request();
+
+  if (request)
+    request->RegisterSubresourceOverride(std::move(transferrable_loader));
 }
 
 const GlobalRequestID& NavigationHandleImpl::GetGlobalRequestID() {
@@ -573,11 +621,6 @@ bool NavigationHandleImpl::IsDownload() {
 
 bool NavigationHandleImpl::IsFormSubmission() {
   return is_form_submission_;
-}
-
-const base::Optional<std::string>&
-NavigationHandleImpl::GetSuggestedFilename() {
-  return suggested_filename_;
 }
 
 void NavigationHandleImpl::InitServiceWorkerHandle(
@@ -619,11 +662,8 @@ void NavigationHandleImpl::WillStartRequest(
     navigation_ui_data_ = GetDelegate()->GetNavigationUIData(this);
 
   // Notify each throttle of the request.
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   NavigationThrottle::ThrottleCheckResult result = CheckWillStartRequest();
   if (result.action() == NavigationThrottle::DEFER) {
-    if (!on_defer_callback_copy.is_null())
-      on_defer_callback_copy.Run();
     // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
     // one of the NavigationThrottle checks.
     return;
@@ -696,11 +736,8 @@ void NavigationHandleImpl::WillRedirectRequest(
   }
 
   // Notify each throttle of the request.
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   NavigationThrottle::ThrottleCheckResult result = CheckWillRedirectRequest();
   if (result.action() == NavigationThrottle::DEFER) {
-    if (!on_defer_callback_copy.is_null())
-      on_defer_callback_copy.Run();
     // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
     // one of the NavigationThrottle checks.
     return;
@@ -712,6 +749,7 @@ void NavigationHandleImpl::WillRedirectRequest(
 }
 
 void NavigationHandleImpl::WillFailRequest(
+    RenderFrameHostImpl* render_frame_host,
     base::Optional<net::SSLInfo> ssl_info,
     const ThrottleChecksFinishedCallback& callback) {
   TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
@@ -719,15 +757,13 @@ void NavigationHandleImpl::WillFailRequest(
   if (ssl_info.has_value())
     ssl_info_ = ssl_info.value();
 
+  render_frame_host_ = render_frame_host;
   complete_callback_ = callback;
   state_ = WILL_FAIL_REQUEST;
 
   // Notify each throttle of the request.
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   NavigationThrottle::ThrottleCheckResult result = CheckWillFailRequest();
   if (result.action() == NavigationThrottle::DEFER) {
-    if (!on_defer_callback_copy.is_null())
-      on_defer_callback_copy.Run();
     // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
     // one of the NavigationThrottle checks.
     return;
@@ -766,11 +802,8 @@ void NavigationHandleImpl::WillProcessResponse(
   complete_callback_ = callback;
 
   // Notify each throttle of the response.
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   NavigationThrottle::ThrottleCheckResult result = CheckWillProcessResponse();
   if (result.action() == NavigationThrottle::DEFER) {
-    if (!on_defer_callback_copy.is_null())
-      on_defer_callback_copy.Run();
     // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
     // one of the NavigationThrottle checks.
     return;
@@ -779,16 +812,8 @@ void NavigationHandleImpl::WillProcessResponse(
   // If the navigation is done processing the response, then it's ready to
   // commit. Inform observers that the navigation is now ready to commit, unless
   // it is not set to commit (204/205s/downloads).
-  if (result.action() == NavigationThrottle::PROCEED && render_frame_host_) {
-    CHECK(!suggested_filename_.has_value() ||
-          !(url_.SchemeIsBlob() || url_.SchemeIsFileSystem() ||
-            url_.SchemeIs(url::kAboutScheme) ||
-            url_.SchemeIs(url::kDataScheme)))
-        << "Blob, filesystem, data, and about URLs with a suggested filename "
-           "should always result in a download, so we should never process a "
-           "navigation response here.";
+  if (result.action() == NavigationThrottle::PROCEED && render_frame_host_)
     ReadyToCommitNavigation(render_frame_host_, false);
-  }
 
   TRACE_EVENT_ASYNC_STEP_INTO1("navigation", "NavigationHandle", this,
                                "ProcessResponse", "result", result.action());
@@ -801,20 +826,56 @@ void NavigationHandleImpl::ReadyToCommitNavigation(
   TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
                                "ReadyToCommitNavigation");
 
-  DCHECK(!render_frame_host_ || render_frame_host_ == render_frame_host);
+  // If the NavigationHandle already has a RenderFrameHost set at
+  // WillProcessResponse time, we should not be changing it.  One exception is
+  // errors originating from WillProcessResponse throttles, which might commit
+  // in a different RenderFrameHost.  For example, a throttle might return
+  // CANCEL with an error code from WillProcessResponse, which will cancel the
+  // navigation and get here to commit the error page, with |render_frame_host|
+  // recomputed for the error page.
+  DCHECK(!render_frame_host_ || is_error ||
+         render_frame_host_ == render_frame_host)
+      << "Unsupported RenderFrameHost change from " << render_frame_host_
+      << " to " << render_frame_host << " with is_error=" << is_error;
+
   render_frame_host_ = render_frame_host;
   state_ = READY_TO_COMMIT;
   ready_to_commit_time_ = base::TimeTicks::Now();
+  RestartCommitTimeout();
 
   // Record metrics for the time it takes to get to this state from the
   // beginning of the navigation.
   if (!IsSameDocument() && !is_error) {
-    LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit", transition_,
-                                    ready_to_commit_time_ - navigation_start_);
-    bool is_same_process =
+    is_same_process_ =
         render_frame_host_->GetProcess()->GetID() ==
         frame_tree_node_->current_frame_host()->GetProcess()->GetID();
-    LogIsSameProcess(transition_, is_same_process);
+    LogIsSameProcess(transition_, is_same_process_);
+
+    // TODO(csharrison,nasko): Increase the max value to 3 minutes in M68 or
+    // M69.
+    base::TimeDelta delta = ready_to_commit_time_ - navigation_start_;
+    LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit", transition_, delta,
+                                    base::TimeDelta::FromSeconds(10));
+
+    if (IsInMainFrame()) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit.MainFrame",
+                                      transition_, delta,
+                                      base::TimeDelta::FromSeconds(10));
+    } else {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit.Subframe",
+                                      transition_, delta,
+                                      base::TimeDelta::FromSeconds(10));
+    }
+
+    if (is_same_process_) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit.SameProcess",
+                                      transition_, delta,
+                                      base::TimeDelta::FromSeconds(10));
+    } else {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit.CrossProcess",
+                                      transition_, delta,
+                                      base::TimeDelta::FromSeconds(10));
+    }
   }
 
   SetExpectedProcess(render_frame_host->GetProcess());
@@ -856,13 +917,54 @@ void NavigationHandleImpl::DidCommitNavigation(
                                  "DidCommitNavigation");
     state_ = DID_COMMIT;
   }
+  commit_timeout_timer_.Stop();
+  GetRenderFrameHost()->GetRenderWidgetHost()->RendererIsResponsive();
 
-  // Record metrics for the time it takes to get from ReadyToCommit state
-  // until this moment where the commit occurs.
-  if (!ready_to_commit_time_.is_null() && !IsSameDocument() && !IsErrorPage()) {
-    LOG_NAVIGATION_TIMING_HISTOGRAM(
-        "ReadyToCommitUntilCommit", transition_,
-        base::TimeTicks::Now() - ready_to_commit_time_);
+  // Record metrics for the time it took to commit the navigation if it was to
+  // another document without error.
+  if (!IsSameDocument() && !IsErrorPage()) {
+    base::TimeTicks now = base::TimeTicks::Now();
+    base::TimeDelta delta = now - navigation_start_;
+    ui::PageTransition transition = GetPageTransition();
+    // 3 minutes aligns with UMA_HISTOGRAM_MEDIUM_TIMES.
+    const base::TimeDelta kMaxTime = base::TimeDelta::FromMinutes(3);
+    LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit", transition, delta,
+                                    kMaxTime);
+    if (IsInMainFrame()) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.MainFrame", transition,
+                                      delta, kMaxTime);
+    } else {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.Subframe", transition,
+                                      delta, kMaxTime);
+    }
+    if (is_same_process_) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess", transition,
+                                      delta, kMaxTime);
+      if (IsInMainFrame()) {
+        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess.MainFrame",
+                                        transition, delta, kMaxTime);
+      } else {
+        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess.Subframe",
+                                        transition, delta, kMaxTime);
+      }
+    } else {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess", transition,
+                                      delta, kMaxTime);
+      if (IsInMainFrame()) {
+        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess.MainFrame",
+                                        transition, delta, kMaxTime);
+      } else {
+        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess.Subframe",
+                                        transition, delta, kMaxTime);
+      }
+    }
+
+    // 10 seconds aligns with UMA_HISTOGRAM_TIMES.
+    if (!ready_to_commit_time_.is_null()) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("ReadyToCommitUntilCommit", transition_,
+                                      now - ready_to_commit_time_,
+                                      base::TimeDelta::FromSeconds(10));
+    }
   }
 
   DCHECK(!IsInMainFrame() || navigation_entry_committed)
@@ -871,8 +973,7 @@ void NavigationHandleImpl::DidCommitNavigation(
   subframe_entry_committed_ = navigation_entry_committed;
 
   // For successful navigations, ensure the frame owner element is no longer
-  // collapsed as a result of a prior navigation having been blocked with
-  // BLOCK_REQUEST_AND_COLLAPSE.
+  // collapsed as a result of a prior navigation.
   if (!IsErrorPage() && !frame_tree_node()->IsMainFrame()) {
     // The last committed load in collapsed frames will be an error page with
     // |kUnreachableWebDataURL|. Same-document navigation should not be
@@ -943,8 +1044,6 @@ NavigationHandleImpl::CheckWillStartRequest() {
         continue;
 
       case NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE:
-        frame_tree_node_->SetCollapsed(true);
-        FALLTHROUGH;
       case NavigationThrottle::BLOCK_REQUEST:
       case NavigationThrottle::CANCEL:
       case NavigationThrottle::CANCEL_AND_IGNORE:
@@ -991,8 +1090,6 @@ NavigationHandleImpl::CheckWillRedirectRequest() {
         continue;
 
       case NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE:
-        frame_tree_node_->SetCollapsed(true);
-        FALLTHROUGH;
       case NavigationThrottle::BLOCK_REQUEST:
       case NavigationThrottle::CANCEL:
       case NavigationThrottle::CANCEL_AND_IGNORE:
@@ -1118,12 +1215,9 @@ void NavigationHandleImpl::ResumeInternal() {
                                "Resume");
 
   NavigationThrottle::ThrottleCheckResult result = NavigationThrottle::DEFER;
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   if (state_ == DEFERRING_START) {
     result = CheckWillStartRequest();
     if (result.action() == NavigationThrottle::DEFER) {
-      if (!on_defer_callback_copy.is_null())
-        on_defer_callback_copy.Run();
       // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
       // one of the NavigationThrottle checks.
       return;
@@ -1131,8 +1225,6 @@ void NavigationHandleImpl::ResumeInternal() {
   } else if (state_ == DEFERRING_REDIRECT) {
     result = CheckWillRedirectRequest();
     if (result.action() == NavigationThrottle::DEFER) {
-      if (!on_defer_callback_copy.is_null())
-        on_defer_callback_copy.Run();
       // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
       // one of the NavigationThrottle checks.
       return;
@@ -1140,8 +1232,6 @@ void NavigationHandleImpl::ResumeInternal() {
   } else if (state_ == DEFERRING_FAILURE) {
     result = CheckWillFailRequest();
     if (result.action() == NavigationThrottle::DEFER) {
-      if (!on_defer_callback_copy.is_null())
-        on_defer_callback_copy.Run();
       // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
       // one of the NavigationThrottle checks.
       return;
@@ -1149,8 +1239,6 @@ void NavigationHandleImpl::ResumeInternal() {
   } else {
     result = CheckWillProcessResponse();
     if (result.action() == NavigationThrottle::DEFER) {
-      if (!on_defer_callback_copy.is_null())
-        on_defer_callback_copy.Run();
       // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
       // one of the NavigationThrottle checks.
       return;
@@ -1180,9 +1268,6 @@ void NavigationHandleImpl::CancelDeferredNavigationInternal(
   DCHECK(result.action() != NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ||
          state_ == DEFERRING_START || state_ == DEFERRING_REDIRECT);
 
-  if (result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE)
-    frame_tree_node_->SetCollapsed(true);
-
   TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
                                "CancelDeferredNavigation");
   state_ = CANCELING;
@@ -1202,7 +1287,7 @@ void NavigationHandleImpl::RunCompleteCallback(
   }
 
   if (!callback.is_null())
-    callback.Run(result);
+    std::move(callback).Run(result);
 
   // No code after running the callback, as it might have resulted in our
   // destruction.
@@ -1220,9 +1305,14 @@ void NavigationHandleImpl::RegisterNavigationThrottles() {
 
   throttles_ = GetDelegate()->CreateThrottlesForNavigation(this);
 
-  // Check for renderer-inititated main frame navigations to data URLs. This is
-  // done first as it may block the main frame navigation altogether.
-  AddThrottle(DataUrlNavigationThrottle::CreateThrottleForNavigation(this));
+  // Enforce rules for WebUI navigations.
+  AddThrottle(WebUINavigationThrottle::CreateThrottleForNavigation(this));
+
+  // Check for renderer-inititated main frame navigations to blocked URL schemes
+  // (data, filesystem). This is done early as it may block the main frame
+  // navigation altogether.
+  AddThrottle(
+      BlockedSchemeNavigationThrottle::CreateThrottleForNavigation(this));
 
   AddThrottle(AncestorThrottle::MaybeCreateThrottleFor(this));
   AddThrottle(FormSubmissionThrottle::MaybeCreateThrottleFor(this));
@@ -1233,6 +1323,9 @@ void NavigationHandleImpl::RegisterNavigationThrottles() {
   // console about CSP blocking the load.
   AddThrottle(
       MixedContentNavigationThrottle::CreateThrottleForNavigation(this));
+
+  // Handle Origin Policy (if enabled)
+  AddThrottle(OriginPolicyThrottle::MaybeCreateThrottleFor(this));
 
   for (auto& throttle :
        RenderFrameDevToolsAgentHost::CreateNavigationThrottles(this)) {
@@ -1308,6 +1401,33 @@ NavigationThrottle* NavigationHandleImpl::GetDeferringThrottle() const {
   if (next_index_ == 0)
     return nullptr;
   return throttles_[next_index_ - 1].get();
+}
+
+void NavigationHandleImpl::RestartCommitTimeout() {
+  commit_timeout_timer_.Stop();
+  if (state_ >= DID_COMMIT)
+    return;
+
+  commit_timeout_timer_.Start(
+      FROM_HERE, g_commit_timeout,
+      base::BindRepeating(&NavigationHandleImpl::OnCommitTimeout,
+                          weak_factory_.GetWeakPtr()));
+}
+
+void NavigationHandleImpl::OnCommitTimeout() {
+  DCHECK_EQ(READY_TO_COMMIT, state_);
+  GetRenderFrameHost()->GetRenderWidgetHost()->RendererIsUnresponsive(
+      base::BindRepeating(&NavigationHandleImpl::RestartCommitTimeout,
+                          weak_factory_.GetWeakPtr()));
+}
+
+// static
+void NavigationHandleImpl::SetCommitTimeoutForTesting(
+    const base::TimeDelta& timeout) {
+  if (timeout.is_zero())
+    g_commit_timeout = kDefaultCommitTimeout;
+  else
+    g_commit_timeout = timeout;
 }
 
 }  // namespace content

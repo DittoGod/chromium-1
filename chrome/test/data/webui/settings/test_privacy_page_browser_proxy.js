@@ -11,10 +11,17 @@ class TestPrivacyPageBrowserProxy extends TestBrowserProxy {
       'setMetricsReportingEnabled',
       'setSafeBrowsingExtendedReportingEnabled',
       'showManageSSLCertificates',
+      'setBlockAutoplayEnabled',
     ]);
 
     /** @type {!MetricsReporting} */
     this.metricsReporting = {
+      enabled: true,
+      managed: true,
+    };
+
+    /** @type {!SberPrefState} */
+    this.sberPrefState = {
       enabled: true,
       managed: true,
     };
@@ -39,11 +46,16 @@ class TestPrivacyPageBrowserProxy extends TestBrowserProxy {
   /** @override */
   getSafeBrowsingExtendedReporting() {
     this.methodCalled('getSafeBrowsingExtendedReporting');
-    return Promise.resolve(true);
+    return Promise.resolve(this.sberPrefState);
   }
 
   /** @override */
   setSafeBrowsingExtendedReportingEnabled(enabled) {
     this.methodCalled('setSafeBrowsingExtendedReportingEnabled', enabled);
+  }
+
+  /** @override */
+  setBlockAutoplayEnabled(enabled) {
+    this.methodCalled('setBlockAutoplayEnabled', enabled);
   }
 }

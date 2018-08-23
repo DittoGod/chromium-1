@@ -9,7 +9,7 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "chrome/browser/media/webrtc/webrtc_rtp_dump_writer.h"
 #include "content/public/browser/browser_thread.h"
@@ -66,14 +66,14 @@ WebRtcRtpDumpHandler::~WebRtcRtpDumpHandler() {
 
   if (incoming_state_ != STATE_NONE && !incoming_dump_path_.empty()) {
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                        incoming_dump_path_, false));
   }
 
   if (outgoing_state_ != STATE_NONE && !outgoing_dump_path_.empty()) {
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                        outgoing_dump_path_, false));
   }
@@ -236,7 +236,7 @@ void WebRtcRtpDumpHandler::StopOngoingDumps(const base::Closure& callback) {
   // to complete and then check the states again.
   if (incoming_state_ == STATE_STOPPING || outgoing_state_ == STATE_STOPPING) {
     dump_writer_->background_task_runner()->PostTaskAndReply(
-        FROM_HERE, base::BindOnce(&base::DoNothing),
+        FROM_HERE, base::DoNothing(),
         base::BindOnce(&WebRtcRtpDumpHandler::StopOngoingDumps,
                        weak_ptr_factory_.GetWeakPtr(), callback));
     return;
@@ -298,7 +298,7 @@ void WebRtcRtpDumpHandler::OnDumpEnded(const base::Closure& callback,
 
     if (!incoming_success) {
       base::PostTaskWithTraits(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
           base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                          incoming_dump_path_, false));
 
@@ -314,7 +314,7 @@ void WebRtcRtpDumpHandler::OnDumpEnded(const base::Closure& callback,
 
     if (!outgoing_success) {
       base::PostTaskWithTraits(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
           base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                          outgoing_dump_path_, false));
 

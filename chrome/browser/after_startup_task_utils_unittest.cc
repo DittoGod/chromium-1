@@ -11,8 +11,8 @@
 #include "base/bind_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -107,7 +107,7 @@ class AfterStartupTaskTest : public testing::Test {
   void FlushBackgroundSequence() {
     base::RunLoop run_loop;
     background_sequence_->real_runner()->PostTaskAndReply(
-        FROM_HERE, base::BindOnce(&base::DoNothing),
+        FROM_HERE, base::DoNothing(),
         base::BindOnce(&base::RunLoop::Quit, base::Unretained(&run_loop)));
     run_loop.Run();
   }
@@ -181,16 +181,15 @@ TEST_F(AfterStartupTaskTest, PostTask) {
                    ui_thread_->total_task_count());
 
   // Tasks posted after startup should get posted immediately.
-  AfterStartupTaskUtils::PostTask(FROM_HERE, ui_thread_,
-                                  base::BindOnce(&base::DoNothing));
+  AfterStartupTaskUtils::PostTask(FROM_HERE, ui_thread_, base::DoNothing());
   AfterStartupTaskUtils::PostTask(FROM_HERE, background_sequence_,
-                                  base::BindOnce(&base::DoNothing));
+                                  base::DoNothing());
   EXPECT_EQ(1, background_sequence_->posted_task_count());
   EXPECT_EQ(1, ui_thread_->posted_task_count());
   PostAfterStartupTaskFromBackgroundSequence(FROM_HERE, ui_thread_,
-                                             base::BindOnce(&base::DoNothing));
+                                             base::DoNothing());
   PostAfterStartupTaskFromBackgroundSequence(FROM_HERE, background_sequence_,
-                                             base::BindOnce(&base::DoNothing));
+                                             base::DoNothing());
   EXPECT_EQ(2, background_sequence_->posted_task_count());
   EXPECT_EQ(2, ui_thread_->posted_task_count());
   FlushBackgroundSequence();

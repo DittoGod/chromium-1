@@ -10,7 +10,6 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -137,7 +136,7 @@ void MediaStreamVideoTrack::FrameDeliverer::RemoveCallbackOnIO(
       callback.reset(new VideoCaptureDeliverFrameCB(it->second));
       callbacks_.erase(it);
       task_runner->PostTask(
-          FROM_HERE, base::BindOnce(&ResetCallback, base::Passed(&callback)));
+          FROM_HERE, base::BindOnce(&ResetCallback, std::move(callback)));
       return;
     }
   }
@@ -382,7 +381,7 @@ void MediaStreamVideoTrack::GetSettings(
       settings.frame_rate = format->frame_rate;
     settings.video_kind = GetVideoKindForFormat(*format);
   }
-  settings.facing_mode = FacingMode();
+  settings.facing_mode = ToWebFacingMode(source_->device().video_facing);
   const base::Optional<CameraCalibration> calibration =
       source_->device().camera_calibration;
   if (calibration) {
@@ -390,36 +389,6 @@ void MediaStreamVideoTrack::GetSettings(
     settings.depth_far = calibration->depth_far;
     settings.focal_length_x = calibration->focal_length_x;
     settings.focal_length_y = calibration->focal_length_y;
-  }
-}
-
-blink::WebMediaStreamTrack::FacingMode MediaStreamVideoTrack::FacingMode()
-    const {
-  if (!source_)
-    return blink::WebMediaStreamTrack::FacingMode::kNone;
-
-  const MediaStreamDevice& device = source_->device();
-#if defined(OS_ANDROID)
-  // On Android, the facing mode is not available in the |video_facing| field,
-  // but is available as part of the label.
-  // TODO(guidou): Remove this code once the |video_facing| field is supported
-  // on Android. See http://crbug.com/672856.
-  if (device.name.find("front") != std::string::npos) {
-    return blink::WebMediaStreamTrack::FacingMode::kUser;
-  } else if (device.name.find("back") != std::string::npos) {
-    return blink::WebMediaStreamTrack::FacingMode::kEnvironment;
-  }
-#endif
-
-  switch (device.video_facing) {
-    case media::MEDIA_VIDEO_FACING_NONE:
-      return blink::WebMediaStreamTrack::FacingMode::kNone;
-    case media::MEDIA_VIDEO_FACING_USER:
-      return blink::WebMediaStreamTrack::FacingMode::kUser;
-    case media::MEDIA_VIDEO_FACING_ENVIRONMENT:
-      return blink::WebMediaStreamTrack::FacingMode::kEnvironment;
-    default:
-      return blink::WebMediaStreamTrack::FacingMode::kNone;
   }
 }
 

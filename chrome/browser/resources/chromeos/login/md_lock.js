@@ -56,6 +56,10 @@ cr.define('cr.ui.Oobe', function() {
       cr.ui.login.DisplayManager.initialize();
       login.AccountPickerScreen.register();
 
+      cr.ui.Bubble.decorate($('bubble-persistent'));
+      $('bubble-persistent').persistent = true;
+      $('bubble-persistent').hideOnKeyPress = false;
+
       cr.ui.Bubble.decorate($('bubble'));
       login.HeaderBar.decorate($('login-header-bar'));
       login.TopHeaderBar.decorate($('top-header-bar'));
@@ -78,7 +82,6 @@ cr.define('cr.ui.Oobe', function() {
     handleHighContrastClick: function(e) {},
     handleScreenMagnifierClick: function(e) {},
     setUsageStats: function(checked) {},
-    setOemEulaUrl: function(oemEulaUrl) {},
     setTpmPassword: function(password) {},
     refreshA11yInfo: function(data) {},
     reloadEulaContent: function(data) {},
@@ -91,6 +94,22 @@ cr.define('cr.ui.Oobe', function() {
       loadTimeData.overrideValues(data);
       i18nTemplate.process(document, loadTimeData);
       Oobe.getInstance().updateLocalizedContent_();
+    },
+
+    /**
+     * Updates "device in tablet mode" state when tablet mode is changed.
+     * @param {Boolean} isInTabletMode True when in tablet mode.
+     */
+    setTabletModeState: function(isInTabletMode) {
+      Oobe.getInstance().setTabletModeState_(isInTabletMode);
+    },
+
+    /**
+     * Updates OOBE configuration when it is loaded.
+     * @param {dictionary} configuration OOBE configuration.
+     */
+    updateOobeConfiguration: function(configuration) {
+      // Do nothing in lock mode.
     },
   };
 });

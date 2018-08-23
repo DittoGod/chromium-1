@@ -89,12 +89,11 @@ ExtensionServiceTestBase::ExtensionServiceTestBase()
       testing_local_state_(TestingBrowserProcess::GetGlobal()),
       registry_(nullptr) {
   base::FilePath test_data_dir;
-  if (!PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir)) {
+  if (!base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir)) {
     ADD_FAILURE();
     return;
   }
   data_dir_ = test_data_dir.AppendASCII("extensions");
-  CrxInstaller::set_connector_for_test(test_data_decoder_service_.connector());
 }
 
 ExtensionServiceTestBase::~ExtensionServiceTestBase() {

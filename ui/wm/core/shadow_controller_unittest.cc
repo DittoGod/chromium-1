@@ -15,8 +15,9 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/layer.h"
+#include "ui/compositor_extra/shadow.h"
 #include "ui/wm/core/default_activation_client.h"
-#include "ui/wm/core/shadow.h"
+#include "ui/wm/core/shadow_controller_delegate.h"
 #include "ui/wm/core/shadow_types.h"
 #include "ui/wm/core/window_util.h"
 #include "ui/wm/public/activation_client.h"
@@ -32,7 +33,7 @@ class ShadowControllerTest : public aura::test::AuraTestBase {
     AuraTestBase::SetUp();
     new wm::DefaultActivationClient(root_window());
     ActivationClient* activation_client = GetActivationClient(root_window());
-    shadow_controller_.reset(new ShadowController(activation_client));
+    shadow_controller_.reset(new ShadowController(activation_client, nullptr));
   }
   void TearDown() override {
     shadow_controller_.reset();
@@ -61,15 +62,16 @@ TEST_F(ShadowControllerTest, Shadow) {
   window->Init(ui::LAYER_TEXTURED);
   ParentWindow(window.get());
 
-  // We should create the shadow before the window is visible (the shadow's
-  // layer won't get drawn yet since it's a child of the window's layer).
-  const Shadow* shadow = ShadowController::GetShadowForWindow(window.get());
+  // The shadow is not created until the Window is shown (some Windows should
+  // never get shadows, which is checked when the window first becomes visible).
+  EXPECT_FALSE(ShadowController::GetShadowForWindow(window.get()));
+  window->Show();
+
+  const ui::Shadow* shadow = ShadowController::GetShadowForWindow(window.get());
   ASSERT_TRUE(shadow != NULL);
   EXPECT_TRUE(shadow->layer()->visible());
 
   // The shadow should remain visible after window visibility changes.
-  window->Show();
-  EXPECT_TRUE(shadow->layer()->visible());
   window->Hide();
   EXPECT_TRUE(shadow->layer()->visible());
 
@@ -98,7 +100,7 @@ TEST_F(ShadowControllerTest, ShadowBounds) {
   // When the shadow is first created, it should use the window's size (but
   // remain at the origin, since it's a child of the window's layer).
   SetShadowElevation(window.get(), kShadowElevationInactiveWindow);
-  const Shadow* shadow = ShadowController::GetShadowForWindow(window.get());
+  const ui::Shadow* shadow = ShadowController::GetShadowForWindow(window.get());
   ASSERT_TRUE(shadow != NULL);
   EXPECT_EQ(gfx::Rect(kOldBounds.size()).ToString(),
             shadow->content_bounds().ToString());
@@ -121,7 +123,7 @@ TEST_F(ShadowControllerTest, ShadowStyle) {
   ActivateWindow(window1.get());
 
   // window1 is active, so style should have active appearance.
-  Shadow* shadow1 = ShadowController::GetShadowForWindow(window1.get());
+  ui::Shadow* shadow1 = ShadowController::GetShadowForWindow(window1.get());
   ASSERT_TRUE(shadow1 != NULL);
   EXPECT_EQ(kShadowElevationActiveWindow, shadow1->desired_elevation());
 
@@ -135,7 +137,7 @@ TEST_F(ShadowControllerTest, ShadowStyle) {
   ActivateWindow(window2.get());
 
   // window1 is now inactive, so shadow should go inactive.
-  Shadow* shadow2 = ShadowController::GetShadowForWindow(window2.get());
+  ui::Shadow* shadow2 = ShadowController::GetShadowForWindow(window2.get());
   ASSERT_TRUE(shadow2 != NULL);
   EXPECT_EQ(kShadowElevationInactiveWindow, shadow1->desired_elevation());
   EXPECT_EQ(kShadowElevationActiveWindow, shadow2->desired_elevation());
@@ -149,7 +151,7 @@ TEST_F(ShadowControllerTest, ShowState) {
   ParentWindow(window.get());
   window->Show();
 
-  Shadow* shadow = ShadowController::GetShadowForWindow(window.get());
+  ui::Shadow* shadow = ShadowController::GetShadowForWindow(window.get());
   ASSERT_TRUE(shadow != NULL);
   EXPECT_EQ(kShadowElevationInactiveWindow, shadow->desired_elevation());
 
@@ -172,7 +174,7 @@ TEST_F(ShadowControllerTest, SmallShadowsForTooltipsAndMenus) {
   tooltip_window->SetBounds(gfx::Rect(10, 20, 300, 400));
   tooltip_window->Show();
 
-  Shadow* tooltip_shadow =
+  ui::Shadow* tooltip_shadow =
       ShadowController::GetShadowForWindow(tooltip_window.get());
   ASSERT_TRUE(tooltip_shadow != NULL);
   EXPECT_EQ(kShadowElevationMenuOrTooltip, tooltip_shadow->desired_elevation());
@@ -184,7 +186,7 @@ TEST_F(ShadowControllerTest, SmallShadowsForTooltipsAndMenus) {
   menu_window->SetBounds(gfx::Rect(10, 20, 300, 400));
   menu_window->Show();
 
-  Shadow* menu_shadow =
+  ui::Shadow* menu_shadow =
       ShadowController::GetShadowForWindow(tooltip_window.get());
   ASSERT_TRUE(menu_shadow != NULL);
   EXPECT_EQ(kShadowElevationMenuOrTooltip, menu_shadow->desired_elevation());
@@ -202,7 +204,7 @@ TEST_F(ShadowControllerTest, TransientParentKeepsActiveShadow) {
   ActivateWindow(window1.get());
 
   // window1 is active, so style should have active appearance.
-  Shadow* shadow1 = ShadowController::GetShadowForWindow(window1.get());
+  ui::Shadow* shadow1 = ShadowController::GetShadowForWindow(window1.get());
   ASSERT_TRUE(shadow1 != NULL);
   EXPECT_EQ(kShadowElevationActiveWindow, shadow1->desired_elevation());
 

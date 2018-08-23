@@ -15,8 +15,8 @@
 #include "base/mac/scoped_nsobject.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/path_service.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_task_runner_handle.h"
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/apps/app_shim/app_shim_host_manager_mac.h"
@@ -27,7 +27,7 @@
 #include "chrome/browser/mac/keychain_reauthorize.h"
 #import "chrome/browser/mac/keystone_glue.h"
 #include "chrome/browser/mac/mac_startup_profiler.h"
-#include "chrome/browser/ui/app_list/app_list_service.h"
+#include "chrome/browser/ui/cocoa/main_menu_builder.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/crash/content/app/crashpad.h"
@@ -57,7 +57,7 @@ void EnsureMetadataNeverIndexFileOnFileThread(
 void EnsureMetadataNeverIndexFile(const base::FilePath& user_data_dir) {
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
       base::Bind(&EnsureMetadataNeverIndexFileOnFileThread, user_data_dir));
 }
@@ -67,18 +67,14 @@ void EnsureMetadataNeverIndexFile(const base::FilePath& user_data_dir) {
 // ChromeBrowserMainPartsMac ---------------------------------------------------
 
 ChromeBrowserMainPartsMac::ChromeBrowserMainPartsMac(
-    const content::MainFunctionParams& parameters)
-    : ChromeBrowserMainPartsPosix(parameters) {
-}
+    const content::MainFunctionParams& parameters,
+    std::unique_ptr<ui::DataPack> data_pack)
+    : ChromeBrowserMainPartsPosix(parameters, std::move(data_pack)) {}
 
 ChromeBrowserMainPartsMac::~ChromeBrowserMainPartsMac() {
 }
 
 int ChromeBrowserMainPartsMac::PreEarlyInitialization() {
-  const int result = ChromeBrowserMainPartsPosix::PreEarlyInitialization();
-  if (result != content::RESULT_CODE_NORMAL_EXIT)
-    return result;
-
   if (base::mac::WasLaunchedAsLoginItemRestoreState()) {
     base::CommandLine* singleton_command_line =
         base::CommandLine::ForCurrentProcess();
@@ -89,25 +85,16 @@ int ChromeBrowserMainPartsMac::PreEarlyInitialization() {
     singleton_command_line->AppendSwitch(switches::kNoStartupWindow);
   }
 
-  // Tell Cocoa to finish its initialization, which we want to do manually
-  // instead of calling NSApplicationMain(). The primary reason is that NSAM()
-  // never returns, which would leave all the objects currently on the stack
-  // in scoped_ptrs hanging and never cleaned up. We then load the main nib
-  // directly. The main event loop is run from common code using the
-  // MessageLoop API, which works out ok for us because it's a wrapper around
-  // CFRunLoop.
-
-  // Initialize NSApplication using the custom subclass.
-  chrome_browser_application_mac::RegisterBrowserCrApp();
-
   // If ui_task is not NULL, the app is actually a browser_test.
   if (!parameters().ui_task) {
     // The browser process only wants to support the language Cocoa will use,
-    // so force the app locale to be overriden with that value.
+    // so force the app locale to be overriden with that value. This must
+    // happen before the ResourceBundle is loaded, which happens in
+    // ChromeBrowserMainParts::PreEarlyInitialization().
     l10n_util::OverrideLocaleWithCocoaLocale();
   }
 
-  return content::RESULT_CODE_NORMAL_EXIT;
+  return ChromeBrowserMainPartsPosix::PreEarlyInitialization();
 }
 
 void ChromeBrowserMainPartsMac::PreMainMessageLoopStart() {
@@ -143,18 +130,13 @@ void ChromeBrowserMainPartsMac::PreMainMessageLoopStart() {
     }
   }
 
-  // Now load the nib (from the right bundle).
-  base::scoped_nsobject<NSNib> nib(
-      [[NSNib alloc] initWithNibNamed:@"MainMenu"
-                               bundle:base::mac::FrameworkBundle()]);
-  // TODO(viettrungluu): crbug.com/20504 - This currently leaks, so if you
-  // change this, you'll probably need to change the Valgrind suppression.
-  NSArray* top_level_objects = nil;
-  [nib instantiateWithOwner:NSApp topLevelObjects:&top_level_objects];
-  for (NSObject* object : top_level_objects)
-    [object retain];
-  // Make sure the app controller has been created.
-  DCHECK([NSApp delegate]);
+  // Create the app delegate. This object is intentionally leaked as a global
+  // singleton. It is accessed through -[NSApp delegate].
+  AppController* app_controller = [[AppController alloc] init];
+  [NSApp setDelegate:app_controller];
+
+  chrome::BuildMainMenu(NSApp, app_controller);
+  [app_controller mainMenuCreated];
 
   // Do Keychain reauthorization. This gets two chances to run. If the first
   // try doesn't complete successfully (crashes or is interrupted for any
@@ -182,8 +164,6 @@ void ChromeBrowserMainPartsMac::PreProfileInit() {
   // This is called here so that the app shim socket is only created after
   // taking the singleton lock.
   g_browser_process->platform_part()->app_shim_host_manager()->Init();
-  AppListService::InitAll(NULL,
-      GetStartupProfilePath(user_data_dir(), parsed_command_line()));
 }
 
 void ChromeBrowserMainPartsMac::PostProfileInit() {

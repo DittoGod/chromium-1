@@ -5,24 +5,38 @@
 #include <memory>
 
 #include "base/auto_reset.h"
+#include "base/files/file_path.h"
+#include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_restrictions.h"
+#include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/printing/print_view_manager_common.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/print_preview/print_preview_ui.h"
+#include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/prefs/pref_service.h"
+#include "components/printing/browser/features.h"
 #include "components/printing/browser/print_composite_client.h"
+#include "components/printing/browser/print_manager_utils.h"
 #include "components/printing/common/print_messages.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/common/extension.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+
+#if defined(OS_CHROMEOS)
+#include "ui/aura/env.h"
+#endif
 
 namespace printing {
 
@@ -100,6 +114,32 @@ class TestPrintFrameContentMsgFilter : public content::BrowserMessageFilter {
   base::RepeatingClosure msg_callback_;
 };
 
+class KillPrintFrameContentMsgFilter : public content::BrowserMessageFilter {
+ public:
+  explicit KillPrintFrameContentMsgFilter(content::RenderProcessHost* rph)
+      : content::BrowserMessageFilter(PrintMsgStart), rph_(rph) {}
+
+  bool OnMessageReceived(const IPC::Message& message) override {
+    // Only handle PrintHostMsg_DidPrintFrameContent message.
+    bool handled = true;
+    IPC_BEGIN_MESSAGE_MAP(KillPrintFrameContentMsgFilter, message)
+      IPC_MESSAGE_HANDLER(PrintHostMsg_DidPrintFrameContent, KillRenderProcess)
+      IPC_MESSAGE_UNHANDLED(handled = false)
+    IPC_END_MESSAGE_MAP()
+    return handled;
+  }
+
+ private:
+  ~KillPrintFrameContentMsgFilter() override {}
+
+  void KillRenderProcess(int document_cookie,
+                         const PrintHostMsg_DidPrintContent_Params& param) {
+    rph_->Shutdown(0);
+  }
+
+  content::RenderProcessHost* rph_;
+};
+
 }  // namespace
 
 class PrintBrowserTest : public InProcessBrowserTest {
@@ -167,6 +207,85 @@ class PrintBrowserTest : public InProcessBrowserTest {
   unsigned int num_expected_messages_;
   unsigned int num_received_messages_;
   std::unique_ptr<base::RunLoop> run_loop_;
+};
+
+class SitePerProcessPrintBrowserTest : public PrintBrowserTest {
+ public:
+  SitePerProcessPrintBrowserTest() {}
+  ~SitePerProcessPrintBrowserTest() override {}
+
+  // content::BrowserTestBase
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    content::IsolateAllSitesForTesting(command_line);
+  }
+};
+
+class IsolateOriginsPrintBrowserTest : public PrintBrowserTest {
+ public:
+  static constexpr char kIsolatedSite[] = "b.com";
+
+  IsolateOriginsPrintBrowserTest() {}
+  ~IsolateOriginsPrintBrowserTest() override {}
+
+  // content::BrowserTestBase
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ASSERT_TRUE(embedded_test_server()->Start());
+
+    std::string origin_list =
+        embedded_test_server()->GetURL(kIsolatedSite, "/").spec();
+    command_line->AppendSwitchASCII(switches::kIsolateOrigins, origin_list);
+  }
+
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+};
+
+constexpr char IsolateOriginsPrintBrowserTest::kIsolatedSite[];
+
+class PrintExtensionBrowserTest : public extensions::ExtensionBrowserTest {
+ public:
+  PrintExtensionBrowserTest() {}
+  ~PrintExtensionBrowserTest() override {}
+
+  void PrintAndWaitUntilPreviewIsReady(bool print_only_selection) {
+    PrintPreviewObserver print_preview_observer;
+
+    printing::StartPrint(browser()->tab_strip_model()->GetActiveWebContents(),
+                         /*print_preview_disabled=*/false,
+                         print_only_selection);
+
+    print_preview_observer.WaitUntilPreviewIsReady();
+  }
+
+  void LoadExtensionAndNavigateToOptionPage() {
+    const extensions::Extension* extension = nullptr;
+    {
+      base::ScopedAllowBlockingForTesting allow_blocking;
+      base::FilePath test_data_dir;
+      base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
+      extension = LoadExtension(
+          test_data_dir.AppendASCII("printing").AppendASCII("test_extension"));
+      ASSERT_TRUE(extension);
+    }
+
+    GURL url(chrome::kChromeUIExtensionsURL);
+    std::string query =
+        base::StringPrintf("options=%s", extension->id().c_str());
+    GURL::Replacements replacements;
+    replacements.SetQueryStr(query);
+    url = url.ReplaceComponents(replacements);
+    ui_test_utils::NavigateToURL(browser(), url);
+  }
+};
+
+class SitePerProcessPrintExtensionBrowserTest
+    : public PrintExtensionBrowserTest {
+ public:
+  // content::BrowserTestBase
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    content::IsolateAllSitesForTesting(command_line);
+  }
 };
 
 // Printing only a selection containing iframes is partially supported.
@@ -315,6 +434,141 @@ IN_PROC_BROWSER_TEST_F(PrintBrowserTest, PrintSubframeABA) {
   // TestPrintFrameContentMsgFilter.
   SetNumExpectedMessages(oopif_enabled ? 3 : 1);
   WaitUntilMessagesReceived();
+}
+
+// Printing preview a simple webpage when site per process is enabled.
+// Test that the basic oopif printing should succeed. The test should not crash
+// or timed out. There could be other reasons that cause the test fail, but the
+// most obvious ones would be font access outage or web sandbox support being
+// absent because we explicitly check these when pdf compositor service starts.
+IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest, BasicPrint) {
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(embedded_test_server()->GetURL("/printing/test1.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
+}
+
+// Printing a web page with a dead subframe for site per process should succeed.
+// This test passes whenever the print preview is rendered. This should not be
+// a timed out test which indicates the print preview hung.
+IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest,
+                       SubframeUnavailableBeforePrint) {
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(
+      embedded_test_server()->GetURL("/printing/content_with_iframe.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  content::WebContents* original_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_EQ(2u, original_contents->GetAllFrames().size());
+  content::RenderFrameHost* test_frame = original_contents->GetAllFrames()[1];
+  ASSERT_TRUE(test_frame);
+  ASSERT_TRUE(test_frame->IsRenderFrameLive());
+  // Wait for the renderer to be down.
+  content::RenderProcessHostWatcher render_process_watcher(
+      test_frame->GetProcess(),
+      content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+  // Shutdown the subframe.
+  ASSERT_TRUE(test_frame->GetProcess()->Shutdown(0));
+  render_process_watcher.Wait();
+  ASSERT_FALSE(test_frame->IsRenderFrameLive());
+
+  PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
+}
+
+// If a subframe dies during printing, the page printing should still succeed.
+// This test passes whenever the print preview is rendered. This should not be
+// a timed out test which indicates the print preview hung.
+IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest,
+                       SubframeUnavailableDuringPrint) {
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(
+      embedded_test_server()->GetURL("/printing/content_with_iframe.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  content::WebContents* original_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_EQ(2u, original_contents->GetAllFrames().size());
+  content::RenderFrameHost* subframe = original_contents->GetAllFrames()[1];
+  ASSERT_TRUE(subframe);
+  auto* subframe_rph = subframe->GetProcess();
+
+  auto filter =
+      base::MakeRefCounted<KillPrintFrameContentMsgFilter>(subframe_rph);
+  subframe_rph->AddFilter(filter.get());
+
+  PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
+}
+
+// Printing preview a web page with an iframe from an isolated origin.
+// This test passes whenever the print preview is rendered. This should not be
+// a timed out test which indicates the print preview hung or crash.
+IN_PROC_BROWSER_TEST_F(IsolateOriginsPrintBrowserTest, PrintIsolatedSubframe) {
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(embedded_test_server()->GetURL(
+      "/printing/content_with_same_site_iframe.html"));
+  GURL isolated_url(
+      embedded_test_server()->GetURL(kIsolatedSite, "/printing/test1.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  content::WebContents* original_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  EXPECT_TRUE(NavigateIframeToURL(original_contents, "iframe", isolated_url));
+
+  ASSERT_EQ(2u, original_contents->GetAllFrames().size());
+  auto* main_frame = original_contents->GetMainFrame();
+  auto* subframe = original_contents->GetAllFrames()[1];
+  ASSERT_NE(main_frame->GetProcess(), subframe->GetProcess());
+
+  PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
+}
+
+// Printing preview a webpage.
+// Test that we use oopif printing by default.
+IN_PROC_BROWSER_TEST_F(PrintBrowserTest, RegularPrinting) {
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(embedded_test_server()->GetURL("/printing/test1.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  EXPECT_TRUE(IsOopifEnabled());
+}
+
+// Printing preview a webpage with isolate-origins enabled.
+// Test that we will use oopif printing for this case.
+IN_PROC_BROWSER_TEST_F(IsolateOriginsPrintBrowserTest, OopifPrinting) {
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(embedded_test_server()->GetURL("/printing/test1.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  EXPECT_TRUE(IsOopifEnabled());
+}
+
+// Printing an extension option page.
+// The test should not crash or timeout.
+IN_PROC_BROWSER_TEST_F(PrintExtensionBrowserTest, PrintOptionPage) {
+#if defined(OS_CHROMEOS)
+  // Mus can not support this test now https://crbug.com/823782.
+  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS)
+    return;
+#endif
+
+  LoadExtensionAndNavigateToOptionPage();
+  PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
+}
+
+// Printing an extension option page with site per process is enabled.
+// The test should not crash or timeout.
+IN_PROC_BROWSER_TEST_F(SitePerProcessPrintExtensionBrowserTest,
+                       PrintOptionPage) {
+#if defined(OS_CHROMEOS)
+  // Mus can not support this test now https://crbug.com/823782.
+  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS)
+    return;
+#endif
+
+  LoadExtensionAndNavigateToOptionPage();
+  PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
 }
 
 }  // namespace printing

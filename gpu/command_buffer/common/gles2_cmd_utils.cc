@@ -11,6 +11,7 @@
 #include <GLES2/gl2ext.h>
 #include <GLES2/gl2extchromium.h>
 #include <GLES3/gl3.h>
+#include <GLES3/gl31.h>
 
 #include <sstream>
 
@@ -281,6 +282,26 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
     case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
       return 1;
 
+    // ES31
+    case GL_ATOMIC_COUNTER_BUFFER_BINDING:
+      return 1;
+    case GL_ATOMIC_COUNTER_BUFFER_SIZE:
+      return 1;
+    case GL_ATOMIC_COUNTER_BUFFER_START:
+      return 1;
+    case GL_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS:
+      return 1;
+    case GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS:
+      return 1;
+    case GL_SHADER_STORAGE_BUFFER_BINDING:
+      return 1;
+    case GL_SHADER_STORAGE_BUFFER_SIZE:
+      return 1;
+    case GL_SHADER_STORAGE_BUFFER_START:
+      return 1;
+    case GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT:
+      return 1;
+
     // -- glGetBooleanv, glGetFloatv, glGetIntergerv with
     //    GL_CHROMIUM_framebuffer_multisample
     case GL_MAX_SAMPLES_EXT:
@@ -534,25 +555,25 @@ int GLES2Util::ElementsPerGroup(int format, int type) {
     case GL_UNSIGNED_INT_10F_11F_11F_REV:
     case GL_UNSIGNED_INT_5_9_9_9_REV:
     case GL_FLOAT_32_UNSIGNED_INT_24_8_REV:
-       return 1;
+      return 1;
     default:
-       break;
-    }
+      break;
+  }
 
-    switch (format) {
+  switch (format) {
     case GL_RGB:
     case GL_RGB_INTEGER:
     case GL_SRGB_EXT:
-       return 3;
+      return 3;
     case GL_LUMINANCE_ALPHA:
     case GL_RG_EXT:
     case GL_RG_INTEGER:
-       return 2;
+      return 2;
     case GL_RGBA:
     case GL_RGBA_INTEGER:
     case GL_BGRA_EXT:
     case GL_SRGB_ALPHA_EXT:
-       return 4;
+      return 4;
     case GL_ALPHA:
     case GL_LUMINANCE:
     case GL_DEPTH_COMPONENT:
@@ -563,9 +584,9 @@ int GLES2Util::ElementsPerGroup(int format, int type) {
     case GL_DEPTH_STENCIL_OES:
     case GL_RED_EXT:
     case GL_RED_INTEGER:
-       return 1;
+      return 1;
     default:
-       return 0;
+      return 0;
   }
 }
 
@@ -738,6 +759,16 @@ size_t GLES2Util::RenderbufferBytesPerPixel(int format) {
     case GL_RGBA8_OES:
     case GL_DEPTH_COMPONENT24_OES:
       return 4;
+    default:
+      return 0;
+  }
+}
+
+uint8_t GLES2Util::StencilBitsPerPixel(int format) {
+  switch (format) {
+    case GL_STENCIL_INDEX8:
+    case GL_DEPTH24_STENCIL8_OES:
+      return 8;
     default:
       return 0;
   }
@@ -1636,6 +1667,8 @@ uint32_t GLES2Util::MapBufferTargetToBindingEnum(uint32_t target) {
   switch (target) {
     case GL_ARRAY_BUFFER:
       return GL_ARRAY_BUFFER_BINDING;
+    case GL_ATOMIC_COUNTER_BUFFER:
+      return GL_ATOMIC_COUNTER_BUFFER_BINDING;
     case GL_COPY_READ_BUFFER:
       return GL_COPY_READ_BUFFER_BINDING;
     case GL_COPY_WRITE_BUFFER:
@@ -1646,6 +1679,8 @@ uint32_t GLES2Util::MapBufferTargetToBindingEnum(uint32_t target) {
       return GL_PIXEL_PACK_BUFFER_BINDING;
     case GL_PIXEL_UNPACK_BUFFER:
       return GL_PIXEL_UNPACK_BUFFER_BINDING;
+    case GL_SHADER_STORAGE_BUFFER:
+      return GL_SHADER_STORAGE_BUFFER_BINDING;
     case GL_TRANSFORM_FEEDBACK_BUFFER:
       return GL_TRANSFORM_FEEDBACK_BUFFER_BINDING;
     case GL_UNIFORM_BUFFER:

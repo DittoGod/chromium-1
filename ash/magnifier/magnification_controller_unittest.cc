@@ -4,6 +4,8 @@
 
 #include "ash/magnifier/magnification_controller.h"
 
+#include "ash/magnifier/magnifier_scale_utils.h"
+#include "ash/magnifier/magnifier_test_utils.h"
 #include "ash/public/cpp/ash_switches.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
@@ -18,6 +20,7 @@
 #include "ui/events/event_handler.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/keyboard/keyboard_controller.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/widget/widget.h"
@@ -29,31 +32,6 @@ namespace {
 
 const int kRootHeight = 600;
 const int kRootWidth = 800;
-
-const int kTextInputWindowWidth = 50;
-const int kTextInputWindowHeight = 50;
-
-class TextInputView : public views::WidgetDelegateView {
- public:
-  TextInputView() : text_field_(new views::Textfield) {
-    text_field_->SetTextInputType(ui::TEXT_INPUT_TYPE_TEXT);
-    AddChildView(text_field_);
-    SetLayoutManager(std::make_unique<views::FillLayout>());
-  }
-
-  ~TextInputView() override = default;
-
-  gfx::Size CalculatePreferredSize() const override {
-    return gfx::Size(kTextInputWindowWidth, kTextInputWindowHeight);
-  }
-
-  void FocusOnTextInput() { text_field_->RequestFocus(); }
-
- private:
-  views::Textfield* text_field_;  // owned by views hierarchy
-
-  DISALLOW_COPY_AND_ASSIGN(TextInputView);
-};
 
 class TouchEventWatcher : public ui::EventHandler {
  public:
@@ -74,7 +52,7 @@ class TouchEventWatcher : public ui::EventHandler {
 
 class MagnificationControllerTest : public AshTestBase {
  public:
-  MagnificationControllerTest() : text_input_view_(NULL) {}
+  MagnificationControllerTest() {}
   ~MagnificationControllerTest() override = default;
 
   void SetUp() override {
@@ -84,7 +62,8 @@ class MagnificationControllerTest : public AshTestBase {
     GetMagnificationController()->DisableMoveMagnifierDelayForTesting();
 
     touch_event_watcher_ = std::make_unique<TouchEventWatcher>();
-    GetRootWindow()->PrependPreTargetHandler(touch_event_watcher_.get());
+    GetRootWindow()->AddPreTargetHandler(touch_event_watcher_.get(),
+                                         ui::EventTarget::Priority::kSystem);
   }
 
   void TearDown() override {
@@ -120,46 +99,12 @@ class MagnificationControllerTest : public AshTestBase {
         .ToString();
   }
 
-  void CreateAndShowTextInputView(const gfx::Rect& bounds) {
-    text_input_view_ = new TextInputView;
-    views::Widget* widget = views::Widget::CreateWindowWithContextAndBounds(
-        text_input_view_, GetRootWindow(), bounds);
-    widget->Show();
-  }
-
-  // Returns the text input view's bounds in root window coordinates.
-  gfx::Rect GetTextInputViewBounds() {
-    DCHECK(text_input_view_);
-    gfx::Rect bounds = text_input_view_->bounds();
-    gfx::Point origin = bounds.origin();
-    // Convert origin to screen coordinates.
-    views::View::ConvertPointToScreen(text_input_view_, &origin);
-    // Convert origin to root_window_ coordinates.
-    ::wm::ConvertPointFromScreen(GetRootWindow(), &origin);
-    return gfx::Rect(origin.x(), origin.y(), bounds.width(), bounds.height());
-  }
-
-  // Returns the caret bounds in root window coordinates.
-  gfx::Rect GetCaretBounds() {
-    gfx::Rect caret_bounds =
-        GetInputMethod()->GetTextInputClient()->GetCaretBounds();
-    gfx::Point origin = caret_bounds.origin();
-    ::wm::ConvertPointFromScreen(GetRootWindow(), &origin);
-    return gfx::Rect(origin.x(), origin.y(), caret_bounds.width(),
-                     caret_bounds.height());
-  }
-
-  void FocusOnTextInputView() {
-    DCHECK(text_input_view_);
-    text_input_view_->FocusOnTextInput();
-  }
-
   void DispatchTouchEvent(ui::EventType event_type,
                           const gfx::Point& point,
                           const base::TimeTicks& time,
                           const ui::PointerDetails& pointer_details) {
     ui::TouchEvent event(event_type, point, time, pointer_details);
-    GetEventGenerator().Dispatch(&event);
+    GetEventGenerator()->Dispatch(&event);
   }
 
   void PerformTwoFingersScrollGesture() {
@@ -185,14 +130,9 @@ class MagnificationControllerTest : public AshTestBase {
                        pointer_details2);
   }
 
+  MagnifierTextInputTestHelper text_input_helper_;
+
  private:
-  TextInputView* text_input_view_;
-
-  ui::InputMethod* GetInputMethod() {
-    DCHECK(text_input_view_);
-    return text_input_view_->GetWidget()->GetInputMethod();
-  }
-
   DISALLOW_COPY_AND_ASSIGN(MagnificationControllerTest);
 };
 
@@ -290,22 +230,25 @@ TEST_F(MagnificationControllerTest, MoveWindow) {
 }
 
 TEST_F(MagnificationControllerTest, PointOfInterest) {
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 0));
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+
+  event_generator->MoveMouseToInHost(gfx::Point(0, 0));
   EXPECT_EQ("0,0", CurrentPointOfInterest());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 599));
+  event_generator->MoveMouseToInHost(gfx::Point(799, 599));
   EXPECT_EQ("799,599", CurrentPointOfInterest());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(400, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(400, 300));
   EXPECT_EQ("400,300", CurrentPointOfInterest());
 
   GetMagnificationController()->SetEnabled(true);
   EXPECT_EQ("400,300", CurrentPointOfInterest());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(500, 400));
+  event_generator->MoveMouseToInHost(gfx::Point(500, 400));
   EXPECT_EQ("450,350", CurrentPointOfInterest());
 }
 
+// TODO(warx): move this test to unit_tests.
 TEST_F(MagnificationControllerTest, FollowFocusChanged) {
   // Enables magnifier and confirm the viewport is at center.
   GetMagnificationController()->SetEnabled(true);
@@ -334,9 +277,10 @@ TEST_F(MagnificationControllerTest, FollowFocusChanged) {
 }
 
 TEST_F(MagnificationControllerTest, PanWindow2xLeftToRight) {
-  const aura::Env* env = aura::Env::GetInstance();
+  const aura::Env* env = Shell::Get()->aura_env();
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 0));
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  event_generator->MoveMouseToInHost(gfx::Point(0, 0));
   EXPECT_EQ(1.f, GetMagnificationController()->GetScale());
   EXPECT_EQ("0,0 800x600", GetViewport().ToString());
   EXPECT_EQ("0,0", env->last_mouse_location().ToString());
@@ -346,100 +290,101 @@ TEST_F(MagnificationControllerTest, PanWindow2xLeftToRight) {
   EXPECT_EQ(2.0f, GetMagnificationController()->GetScale());
 
   GetMagnificationController()->MoveWindow(0, 0, false);
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 0));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 0));
   EXPECT_EQ("0,0", env->last_mouse_location().ToString());
   EXPECT_EQ("0,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(300, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(300, 150));
   EXPECT_EQ("150,75", env->last_mouse_location().ToString());
   EXPECT_EQ("0,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(700, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(700, 150));
   EXPECT_EQ("350,75", env->last_mouse_location().ToString());
   EXPECT_EQ("0,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(701, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(701, 150));
   EXPECT_EQ("350,75", env->last_mouse_location().ToString());
   EXPECT_EQ("0,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(702, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(702, 150));
   EXPECT_EQ("351,75", env->last_mouse_location().ToString());
   EXPECT_EQ("1,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(703, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(703, 150));
   EXPECT_EQ("352,75", env->last_mouse_location().ToString());
   EXPECT_EQ("2,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(704, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(704, 150));
   EXPECT_EQ("354,75", env->last_mouse_location().ToString());
   EXPECT_EQ("4,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(712, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(712, 150));
   EXPECT_EQ("360,75", env->last_mouse_location().ToString());
   EXPECT_EQ("10,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(600, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(600, 150));
   EXPECT_EQ("310,75", env->last_mouse_location().ToString());
   EXPECT_EQ("10,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(720, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(720, 150));
   EXPECT_EQ("370,75", env->last_mouse_location().ToString());
   EXPECT_EQ("20,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("410,75", env->last_mouse_location().ToString());
   EXPECT_EQ("410,75", CurrentPointOfInterest());
   EXPECT_EQ("60,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(799, 150));
   EXPECT_EQ("459,75", env->last_mouse_location().ToString());
   EXPECT_EQ("109,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(702, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(702, 150));
   EXPECT_EQ("460,75", env->last_mouse_location().ToString());
   EXPECT_EQ("110,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("500,75", env->last_mouse_location().ToString());
   EXPECT_EQ("150,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("540,75", env->last_mouse_location().ToString());
   EXPECT_EQ("190,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("580,75", env->last_mouse_location().ToString());
   EXPECT_EQ("230,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("620,75", env->last_mouse_location().ToString());
   EXPECT_EQ("270,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("660,75", env->last_mouse_location().ToString());
   EXPECT_EQ("310,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("700,75", env->last_mouse_location().ToString());
   EXPECT_EQ("350,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("740,75", env->last_mouse_location().ToString());
   EXPECT_EQ("390,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(780, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(780, 150));
   EXPECT_EQ("780,75", env->last_mouse_location().ToString());
   EXPECT_EQ("400,0 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 150));
+  event_generator->MoveMouseToInHost(gfx::Point(799, 150));
   EXPECT_EQ("799,75", env->last_mouse_location().ToString());
   EXPECT_EQ("400,0 400x300", GetViewport().ToString());
 }
 
 TEST_F(MagnificationControllerTest, PanWindow2xRightToLeft) {
-  const aura::Env* env = aura::Env::GetInstance();
+  const aura::Env* env = Shell::Get()->aura_env();
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 300));
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  event_generator->MoveMouseToInHost(gfx::Point(799, 300));
   EXPECT_EQ(1.f, GetMagnificationController()->GetScale());
   EXPECT_EQ("0,0 800x600", GetViewport().ToString());
   EXPECT_EQ("799,300", env->last_mouse_location().ToString());
@@ -447,51 +392,52 @@ TEST_F(MagnificationControllerTest, PanWindow2xRightToLeft) {
   // Enables magnifier and confirm the viewport is at center.
   GetMagnificationController()->SetEnabled(true);
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(799, 300));
   EXPECT_EQ("798,300", env->last_mouse_location().ToString());
   EXPECT_EQ("400,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("400,300", env->last_mouse_location().ToString());
   EXPECT_EQ("350,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("350,300", env->last_mouse_location().ToString());
   EXPECT_EQ("300,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("300,300", env->last_mouse_location().ToString());
   EXPECT_EQ("250,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("250,300", env->last_mouse_location().ToString());
   EXPECT_EQ("200,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("200,300", env->last_mouse_location().ToString());
   EXPECT_EQ("150,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("150,300", env->last_mouse_location().ToString());
   EXPECT_EQ("100,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("100,300", env->last_mouse_location().ToString());
   EXPECT_EQ("50,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("50,300", env->last_mouse_location().ToString());
   EXPECT_EQ("0,150 400x300", GetViewport().ToString());
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("0,300", env->last_mouse_location().ToString());
   EXPECT_EQ("0,150 400x300", GetViewport().ToString());
 }
 
 TEST_F(MagnificationControllerTest, PanWindowToRight) {
-  const aura::Env* env = aura::Env::GetInstance();
+  const aura::Env* env = Shell::Get()->aura_env();
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(400, 300));
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  event_generator->MoveMouseToInHost(gfx::Point(400, 300));
   EXPECT_EQ(1.f, GetMagnificationController()->GetScale());
   EXPECT_EQ("0,0 800x600", GetViewport().ToString());
   EXPECT_EQ("400,300", env->last_mouse_location().ToString());
@@ -502,41 +448,42 @@ TEST_F(MagnificationControllerTest, PanWindowToRight) {
   GetMagnificationController()->SetEnabled(true);
   EXPECT_FLOAT_EQ(2.f, GetMagnificationController()->GetScale());
 
-  scale *= MagnificationController::kMagnificationScaleFactor;
+  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(2.3784142, GetMagnificationController()->GetScale());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(400, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(400, 300));
   EXPECT_EQ("400,300", env->last_mouse_location().ToString());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(799, 300));
   EXPECT_EQ("566,299", env->last_mouse_location().ToString());
   EXPECT_EQ("705,300", GetHostMouseLocation());
 
-  scale *= MagnificationController::kMagnificationScaleFactor;
+  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(2.8284268, GetMagnificationController()->GetScale());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(799, 300));
   EXPECT_EQ("599,299", env->last_mouse_location().ToString());
   EXPECT_EQ("702,300", GetHostMouseLocation());
 
-  scale *= MagnificationController::kMagnificationScaleFactor;
+  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(3.3635852, GetMagnificationController()->GetScale());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(799, 300));
   EXPECT_EQ("627,298", env->last_mouse_location().ToString());
   EXPECT_EQ("707,300", GetHostMouseLocation());
 
-  scale *= MagnificationController::kMagnificationScaleFactor;
+  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(4.f, GetMagnificationController()->GetScale());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(799, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(799, 300));
   EXPECT_EQ("649,298", env->last_mouse_location().ToString());
   EXPECT_EQ("704,300", GetHostMouseLocation());
 }
 
 TEST_F(MagnificationControllerTest, PanWindowToLeft) {
-  const aura::Env* env = aura::Env::GetInstance();
+  const aura::Env* env = Shell::Get()->aura_env();
 
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(400, 300));
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  event_generator->MoveMouseToInHost(gfx::Point(400, 300));
   EXPECT_EQ(1.f, GetMagnificationController()->GetScale());
   EXPECT_EQ("0,0 800x600", GetViewport().ToString());
   EXPECT_EQ("400,300", env->last_mouse_location().ToString());
@@ -547,40 +494,64 @@ TEST_F(MagnificationControllerTest, PanWindowToLeft) {
   GetMagnificationController()->SetEnabled(true);
   EXPECT_FLOAT_EQ(2.f, GetMagnificationController()->GetScale());
 
-  scale *= MagnificationController::kMagnificationScaleFactor;
+  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(2.3784142, GetMagnificationController()->GetScale());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(400, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(400, 300));
   EXPECT_EQ("400,300", env->last_mouse_location().ToString());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("231,299", env->last_mouse_location().ToString());
   EXPECT_EQ("100,300", GetHostMouseLocation());
 
-  scale *= MagnificationController::kMagnificationScaleFactor;
+  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(2.8284268, GetMagnificationController()->GetScale());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("194,299", env->last_mouse_location().ToString());
   EXPECT_EQ("99,300", GetHostMouseLocation());
 
-  scale *= MagnificationController::kMagnificationScaleFactor;
+  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(3.3635852, GetMagnificationController()->GetScale());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("164,298", env->last_mouse_location().ToString());
   EXPECT_EQ("98,300", GetHostMouseLocation());
 
-  scale *= MagnificationController::kMagnificationScaleFactor;
+  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(4.f, GetMagnificationController()->GetScale());
-  GetEventGenerator().MoveMouseToInHost(gfx::Point(0, 300));
+  event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("139,298", env->last_mouse_location().ToString());
   EXPECT_EQ("100,300", GetHostMouseLocation());
 }
 
+TEST_F(MagnificationControllerTest, FocusChangeEvents) {
+  MagnifierFocusTestHelper focus_test_helper;
+  focus_test_helper.CreateAndShowFocusTestView(gfx::Point(100, 200));
+
+  // Enables magnifier and confirm the viewport is at center.
+  GetMagnificationController()->SetEnabled(true);
+  EXPECT_EQ(2.0f, GetMagnificationController()->GetScale());
+  EXPECT_EQ("200,150 400x300", GetViewport().ToString());
+  EXPECT_FALSE(GetMagnificationController()->KeepFocusCentered());
+
+  // Focus on the first button and expect the magnifier to be centered around
+  // its center.
+  focus_test_helper.FocusFirstButton();
+  gfx::Point button_1_center(
+      focus_test_helper.GetFirstButtonBoundsInRoot().CenterPoint());
+  EXPECT_EQ(button_1_center, GetViewport().CenterPoint());
+
+  // Similarly if we focus on the second button.
+  focus_test_helper.FocusSecondButton();
+  gfx::Point button_2_center(
+      focus_test_helper.GetSecondButtonBoundsInRoot().CenterPoint());
+  EXPECT_EQ(button_2_center, GetViewport().CenterPoint());
+}
+
 TEST_F(MagnificationControllerTest, FollowTextInputFieldFocus) {
-  CreateAndShowTextInputView(gfx::Rect(500, 300, 80, 80));
-  gfx::Rect text_input_bounds = GetTextInputViewBounds();
+  text_input_helper_.CreateAndShowTextInputView(gfx::Rect(500, 300, 80, 80));
+  gfx::Rect text_input_bounds = text_input_helper_.GetTextInputViewBounds();
 
   // Enables magnifier and confirm the viewport is at center.
   GetMagnificationController()->SetEnabled(true);
@@ -595,13 +566,13 @@ TEST_F(MagnificationControllerTest, FollowTextInputFieldFocus) {
   EXPECT_FALSE(GetViewport().Intersects(text_input_bounds));
 
   // Focus on the text input field.
-  FocusOnTextInputView();
+  text_input_helper_.FocusOnTextInputView();
 
   // Verify the view port has been moved to the place where the text field is
   // contained in the view port and the caret is at the center of the view port.
   gfx::Rect view_port = GetViewport();
   EXPECT_TRUE(view_port.Contains(text_input_bounds));
-  gfx::Rect caret_bounds = GetCaretBounds();
+  gfx::Rect caret_bounds = text_input_helper_.GetCaretBounds();
   EXPECT_TRUE(text_input_bounds.Contains(caret_bounds));
   EXPECT_EQ(caret_bounds.CenterPoint(), view_port.CenterPoint());
 }
@@ -618,8 +589,8 @@ TEST_F(MagnificationControllerTest, FollowTextInputFieldKeyPress) {
   // Add some extra distance horizontally from text caret to to left edge of
   // the text input view.
   int x = kViewportWidth - (kCaretPanningMargin + 20) / kScale;
-  CreateAndShowTextInputView(gfx::Rect(x, 200, 80, 80));
-  gfx::Rect text_input_bounds = GetTextInputViewBounds();
+  text_input_helper_.CreateAndShowTextInputView(gfx::Rect(x, 200, 80, 80));
+  gfx::Rect text_input_bounds = text_input_helper_.GetTextInputViewBounds();
 
   // Enables magnifier and confirm the viewport is at center.
   GetMagnificationController()->SetEnabled(true);
@@ -634,32 +605,33 @@ TEST_F(MagnificationControllerTest, FollowTextInputFieldKeyPress) {
   EXPECT_TRUE(GetViewport().Intersects(text_input_bounds));
 
   // Focus on the text input field.
-  FocusOnTextInputView();
+  text_input_helper_.FocusOnTextInputView();
 
   // Verify the view port is not moved, and the caret is inside the view port
   // and not beyond the caret right panning margin.
   gfx::Rect view_port = GetViewport();
   EXPECT_EQ("0,0 400x300", view_port.ToString());
-  EXPECT_TRUE(text_input_bounds.Contains(GetCaretBounds()));
+  EXPECT_TRUE(text_input_bounds.Contains(text_input_helper_.GetCaretBounds()));
   EXPECT_GT(view_port.right() - kCaretPanningMargin / kScale,
-            GetCaretBounds().x());
+            text_input_helper_.GetCaretBounds().x());
 
   // Press keys on text input simulate typing on text field and the caret
   // moves beyond the caret right panning margin. The view port is moved to the
   // place where caret's x coordinate is centered at the new view port.
-  GetEventGenerator().PressKey(ui::VKEY_A, 0);
-  GetEventGenerator().ReleaseKey(ui::VKEY_A, 0);
-  gfx::Rect caret_bounds = GetCaretBounds();
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  event_generator->PressKey(ui::VKEY_A, 0);
+  event_generator->ReleaseKey(ui::VKEY_A, 0);
+  gfx::Rect caret_bounds = text_input_helper_.GetCaretBounds();
   EXPECT_LT(view_port.right() - kCaretPanningMargin / kScale,
-            GetCaretBounds().x());
+            text_input_helper_.GetCaretBounds().x());
 
   gfx::Rect new_view_port = GetViewport();
   EXPECT_EQ(caret_bounds.CenterPoint().x(), new_view_port.CenterPoint().x());
 }
 
 TEST_F(MagnificationControllerTest, CenterTextCaretNotInsideViewport) {
-  CreateAndShowTextInputView(gfx::Rect(500, 300, 50, 30));
-  gfx::Rect text_input_bounds = GetTextInputViewBounds();
+  text_input_helper_.CreateAndShowTextInputView(gfx::Rect(500, 300, 50, 30));
+  gfx::Rect text_input_bounds = text_input_helper_.GetTextInputViewBounds();
 
   // Enables magnifier and confirm the viewport is at center.
   GetMagnificationController()->SetKeepFocusCentered(true);
@@ -675,21 +647,22 @@ TEST_F(MagnificationControllerTest, CenterTextCaretNotInsideViewport) {
   EXPECT_FALSE(GetViewport().Contains(text_input_bounds));
 
   // Focus on the text input field.
-  FocusOnTextInputView();
+  text_input_helper_.FocusOnTextInputView();
   RunAllPendingInMessageLoop();
   // Verify the view port has been moved to the place where the text field is
   // contained in the view port and the caret is at the center of the view port.
   gfx::Rect view_port = GetViewport();
   EXPECT_TRUE(view_port.Contains(text_input_bounds));
-  gfx::Rect caret_bounds = GetCaretBounds();
+  gfx::Rect caret_bounds = text_input_helper_.GetCaretBounds();
   EXPECT_EQ(caret_bounds.CenterPoint(), view_port.CenterPoint());
 
   // Press keys on text input simulate typing on text field and the view port
   // should be moved to keep the caret centered.
-  GetEventGenerator().PressKey(ui::VKEY_A, 0);
-  GetEventGenerator().ReleaseKey(ui::VKEY_A, 0);
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  event_generator->PressKey(ui::VKEY_A, 0);
+  event_generator->ReleaseKey(ui::VKEY_A, 0);
   RunAllPendingInMessageLoop();
-  gfx::Rect new_caret_bounds = GetCaretBounds();
+  gfx::Rect new_caret_bounds = text_input_helper_.GetCaretBounds();
   EXPECT_NE(caret_bounds, new_caret_bounds);
 
   gfx::Rect new_view_port = GetViewport();
@@ -699,8 +672,8 @@ TEST_F(MagnificationControllerTest, CenterTextCaretNotInsideViewport) {
 }
 
 TEST_F(MagnificationControllerTest, CenterTextCaretInViewport) {
-  CreateAndShowTextInputView(gfx::Rect(250, 200, 50, 30));
-  gfx::Rect text_input_bounds = GetTextInputViewBounds();
+  text_input_helper_.CreateAndShowTextInputView(gfx::Rect(250, 200, 50, 30));
+  gfx::Rect text_input_bounds = text_input_helper_.GetTextInputViewBounds();
 
   // Enables magnifier and confirm the viewport is at center.
   GetMagnificationController()->SetKeepFocusCentered(true);
@@ -714,7 +687,7 @@ TEST_F(MagnificationControllerTest, CenterTextCaretInViewport) {
   EXPECT_TRUE(view_port.Contains(text_input_bounds));
 
   // Focus on the text input field.
-  FocusOnTextInputView();
+  text_input_helper_.FocusOnTextInputView();
   RunAllPendingInMessageLoop();
 
   // Verify the view port has been moved to the place where the text field is
@@ -722,7 +695,7 @@ TEST_F(MagnificationControllerTest, CenterTextCaretInViewport) {
   gfx::Rect new_view_port = GetViewport();
   EXPECT_NE(view_port, new_view_port);
   EXPECT_TRUE(new_view_port.Contains(text_input_bounds));
-  gfx::Rect caret_bounds = GetCaretBounds();
+  gfx::Rect caret_bounds = text_input_helper_.GetCaretBounds();
   EXPECT_EQ(caret_bounds.CenterPoint(), new_view_port.CenterPoint());
 }
 
@@ -763,7 +736,8 @@ TEST_F(MagnificationControllerTest, MoveMouseToSecondDisplay) {
 
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
-  GetEventGenerator().MoveMouseTo(gfx::Point(250, 250));
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  event_generator->MoveMouseTo(gfx::Point(250, 250));
   EXPECT_TRUE(root_windows[1]->layer()->transform().IsIdentity());
   EXPECT_TRUE(root_windows[0]->layer()->transform().IsIdentity());
 
@@ -771,7 +745,7 @@ TEST_F(MagnificationControllerTest, MoveMouseToSecondDisplay) {
   EXPECT_FALSE(root_windows[0]->layer()->transform().IsIdentity());
   EXPECT_TRUE(root_windows[1]->layer()->transform().IsIdentity());
 
-  GetEventGenerator().MoveMouseTo(gfx::Point(750, 250));
+  event_generator->MoveMouseTo(gfx::Point(750, 250));
   EXPECT_FALSE(root_windows[1]->layer()->transform().IsIdentity());
   EXPECT_TRUE(root_windows[0]->layer()->transform().IsIdentity());
 
@@ -780,19 +754,27 @@ TEST_F(MagnificationControllerTest, MoveMouseToSecondDisplay) {
   EXPECT_TRUE(root_windows[0]->layer()->transform().IsIdentity());
 }
 
-TEST_F(MagnificationControllerTest, AdjustScaleFromScroll) {
-  // 0 to 1 maps to 1 to 20
-  EXPECT_EQ(1.0f, GetMagnificationController()->GetScale());
-  EXPECT_EQ(20.0f, GetMagnificationController()->GetScaleFromScroll(1));
-  EXPECT_EQ(1.0f, GetMagnificationController()->GetScaleFromScroll(0));
+TEST_F(MagnificationControllerTest, MoveToSecondDisplayWithTouch) {
+  UpdateDisplay("0+0-500x500, 500+0-500x500");
+  EXPECT_EQ(2ul, display::Screen::GetScreen()->GetAllDisplays().size());
 
-  // It doesn't matter the starting point, the mapping is consistent.
-  GetMagnificationController()->SetScale(20.0f, false);
-  EXPECT_EQ(20.0f, GetMagnificationController()->GetScaleFromScroll(1));
-  EXPECT_EQ(1.0f, GetMagnificationController()->GetScaleFromScroll(0));
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
+  event_generator->GestureTapAt(gfx::Point(250, 250));
+  ASSERT_TRUE(root_windows[0]->layer()->transform().IsIdentity());
+  ASSERT_TRUE(root_windows[1]->layer()->transform().IsIdentity());
 
-  // And the mapping is not linear.
-  EXPECT_NE(21.0f / 2.0f, GetMagnificationController()->GetScaleFromScroll(.5));
+  GetMagnificationController()->SetEnabled(true);
+  EXPECT_FALSE(root_windows[0]->layer()->transform().IsIdentity());
+  EXPECT_TRUE(root_windows[1]->layer()->transform().IsIdentity());
+
+  event_generator->GestureTapAt(gfx::Point(750, 250));
+  EXPECT_TRUE(root_windows[0]->layer()->transform().IsIdentity());
+  EXPECT_FALSE(root_windows[1]->layer()->transform().IsIdentity());
+
+  GetMagnificationController()->SetEnabled(false);
+  EXPECT_TRUE(root_windows[0]->layer()->transform().IsIdentity());
+  EXPECT_TRUE(root_windows[1]->layer()->transform().IsIdentity());
 }
 
 // Performs pinch zoom and confirm that zoom level is changed. This test case
@@ -912,53 +894,110 @@ TEST_F(MagnificationControllerTest, TwoFingersScroll) {
   EXPECT_EQ(delta, delta_zoomed * 2);
 }
 
-TEST_F(MagnificationControllerTest, GestureLock) {
+TEST_F(MagnificationControllerTest, ZoomsIntoCenter) {
+  UpdateDisplay("0+0-500x500");
+
   GetMagnificationController()->SetEnabled(true);
   ASSERT_EQ(2.0f, GetMagnificationController()->GetScale());
 
-  // Perform pinch zoom gesture.
+  GetMagnificationController()->CenterOnPoint(gfx::Point(250, 250));
+  ASSERT_EQ(gfx::Point(250, 250),
+            GetMagnificationController()->GetViewportRect().CenterPoint());
+
   base::TimeTicks time = base::TimeTicks::Now();
   ui::PointerDetails pointer_details1(ui::EventPointerType::POINTER_TYPE_TOUCH,
                                       0);
   ui::PointerDetails pointer_details2(ui::EventPointerType::POINTER_TYPE_TOUCH,
                                       1);
 
-  DispatchTouchEvent(ui::ET_TOUCH_PRESSED, gfx::Point(900, 10), time,
+  // Simulate pinch gesture with keeping center of bounding box of touches at
+  // (250, 250). Note that GestureProvider dispatches scroll gesture from this
+  // touch sequence as well.
+  DispatchTouchEvent(ui::ET_TOUCH_PRESSED, gfx::Point(245, 250), time,
                      pointer_details1);
-  DispatchTouchEvent(ui::ET_TOUCH_PRESSED, gfx::Point(1100, 10), time,
+  DispatchTouchEvent(ui::ET_TOUCH_PRESSED, gfx::Point(255, 250), time,
                      pointer_details2);
 
-  DispatchTouchEvent(ui::ET_TOUCH_MOVED, gfx::Point(800, 10), time,
+  DispatchTouchEvent(ui::ET_TOUCH_MOVED, gfx::Point(145, 250), time,
                      pointer_details1);
-  DispatchTouchEvent(ui::ET_TOUCH_MOVED, gfx::Point(1200, 10), time,
+  DispatchTouchEvent(ui::ET_TOUCH_MOVED, gfx::Point(355, 250), time,
                      pointer_details2);
 
-  // Confirm that zoom level has changed.
-  float zoomed_scale = GetMagnificationController()->GetScale();
-  EXPECT_LT(2.0f, zoomed_scale);
-
-  // Confirms that zoom level has changed more than threshold to lock gesture
-  // type.
-  ASSERT_LT(0.2f, zoomed_scale - 2.0f);
-
-  gfx::Point initial_position =
-      GetMagnificationController()->GetWindowPosition();
-
-  // Perform scroll gesture.
-  DispatchTouchEvent(ui::ET_TOUCH_MOVED, gfx::Point(800, 100), time,
+  DispatchTouchEvent(ui::ET_TOUCH_RELEASED, gfx::Point(145, 250), time,
                      pointer_details1);
-  DispatchTouchEvent(ui::ET_TOUCH_MOVED, gfx::Point(1200, 100), time,
+  DispatchTouchEvent(ui::ET_TOUCH_RELEASED, gfx::Point(355, 250), time,
                      pointer_details2);
 
-  DispatchTouchEvent(ui::ET_TOUCH_RELEASED, gfx::Point(800, 100), time,
-                     pointer_details1);
-  DispatchTouchEvent(ui::ET_TOUCH_RELEASED, gfx::Point(1200, 100), time,
-                     pointer_details2);
+  // Confirms that scale has increased with the gesture.
+  ASSERT_LT(2.0f, GetMagnificationController()->GetScale());
 
-  // Confirm that nothing happens.
-  EXPECT_EQ(initial_position,
-            GetMagnificationController()->GetWindowPosition());
-  EXPECT_EQ(zoomed_scale, GetMagnificationController()->GetScale());
+  // Confirms that center is kept at center of pinch gesture. In ideal
+  // situation, center of viewport should be kept at (250, 250). But as noted
+  // above, scroll gesture caused by touch events for simulating pinch gesture
+  // moves the viewport a little. We accept 5 pixels viewport move for the
+  // scroll gesture.
+  EXPECT_TRUE(
+      gfx::Rect(245, 245, 10, 10)
+          .Contains(
+              GetMagnificationController()->GetViewportRect().CenterPoint()));
+}
+
+// Tests to see if keyboard overscroll is disabled when fullscreen magnification
+// is enabled.
+TEST_F(MagnificationControllerTest, KeyboardOverscrollDisabled) {
+  GetMagnificationController()->SetEnabled(false);
+  bool old_keyboard_overscroll_value = keyboard::IsKeyboardOverscrollEnabled();
+
+  // Enable magnification. Keyboard overscroll should be disabled.
+  GetMagnificationController()->SetEnabled(true);
+  EXPECT_FALSE(keyboard::IsKeyboardOverscrollEnabled());
+
+  // Disable magnification. Keyboard overscroll should be back to the way it was
+  // before magnification was enabled.
+  GetMagnificationController()->SetEnabled(false);
+  EXPECT_EQ(keyboard::IsKeyboardOverscrollEnabled(),
+            old_keyboard_overscroll_value);
+}
+
+TEST_F(MagnificationControllerTest, TextfieldFocusedWithKeyboard) {
+  // Set up text input view.
+  text_input_helper_.CreateAndShowTextInputView(gfx::Rect(500, 200, 80, 80));
+  gfx::Rect text_input_bounds = text_input_helper_.GetTextInputViewBounds();
+
+  // Enables magnifier and confirm the viewport is at center.
+  GetMagnificationController()->SetEnabled(true);
+  EXPECT_EQ(2.0f, GetMagnificationController()->GetScale());
+  EXPECT_EQ("200,150 400x300", GetViewport().ToString());
+  EXPECT_FALSE(GetMagnificationController()->KeepFocusCentered());
+
+  GetMagnificationController()->SetKeepFocusCentered(true);
+
+  // Set up and show the keyboard.
+  keyboard::SetAccessibilityKeyboardEnabled(true);
+  ash::Shell::Get()->EnableKeyboard();
+  auto* keyboard_controller = keyboard::KeyboardController::Get();
+  keyboard_controller->ShowKeyboard(true);
+
+  gfx::Rect keyboard_bounds = gfx::Rect(0, 300, 800, 300);
+  keyboard_controller->GetKeyboardWindow()->SetBounds(keyboard_bounds);
+
+  // Focus on the text input field.
+  text_input_helper_.FocusOnTextInputView();
+  base::RunLoop().RunUntilIdle();
+
+  // Verify that the caret bounds is centered in the area above the keyboard.
+  gfx::Rect viewport_outside_keyboard_bounds = GetViewport();
+  viewport_outside_keyboard_bounds.set_height(
+      viewport_outside_keyboard_bounds.height() -
+      keyboard_bounds.height() / GetMagnificationController()->GetScale());
+
+  gfx::Rect caret_bounds = text_input_helper_.GetCaretBounds();
+
+  EXPECT_TRUE(GetMagnificationController()->KeepFocusCentered());
+  EXPECT_TRUE(viewport_outside_keyboard_bounds.Contains(text_input_bounds));
+  EXPECT_TRUE(text_input_bounds.Contains(caret_bounds.CenterPoint()));
+  EXPECT_EQ(caret_bounds.CenterPoint(),
+            viewport_outside_keyboard_bounds.CenterPoint());
 }
 
 }  // namespace ash

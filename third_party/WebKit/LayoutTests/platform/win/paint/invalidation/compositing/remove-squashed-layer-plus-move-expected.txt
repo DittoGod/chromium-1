@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -54,36 +55,6 @@
         [8, 8, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='container'",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV class='mv-tile'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV class='mv-tile'",
-      "reason": "compositing update"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
     }
   ]
 }

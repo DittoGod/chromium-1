@@ -11,7 +11,6 @@
 #include "base/auto_reset.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -33,6 +32,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::ASCIIToUTF16;
+using blink::IndexedDBIndexKeys;
+using blink::IndexedDBKey;
 
 namespace {
 const int kFakeChildProcessId = 0;
@@ -452,12 +453,11 @@ TEST_F(IndexedDBDatabaseOperationTest, CreatePutDelete) {
 
   // Put is asynchronous
   IndexedDBValue value("value1", std::vector<IndexedDBBlobInfo>());
-  std::vector<std::unique_ptr<storage::BlobDataHandle>> handles;
   std::unique_ptr<IndexedDBKey> key(std::make_unique<IndexedDBKey>("key"));
   std::vector<IndexedDBIndexKeys> index_keys;
   scoped_refptr<MockIndexedDBCallbacks> request(
       new MockIndexedDBCallbacks(false));
-  db_->Put(transaction_, store_id, &value, &handles, std::move(key),
+  db_->Put(transaction_, store_id, &value, std::move(key),
            blink::kWebIDBPutModeAddOnly, request, index_keys);
 
   // Deletion is asynchronous.

@@ -16,7 +16,7 @@ from telemetry.web_perf.metrics import timeline_based_metric
 TimelineThreadCategories = {
     "Chrome_InProcGpuThread": "GPU",
     "CrGpuMain": "GPU",
-    "AsyncTransferThread": "GPU_transfer",
+    "VizCompositorThread": "display_compositor",
     "CrBrowserMain": "browser",
     "Browser Compositor": "browser",
     "CrRendererMain": "renderer_main",
@@ -32,7 +32,8 @@ _MatchBySubString = ["IOThread", "CompositorTileWorker"]
 
 AllThreads = TimelineThreadCategories.values()
 NoThreads = []
-FastPathThreads = ["GPU", "renderer_compositor", "browser", "IO"]
+FastPathThreads = [
+  "GPU", "display_compositor", "renderer_compositor", "browser", "IO"]
 
 ReportMainThreadOnly = ["renderer_main"]
 ReportSilkDetails = ["renderer_main"]
@@ -41,7 +42,8 @@ ReportSilkDetails = ["renderer_main"]
 # could change. We should formalize these traces to keep this robust.
 OverheadTraceCategory = "trace_event_overhead"
 OverheadTraceName = "overhead"
-FrameTraceName = "LayerTreeHostImpl::DrawLayers"
+FrameTraceName = "Graphics.Pipeline"
+FrameTraceStepName = "GenerateCompositorFrame"
 FrameTraceThreadName = "renderer_compositor"
 
 IntervalNames = ["frame", "second"]
@@ -199,10 +201,10 @@ class ResultsForThread(object):
         ThreadCpuTimeUnits(interval_name),
         ThreadCpuTimeValue(idle_time_per_interval, interval_name)))
 
-  def CountTracesWithName(self, substring):
+  def CountTracesWithNameAndArg(self, trace_name, step):
     count = 0
     for event in self.all_slices:
-      if substring in event.name:
+      if trace_name in event.name and event.args and event.args["step"] == step:
         count += 1
     return count
 
@@ -238,7 +240,8 @@ class ThreadTimesTimelineMetric(timeline_based_metric.TimelineBasedMetric):
 
     # Calculate the interaction's number of frames.
     frame_rate_thread = thread_category_results[FrameTraceThreadName]
-    num_frames = frame_rate_thread.CountTracesWithName(FrameTraceName)
+    num_frames = frame_rate_thread.CountTracesWithNameAndArg(FrameTraceName,
+        FrameTraceStepName)
 
     # Calculate the interaction's duration.
     all_threads = thread_category_results["total_all"]

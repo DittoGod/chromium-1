@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,9 +18,9 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutTableCol COLGROUP id='target'",
+          "object": "LayoutTableSection TBODY",
           "rect": [8, 26, 186, 134],
-          "reason": "style change"
+          "reason": "appeared"
         }
       ]
     },
@@ -27,16 +28,6 @@
       "name": "LayoutTableCell TD id='target'",
       "position": [72, 94],
       "bounds": [59, 64]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTableSection TBODY",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutTableCol COLGROUP id='target'",
-      "reason": "style change"
     }
   ]
 }

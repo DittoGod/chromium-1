@@ -4,6 +4,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -33,12 +34,6 @@
         [0, 0, 1, 0],
         [18, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -48,6 +43,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -77,12 +73,6 @@
         [0, 0, 1, 0],
         [18, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -92,6 +82,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -121,12 +112,6 @@
         [0, 0, 1, 0],
         [18, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -136,6 +121,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -166,12 +152,6 @@
         [18, 8, 0, 1]
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
-    }
   ]
 }
 10.499999999999998:
@@ -180,6 +160,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -209,12 +190,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -224,6 +199,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -253,12 +229,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -268,6 +238,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -297,12 +268,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -312,6 +277,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -341,12 +307,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -356,6 +316,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -385,12 +346,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -400,6 +355,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -429,12 +385,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -444,6 +394,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -473,12 +424,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -488,6 +433,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -517,12 +463,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -532,6 +472,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -561,12 +502,6 @@
         [0, 0, 1, 0],
         [19, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -576,6 +511,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -606,12 +542,6 @@
         [19, 8, 0, 1]
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
-    }
   ]
 }
 11.499999999999995:
@@ -620,6 +550,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -649,12 +580,6 @@
         [0, 0, 1, 0],
         [20, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -664,6 +589,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -693,12 +619,6 @@
         [0, 0, 1, 0],
         [20, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -708,6 +628,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -737,12 +658,6 @@
         [0, 0, 1, 0],
         [20, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -752,6 +667,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -781,12 +697,6 @@
         [0, 0, 1, 0],
         [20, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -796,6 +706,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -825,12 +736,6 @@
         [0, 0, 1, 0],
         [20, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -840,6 +745,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -869,12 +775,6 @@
         [0, 0, 1, 0],
         [20, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }
@@ -884,6 +784,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -913,12 +814,6 @@
         [0, 0, 1, 0],
         [20, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='layer'",
-      "reason": "geometry"
     }
   ]
 }

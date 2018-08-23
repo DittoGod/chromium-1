@@ -27,8 +27,8 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/version.h"
 #include "base/win/com_init_util.h"
@@ -168,7 +168,7 @@ void AntiVirusMetricsProvider::AsyncInit(const base::Closure& done_callback) {
   // these requirements.
   base::PostTaskAndReplyWithResult(
       base::CreateCOMSTATaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})
           .get(),
       FROM_HERE,
@@ -481,7 +481,7 @@ void AntiVirusMetricsProvider::MaybeAddUnregisteredAntiVirusProducts(
   // Rapport always installs into 32-bit Program Files in directory
   // %DIR_PROGRAM_FILESX86%\Trusteer\Rapport
   base::FilePath binary_path;
-  if (!PathService::Get(base::DIR_PROGRAM_FILESX86, &binary_path))
+  if (!base::PathService::Get(base::DIR_PROGRAM_FILESX86, &binary_path))
     return;
 
   binary_path = binary_path.AppendASCII("Trusteer")

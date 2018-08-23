@@ -10,18 +10,11 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "components/guest_view/renderer/guest_view_container.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoaderClient.h"
-#include "ui/gfx/geometry/size.h"
+#include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container_base.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
-
-namespace blink {
-class WebAssociatedURLLoader;
-}  // namespace blink
 
 namespace extensions {
 
@@ -42,14 +35,12 @@ namespace extensions {
 //    |didFinishLoading| (from WebAssociatedURLLoaderClient) when data is
 //    received and when it has finished being received.
 class MimeHandlerViewContainer : public guest_view::GuestViewContainer,
-                                 public blink::WebAssociatedURLLoaderClient {
+                                 public MimeHandlerViewContainerBase {
  public:
   MimeHandlerViewContainer(content::RenderFrame* render_frame,
+                           const content::WebPluginInfo& info,
                            const std::string& mime_type,
                            const GURL& original_url);
-
-  static std::vector<MimeHandlerViewContainer*> FromRenderFrame(
-      content::RenderFrame* render_frame);
 
   // GuestViewContainer implementation.
   bool OnMessage(const IPC::Message& message) override;
@@ -63,70 +54,38 @@ class MimeHandlerViewContainer : public guest_view::GuestViewContainer,
 
   // WebAssociatedURLLoaderClient overrides.
   void DidReceiveData(const char* data, int data_length) override;
-  void DidFinishLoading(double finish_time) override;
+  void DidFinishLoading() override;
 
   // GuestViewContainer overrides.
   void OnRenderFrameDestroyed() override;
-
-  // Post a JavaScript message to the guest.
-  void PostJavaScriptMessage(v8::Isolate* isolate,
-                             v8::Local<v8::Value> message);
-
-  // Post |message| to the guest.
-  void PostMessageFromValue(const base::Value& message);
 
  protected:
   ~MimeHandlerViewContainer() override;
 
  private:
+  // MimeHandlerViewContainerBase override.
+  content::RenderFrame* GetEmbedderRenderFrame() const final;
+  void CreateMimeHandlerViewGuestIfNecessary() final;
+  blink::WebFrame* GetGuestProxyFrame() const final;
+  int32_t GetInstanceId() const final;
+  gfx::Size GetElementSize() const final;
+
+  // mime_handler::BeforeUnloadControl implementation.
+  void SetShowBeforeUnloadDialog(
+      bool show_dialog,
+      SetShowBeforeUnloadDialogCallback callback) override;
+
   // Message handlers.
   void OnCreateMimeHandlerViewGuestACK(int element_instance_id);
   void OnGuestAttached(int element_instance_id,
                        int guest_proxy_routing_id);
   void OnMimeHandlerViewGuestOnLoadCompleted(int element_instance_id);
 
-  // Creates a guest when a geometry and the URL of the extension to navigate
-  // to are available.
-  void CreateMimeHandlerViewGuestIfNecessary();
-
-  // The MIME type of the plugin.
-  const std::string mime_type_;
-
-  // The URL of the extension to navigate to.
-  std::string view_id_;
-
-  // Whether the plugin is embedded or not.
-  bool is_embedded_;
-
-  // The original URL of the plugin.
-  GURL original_url_;
-
   // The RenderView routing ID of the guest.
   int guest_proxy_routing_id_;
 
-  // A URL loader to load the |original_url_| when the plugin is embedded. In
-  // the embedded case, no URL request is made automatically.
-  std::unique_ptr<blink::WebAssociatedURLLoader> loader_;
-
-  // The scriptable object that backs the plugin.
-  v8::Global<v8::Object> scriptable_object_;
-
-  // Pending postMessage messages that need to be sent to the guest. These are
-  // queued while the guest is loading and once it is fully loaded they are
-  // delivered so that messages aren't lost.
-  std::vector<v8::Global<v8::Value>> pending_messages_;
-
-  // True if a guest process has been requested.
-  bool guest_created_ = false;
-
-  // True if the guest page has fully loaded and its JavaScript onload function
-  // has been called.
-  bool guest_loaded_;
-
   // The size of the element.
   base::Optional<gfx::Size> element_size_;
-
-  base::WeakPtrFactory<MimeHandlerViewContainer> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MimeHandlerViewContainer);
 };

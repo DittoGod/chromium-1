@@ -8,10 +8,9 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "components/offline_pages/core/prefetch/prefetch_network_request_factory.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
 
@@ -32,7 +31,7 @@ struct FetchedUrl {
   int generate_bundle_attempts_;
 };
 
-std::vector<FetchedUrl> GetAllUrlsMarkedRequestedSync(sql::Connection* db) {
+std::vector<FetchedUrl> GetAllUrlsMarkedRequestedSync(sql::Database* db) {
   static const char kSql[] =
       "SELECT offline_id, requested_url, generate_bundle_attempts"
       " FROM prefetch_items"
@@ -50,7 +49,7 @@ std::vector<FetchedUrl> GetAllUrlsMarkedRequestedSync(sql::Connection* db) {
   return urls;
 }
 
-bool MarkUrlFinishedSync(const int64_t offline_id, sql::Connection* db) {
+bool MarkUrlFinishedSync(const int64_t offline_id, sql::Database* db) {
   PrefetchItemErrorCode error_code =
       PrefetchItemErrorCode::GENERATE_PAGE_BUNDLE_REQUEST_MAX_ATTEMPTS_REACHED;
   static const char kSql[] =
@@ -64,7 +63,7 @@ bool MarkUrlFinishedSync(const int64_t offline_id, sql::Connection* db) {
   return statement.Run();
 }
 
-bool MarkUrlForRetrySync(const int64_t offline_id, sql::Connection* db) {
+bool MarkUrlForRetrySync(const int64_t offline_id, sql::Database* db) {
   static const char kSql[] =
       "UPDATE prefetch_items"
       " SET state = ?"
@@ -78,10 +77,7 @@ bool MarkUrlForRetrySync(const int64_t offline_id, sql::Connection* db) {
 bool ReconcileGenerateBundleRequests(
     std::unique_ptr<std::set<std::string>> requested_urls,
     int max_attempts,
-    sql::Connection* db) {
-  if (!db)
-    return false;
-
+    sql::Database* db) {
   sql::Transaction transaction(db);
   if (!transaction.Begin())
     return false;
@@ -128,7 +124,8 @@ void GeneratePageBundleReconcileTask::Run() {
       base::BindOnce(&ReconcileGenerateBundleRequests,
                      std::move(requested_urls), kMaxGenerateBundleAttempts),
       base::BindOnce(&GeneratePageBundleReconcileTask::FinishedUpdate,
-                     weak_factory_.GetWeakPtr()));
+                     weak_factory_.GetWeakPtr()),
+      false);
 }
 
 void GeneratePageBundleReconcileTask::FinishedUpdate(bool success) {

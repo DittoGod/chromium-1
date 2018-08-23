@@ -10,7 +10,6 @@
 #include "components/signin/core/browser/fake_signin_manager.h"
 #include "components/signin/core/browser/test_signin_client.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "google_apis/gaia/fake_oauth2_token_service_delegate.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/identity/identity_service.h"
 #include "services/identity/public/cpp/account_state.h"
@@ -92,6 +91,7 @@ class IdentityManagerImplTest : public service_manager::test::ServiceTest {
   IdentityManagerImplTest()
       : ServiceTest("identity_unittests"),
         signin_client_(&pref_service_),
+        token_service_(&pref_service_),
 #if defined(OS_CHROMEOS)
         signin_manager_(&signin_client_, &account_tracker_) {
 #else
@@ -104,7 +104,7 @@ class IdentityManagerImplTest : public service_manager::test::ServiceTest {
     SigninManagerBase::RegisterProfilePrefs(pref_service_.registry());
     SigninManagerBase::RegisterPrefs(pref_service_.registry());
 
-    account_tracker_.Initialize(&signin_client_);
+    account_tracker_.Initialize(&pref_service_, base::FilePath());
   }
 
   void TearDown() override {
@@ -202,8 +202,8 @@ class IdentityManagerImplTest : public service_manager::test::ServiceTest {
   sync_preferences::TestingPrefServiceSyncable pref_service_;
   AccountTrackerService account_tracker_;
   TestSigninClient signin_client_;
-  SigninManagerForTest signin_manager_;
   FakeProfileOAuth2TokenService token_service_;
+  SigninManagerForTest signin_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(IdentityManagerImplTest);
 };
@@ -554,10 +554,7 @@ TEST_F(IdentityManagerImplTest,
   signin_manager()->SetAuthenticatedAccountInfo(kTestGaiaId, kTestEmail);
   token_service()->UpdateCredentials(
       signin_manager()->GetAuthenticatedAccountId(), kTestRefreshToken);
-  FakeOAuth2TokenServiceDelegate* delegate =
-      static_cast<FakeOAuth2TokenServiceDelegate*>(
-          token_service()->GetDelegate());
-  delegate->SetLastErrorForAccount(
+  token_service()->UpdateAuthErrorForTesting(
       signin_manager()->GetAuthenticatedAccountId(),
       GoogleServiceAuthError(
           GoogleServiceAuthError::State::INVALID_GAIA_CREDENTIALS));
@@ -576,7 +573,7 @@ TEST_F(IdentityManagerImplTest,
 
   // Clear the auth error, update credentials, and check that the callback
   // fires.
-  delegate->SetLastErrorForAccount(
+  token_service()->UpdateAuthErrorForTesting(
       signin_manager()->GetAuthenticatedAccountId(), GoogleServiceAuthError());
   token_service()->UpdateCredentials(
       signin_manager()->GetAuthenticatedAccountId(), kTestRefreshToken);

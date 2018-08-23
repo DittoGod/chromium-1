@@ -16,8 +16,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/common/chrome_constants.h"
 #include "components/spellcheck/browser/spellcheck_host_metrics.h"
@@ -435,7 +435,7 @@ void SpellcheckCustomDictionary::OnLoaded(
     // Save cleaned up data only after startup.
     fix_invalid_file_.Reset(
         base::BindOnce(&SpellcheckCustomDictionary::FixInvalidFile,
-                       weak_ptr_factory_.GetWeakPtr(), base::Passed(&result)));
+                       weak_ptr_factory_.GetWeakPtr(), std::move(result)));
     BrowserThread::PostAfterStartupTask(
         FROM_HERE, BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
         fix_invalid_file_.callback());
@@ -458,7 +458,7 @@ void SpellcheckCustomDictionary::FixInvalidFile(
   task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&SavePassedWordsToDictionaryFileReliably,
-                     custom_dictionary_path_, base::Passed(&load_file_result)));
+                     custom_dictionary_path_, std::move(load_file_result)));
 }
 
 void SpellcheckCustomDictionary::Save(
@@ -468,8 +468,7 @@ void SpellcheckCustomDictionary::Save(
   task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&SpellcheckCustomDictionary::UpdateDictionaryFile,
-                     base::Passed(&dictionary_change),
-                     custom_dictionary_path_));
+                     std::move(dictionary_change), custom_dictionary_path_));
 }
 
 syncer::SyncError SpellcheckCustomDictionary::Sync(

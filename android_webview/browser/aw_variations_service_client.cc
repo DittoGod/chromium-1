@@ -4,10 +4,13 @@
 
 #include "android_webview/browser/aw_variations_service_client.h"
 
+#include "android_webview/common/aw_channel.h"
 #include "base/bind.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
-#include "components/version_info/version_info.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+
+using version_info::Channel;
 
 namespace android_webview {
 namespace {
@@ -16,7 +19,7 @@ namespace {
 // on a thread where IO is allowed.
 base::Version GetVersionForSimulation() {
   base::AssertBlockingAllowed();
-  return base::Version(version_info::GetVersionNumber());
+  return version_info::GetVersion();
 }
 
 }  // namespace
@@ -31,11 +34,11 @@ std::string AwVariationsServiceClient::GetApplicationLocale() {
 
 base::Callback<base::Version(void)>
 AwVariationsServiceClient::GetVersionForSimulationCallback() {
-  return base::Bind(&GetVersionForSimulation);
+  return base::BindRepeating(&GetVersionForSimulation);
 }
 
-net::URLRequestContextGetter*
-AwVariationsServiceClient::GetURLRequestContext() {
+scoped_refptr<network::SharedURLLoaderFactory>
+AwVariationsServiceClient::GetURLLoaderFactory() {
   return nullptr;
 }
 
@@ -44,10 +47,12 @@ AwVariationsServiceClient::GetNetworkTimeTracker() {
   return nullptr;
 }
 
-version_info::Channel AwVariationsServiceClient::GetChannel() {
-  // TODO(kmilka): Investigate the proper value to return here so experiments
-  // are correctly filtered.
-  return version_info::Channel::UNKNOWN;
+Channel AwVariationsServiceClient::GetChannel() {
+  return android_webview::GetChannel();
+}
+
+bool AwVariationsServiceClient::GetSupportsPermanentConsistency() {
+  return false;
 }
 
 bool AwVariationsServiceClient::OverridesRestrictParameter(

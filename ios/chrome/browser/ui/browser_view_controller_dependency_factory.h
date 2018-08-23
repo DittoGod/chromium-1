@@ -8,25 +8,9 @@
 #import <UIKit/UIKit.h>
 
 @class AlertCoordinator;
-@protocol ApplicationCommands;
-@protocol BrowserCommands;
+@class BrowserViewControllerHelper;
 @class KeyCommandsProvider;
-@class MessageBubbleView;
-@protocol OmniboxFocuser;
-@class PKPass;
-@class PKAddPassesViewController;
-@class TabModel;
-@protocol Toolbar;
-@protocol ToolbarCommands;
-@protocol ToolbarCoordinatorDelegate;
-class ToolbarModelDelegateIOS;
-class ToolbarModelIOS;
 class WebStateList;
-@protocol UrlLoader;
-
-namespace infobars {
-class InfoBarManager;
-}
 
 namespace ios {
 class ChromeBrowserState;
@@ -41,23 +25,7 @@ class ChromeBrowserState;
 - (id)initWithBrowserState:(ios::ChromeBrowserState*)browserState
               webStateList:(WebStateList*)webStateList;
 
-// Creates a new PassKit view controller to display |pass|.
-- (PKAddPassesViewController*)newPassKitViewControllerForPass:(PKPass*)pass;
-
-// Displays a PassKit error infobar on the current tab.
-- (void)showPassKitErrorInfoBarForManager:
-    (infobars::InfoBarManager*)infoBarManager;
-
-- (ToolbarModelIOS*)newToolbarModelIOSWithDelegate:
-    (ToolbarModelDelegateIOS*)delegate;
-
-- (id<Toolbar>)newToolbarControllerWithDelegate:
-                   (id<ToolbarCoordinatorDelegate>)delegate
-                                      urlLoader:(id<UrlLoader>)urlLoader
-                                     dispatcher:(id<ApplicationCommands,
-                                                    BrowserCommands,
-                                                    OmniboxFocuser,
-                                                    ToolbarCommands>)dispatcher;
+- (BrowserViewControllerHelper*)newBrowserViewControllerHelper;
 
 // Returns a new keyboard commands coordinator to handle keyboard commands.
 - (KeyCommandsProvider*)newKeyCommandsProvider;

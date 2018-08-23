@@ -11,6 +11,7 @@
 #include "ui/compositor/layer.h"
 #include "ui/compositor/test/draw_waiter_for_test.h"
 #include "ui/events/event_rewriter.h"
+#include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/platform_window/stub/stub_window.h"
 
 namespace {
@@ -65,18 +66,13 @@ TEST_F(WindowTreeHostTest, DPIWindowSize) {
   host()->SetRootTransform(transform);
   EXPECT_EQ(gfx::Rect(0, 1, 534, 401), root_window()->bounds());
 
-  gfx::Insets padding(1, 2, 3, 4);
-  // Padding is in physical pixels.
-  host()->SetOutputSurfacePaddingInPixels(padding);
-  gfx::Rect padded_rect = starting_bounds;
-  padded_rect.Inset(-padding);
-  EXPECT_EQ(padded_rect.size(), host()->compositor()->size());
   EXPECT_EQ(starting_bounds, host()->GetBoundsInPixels());
-  EXPECT_EQ(gfx::Rect(1, 1, 534, 401), root_window()->bounds());
+  EXPECT_EQ(gfx::Rect(0, 1, 534, 401), root_window()->bounds());
   EXPECT_EQ(gfx::Vector2dF(0, 0),
             host()->compositor()->root_layer()->subpixel_position_offset());
 }
 
+#if defined(OS_CHROMEOS)
 TEST_F(WindowTreeHostTest, HoldPointerMovesOnChildResizing) {
   aura::WindowEventDispatcher* dispatcher = host()->dispatcher();
 
@@ -98,12 +94,13 @@ TEST_F(WindowTreeHostTest, HoldPointerMovesOnChildResizing) {
   // Pointer moves should be routed normally after commit.
   EXPECT_FALSE(dispatcher_api.HoldingPointerMoves());
 }
+#endif
 
 TEST_F(WindowTreeHostTest, NoRewritesPostIME) {
   CounterEventRewriter event_rewriter;
   host()->AddEventRewriter(&event_rewriter);
 
-  ui::KeyEvent key_event('A', ui::VKEY_A, 0);
+  ui::KeyEvent key_event('A', ui::VKEY_A, ui::DomCode::NONE, 0);
   ui::EventDispatchDetails details =
       host()->GetInputMethod()->DispatchKeyEvent(&key_event);
   ASSERT_TRUE(!details.dispatcher_destroyed && !details.target_destroyed);

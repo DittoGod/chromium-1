@@ -4,7 +4,6 @@
 
 #include "components/offline_items_collection/core/offline_content_aggregator.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -93,14 +92,14 @@ TEST_F(ThrottledOfflineContentProviderTest, TestBasicPassthrough) {
   items.push_back(item);
 
   testing::InSequence sequence;
-  EXPECT_CALL(wrapped_provider_, OpenItem(id));
+  EXPECT_CALL(wrapped_provider_, OpenItem(LaunchLocation::DOWNLOAD_HOME, id));
   EXPECT_CALL(wrapped_provider_, RemoveItem(id));
   EXPECT_CALL(wrapped_provider_, CancelDownload(id));
   EXPECT_CALL(wrapped_provider_, PauseDownload(id));
   EXPECT_CALL(wrapped_provider_, ResumeDownload(id, true));
-  EXPECT_CALL(wrapped_provider_, GetVisualsForItem(id, _));
+  EXPECT_CALL(wrapped_provider_, GetVisualsForItem_(id, _));
   wrapped_provider_.SetItems(items);
-  provider_.OpenItem(id);
+  provider_.OpenItem(LaunchLocation::DOWNLOAD_HOME, id);
   provider_.RemoveItem(id);
   provider_.CancelDownload(id);
   provider_.PauseDownload(id);
@@ -328,7 +327,7 @@ TEST_F(ThrottledOfflineContentProviderTest, TestPokingProviderFlushesQueue) {
                             base::Unretained(&wrapped_provider_));
 
   // Set up reentrancy calls back into the provider.
-  EXPECT_CALL(wrapped_provider_, OpenItem(_))
+  EXPECT_CALL(wrapped_provider_, OpenItem(_, _))
       .WillRepeatedly(
           InvokeWithoutArgs(CallbackToFunctor(base::Bind(updater, item2))));
   EXPECT_CALL(wrapped_provider_, RemoveItem(_))
@@ -349,7 +348,7 @@ TEST_F(ThrottledOfflineContentProviderTest, TestPokingProviderFlushesQueue) {
     EXPECT_CALL(observer, OnItemUpdated(item2)).Times(1);
     provider_.set_last_update_time(base::TimeTicks::Now());
     wrapped_provider_.NotifyOnItemUpdated(item1);
-    provider_.OpenItem(id1);
+    provider_.OpenItem(LaunchLocation::DOWNLOAD_HOME, id1);
   }
 
   {

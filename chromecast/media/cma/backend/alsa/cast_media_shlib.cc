@@ -12,7 +12,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromecast/base/init_command_line_shlib.h"
 #include "chromecast/base/task_runner_impl.h"
-#include "chromecast/media/cma/backend/media_pipeline_backend_audio.h"
+#include "chromecast/media/cma/backend/media_pipeline_backend_for_mixer.h"
 #include "chromecast/media/cma/backend/stream_mixer.h"
 #include "chromecast/public/cast_media_shlib.h"
 #include "chromecast/public/graphics_types.h"
@@ -134,7 +134,7 @@ MediaPipelineBackend* CastMediaShlib::CreateMediaPipelineBackend(
   }
 
   // TODO(cleichner): Implement MediaSyncType in MediaPipelineDeviceAlsa.
-  return new MediaPipelineBackendAudio(params);
+  return new MediaPipelineBackendForMixer(params);
 }
 
 double CastMediaShlib::GetMediaClockRate() {
@@ -188,20 +188,6 @@ bool CastMediaShlib::SetMediaClockRate(double new_rate) {
 
 bool CastMediaShlib::SupportsMediaClockRateChange() {
   return g_rate_offset_element != nullptr;
-}
-
-void CastMediaShlib::AddLoopbackAudioObserver(LoopbackAudioObserver* observer) {
-  StreamMixer::Get()->AddLoopbackAudioObserver(observer);
-}
-
-void CastMediaShlib::RemoveLoopbackAudioObserver(
-    LoopbackAudioObserver* observer) {
-  StreamMixer::Get()->RemoveLoopbackAudioObserver(observer);
-}
-
-void CastMediaShlib::SetPostProcessorConfig(const std::string& name,
-                                            const std::string& config) {
-  StreamMixer::Get()->SetPostProcessorConfig(name, config);
 }
 
 }  // namespace media

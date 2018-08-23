@@ -56,6 +56,7 @@ using GLImageTestTypes = testing::Types<
     // back the color used to clear the buffer).
     // TODO(mcasas): enable those paltforms https://crbug.com/803451.
     GLImageSharedMemoryTestDelegate<gfx::BufferFormat::BGRX_1010102>,
+    GLImageSharedMemoryTestDelegate<gfx::BufferFormat::RGBX_1010102>,
 #endif
     GLImageSharedMemoryTestDelegate<gfx::BufferFormat::BGRA_8888>>;
 
@@ -67,9 +68,13 @@ INSTANTIATE_TYPED_TEST_CASE_P(GLImageSharedMemory,
                               GLImageOddSizeTest,
                               GLImageTestTypes);
 
+// https://crbug.com/830653
+#if !defined(ADDRESS_SANITIZER) && !defined(MEMORY_SANITIZER) && \
+    !defined(THREAD_SANITIZER)
 INSTANTIATE_TYPED_TEST_CASE_P(GLImageSharedMemory,
                               GLImageCopyTest,
                               GLImageTestTypes);
+#endif
 
 class GLImageSharedMemoryPoolTestDelegate : public GLImageTestDelegateBase {
  public:
@@ -108,9 +113,13 @@ class GLImageSharedMemoryPoolTestDelegate : public GLImageTestDelegateBase {
   int GetAdmissibleError() const { return 0; }
 };
 
+// https://crbug.com/830653
+#if !defined(ADDRESS_SANITIZER) && !defined(MEMORY_SANITIZER) && \
+    !defined(THREAD_SANITIZER)
 INSTANTIATE_TYPED_TEST_CASE_P(GLImageSharedMemoryPool,
                               GLImageCopyTest,
                               GLImageSharedMemoryPoolTestDelegate);
+#endif
 
 }  // namespace
 }  // namespace gl

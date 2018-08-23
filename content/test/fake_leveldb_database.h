@@ -6,7 +6,7 @@
 #define CONTENT_TEST_FAKE_LEVELDB_DATABASE_H_
 
 #include "base/memory/ref_counted.h"
-#include "components/leveldb/public/interfaces/leveldb.mojom.h"
+#include "components/services/leveldb/public/interfaces/leveldb.mojom.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 
 namespace content {
@@ -61,6 +61,8 @@ class FakeLevelDBDatabase : public leveldb::mojom::LevelDBDatabase {
                     IteratorNextCallback callback) override;
   void IteratorPrev(const base::UnguessableToken& iterator,
                     IteratorPrevCallback callback) override;
+
+  void FlushBindingsForTesting();
 
  private:
   std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>

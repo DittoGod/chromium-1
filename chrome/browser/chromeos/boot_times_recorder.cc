@@ -17,13 +17,12 @@
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -219,7 +218,7 @@ bool BootTimesRecorder::Stats::UptimeDouble(double* result) const {
 
 void BootTimesRecorder::Stats::RecordStats(const std::string& name) const {
   base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&BootTimesRecorder::Stats::RecordStatsAsync,
                  base::Owned(new Stats(*this)), name));
 }
@@ -228,7 +227,7 @@ void BootTimesRecorder::Stats::RecordStatsWithCallback(
     const std::string& name,
     const base::Closure& callback) const {
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&BootTimesRecorder::Stats::RecordStatsAsync,
                  base::Owned(new Stats(*this)), name),
       callback);
@@ -342,12 +341,12 @@ void BootTimesRecorder::LoginDone(bool is_user_new) {
                       content::NotificationService::AllSources());
     registrar_.Remove(
         this,
-        content::NOTIFICATION_RENDER_WIDGET_HOST_DID_COMPLETE_RESIZE_OR_REPAINT,
+        content::NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_VISUAL_PROPERTIES,
         content::NotificationService::AllSources());
   }
   // Don't swamp the background thread right away.
   base::PostDelayedTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&WriteTimes, kLoginTimes,
                      (is_user_new ? kUmaLoginNewUser : kUmaLogin),
                      kUmaLoginPrefix, login_time_markers_),
@@ -358,7 +357,7 @@ void BootTimesRecorder::WriteLogoutTimes() {
   // Either we're on the browser thread, or (more likely) Chrome is in the
   // process of shutting down and we're on the main thread but the message loop
   // has already been terminated.
-  DCHECK(!BrowserThread::IsMessageLoopValid(BrowserThread::UI) ||
+  DCHECK(!BrowserThread::IsThreadInitialized(BrowserThread::UI) ||
          BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   WriteTimes(kLogoutTimes,
@@ -443,7 +442,7 @@ void BootTimesRecorder::RecordLoginAttempted() {
                    content::NotificationService::AllSources());
     registrar_.Add(
         this,
-        content::NOTIFICATION_RENDER_WIDGET_HOST_DID_COMPLETE_RESIZE_OR_REPAINT,
+        content::NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_VISUAL_PROPERTIES,
         content::NotificationService::AllSources());
   }
 }
@@ -464,7 +463,7 @@ void BootTimesRecorder::AddMarker(std::vector<TimeMarker>* vector,
   // The marker vectors can only be safely manipulated on the main thread.
   // If we're late in the process of shutting down (eg. as can be the case at
   // logout), then we have to assume we're on the main thread already.
-  if (!BrowserThread::IsMessageLoopValid(BrowserThread::UI) ||
+  if (!BrowserThread::IsThreadInitialized(BrowserThread::UI) ||
       BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     vector->push_back(marker);
   } else {
@@ -512,7 +511,7 @@ void BootTimesRecorder::Observe(int type,
       break;
     }
     case content::
-        NOTIFICATION_RENDER_WIDGET_HOST_DID_COMPLETE_RESIZE_OR_REPAINT: {
+        NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_VISUAL_PROPERTIES: {
       RenderWidgetHost* rwh = content::Source<RenderWidgetHost>(source).ptr();
       if (render_widget_hosts_loading_.find(rwh) !=
           render_widget_hosts_loading_.end()) {

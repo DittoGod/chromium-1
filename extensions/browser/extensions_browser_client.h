@@ -15,6 +15,7 @@
 #include "content/public/common/resource_type.h"
 #include "extensions/browser/extension_event_histogram_value.h"
 #include "extensions/browser/extension_prefs_observer.h"
+#include "extensions/browser/extensions_browser_api_provider.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/view_type.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
@@ -76,7 +77,23 @@ class RuntimeAPIDelegate;
 // they are only used in the browser process.
 class ExtensionsBrowserClient {
  public:
-  virtual ~ExtensionsBrowserClient() {}
+  ExtensionsBrowserClient();
+  virtual ~ExtensionsBrowserClient();
+
+  // Returns the single instance of |this|.
+  static ExtensionsBrowserClient* Get();
+
+  // Sets and initializes the single instance.
+  static void Set(ExtensionsBrowserClient* client);
+
+  // Registers all extension functions.
+  void RegisterExtensionFunctions(ExtensionFunctionRegistry* registry);
+
+  // Adds a new API provider to the client.
+  void AddAPIProvider(std::unique_ptr<ExtensionsBrowserAPIProvider> provider);
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Virtual Methods
 
   // Returns true if the embedder has started shutting down.
   virtual bool IsShuttingDown() = 0;
@@ -141,6 +158,23 @@ class ExtensionsBrowserClient {
       const std::string& content_security_policy,
       bool send_cors_header) = 0;
 
+  // Return the resource relative path and id for the given request.
+  virtual base::FilePath GetBundleResourcePath(
+      const network::ResourceRequest& request,
+      const base::FilePath& extension_resources_path,
+      int* resource_id) const = 0;
+
+  // Creates and starts a URLLoader to load an extension resource from the
+  // embedder's resource bundle (.pak) files. Used for component extensions.
+  virtual void LoadResourceFromResourceBundle(
+      const network::ResourceRequest& request,
+      network::mojom::URLLoaderRequest loader,
+      const base::FilePath& resource_relative_path,
+      int resource_id,
+      const std::string& content_security_policy,
+      network::mojom::URLLoaderClientPtr client,
+      bool send_cors_header) = 0;
+
   // Returns true if the embedder wants to allow a chrome-extension:// resource
   // request coming from renderer A to access a resource in an extension running
   // in renderer B. For example, Chrome overrides this to provide support for
@@ -184,6 +218,9 @@ class ExtensionsBrowserClient {
   // ExternalProtocolHandler::PermitLaunchUrl() in Chrome.
   virtual void PermitExternalProtocolHandler() = 0;
 
+  // Return true if the device is enrolled in Demo Mode.
+  virtual bool IsInDemoMode() = 0;
+
   // Return true if the system is run in forced app mode.
   virtual bool IsRunningInForcedAppMode() = 0;
 
@@ -197,10 +234,6 @@ class ExtensionsBrowserClient {
   // Returns the factory that provides an ExtensionSystem to be returned from
   // ExtensionSystem::Get.
   virtual ExtensionSystemProvider* GetExtensionSystemFactory() = 0;
-
-  // Registers extension functions not belonging to the core extensions APIs.
-  virtual void RegisterExtensionFunctions(
-      ExtensionFunctionRegistry* registry) const = 0;
 
   // Registers additional interfaces to expose to a RenderFrame.
   virtual void RegisterExtensionInterfaces(
@@ -279,6 +312,15 @@ class ExtensionsBrowserClient {
   virtual ExtensionNavigationUIData* GetExtensionNavigationUIData(
       net::URLRequest* request);
 
+  // Retrives the embedder's notion of tab and window ID for a given
+  // WebContents. May return -1 for either or both values if the embedder does
+  // not implement any such concepts. This is used to support the WebRequest API
+  // exposing such numbers to callers.
+  virtual void GetTabAndWindowIdForWebContents(
+      content::WebContents* web_contents,
+      int* tab_id,
+      int* window_id);
+
   // Returns a delegate that provides kiosk mode functionality.
   virtual KioskDelegate* GetKioskDelegate() = 0;
 
@@ -298,11 +340,17 @@ class ExtensionsBrowserClient {
   virtual bool IsExtensionEnabled(const std::string& extension_id,
                                   content::BrowserContext* context) const;
 
-  // Returns the single instance of |this|.
-  static ExtensionsBrowserClient* Get();
+  // http://crbug.com/829412
+  // Renderers with WebUI bindings shouldn't make http(s) requests for security
+  // reasons (e.g. to avoid malicious responses being able to run code in
+  // priviliged renderers). Fix these webui's to make requests through C++
+  // code instead.
+  virtual bool IsWebUIAllowedToMakeNetworkRequests(const url::Origin& origin);
 
-  // Initialize the single instance.
-  static void Set(ExtensionsBrowserClient* client);
+ private:
+  std::vector<std::unique_ptr<ExtensionsBrowserAPIProvider>> providers_;
+
+  DISALLOW_COPY_AND_ASSIGN(ExtensionsBrowserClient);
 };
 
 }  // namespace extensions

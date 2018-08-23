@@ -3,9 +3,6 @@
 <translationbundle lang="am">
 <translation id="1002108253973310084">ተኳሃኝ ያልሆነ የፕሮቶኮል ስሪት ተገኝቷል። እባክዎ በሁለቱም ኮምፒውተሮች ላይ የሶፍትዌሩ የቅርብ ጊዜ ስሪት እንዳለዎት ያረጋግጡና እንደገና ይሞክሩ።</translation>
 <translation id="1050693411695664090">ደካማ</translation>
-<translation id="1059802506829356230">• አዲስ መልክ እና ስሜት።
-• የተሻሻለ አፈጻጸም፣ ምላሽ ሰጪነት እና አስተማማኝነት።
-• ኦዲዮን ከWindows ወይም Linux ኮምፒውተሮች የማጫወት ድጋፍ።</translation>
 <translation id="1152528166145813711">ይምረጡ…</translation>
 <translation id="1199593201721843963">የርቀት ግንኙነቶችን አሰናክል</translation>
 <translation id="1291443878853470558">Chromotingን ተጠቅመው ይህንን ኮምፒውተር መድረስ ከፈለጉ የርቀት ግንኙነቶችን ማንቃት አለብዎት።</translation>
@@ -125,7 +122,6 @@
 <translation id="369442766917958684">ከመስመር ውጪ።</translation>
 <translation id="3695446226812920698">እንዴት እንደሆነ ይወቁ</translation>
 <translation id="3718805989288361841">በChrome የርቀት ዴስክቶፕ የመመሪያ ቅንብሮች ውስጥ አንድ ስህተት አለ። እገዛ ለማግኘት የሥርዓት አስተዳዳሪዎን ያነጋግሩ።</translation>
-<translation id="3759645055923345178">ማዋቀር ከተጠናቀቀ በኋላ ፒን ወይም የመዳረሻ ኮድ በማስገባት ከዚህ ገጽ ሆነው ኮምፒውተሩን መድረስ ይችላሉ</translation>
 <translation id="3776024066357219166">የChrome የርቀት ዴስክቶፕ ክፍለ-ጊዜው ተጠናቅቋል።</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
 <translation id="3884839335308961732">እባክዎ በChrome የርቀት ዴስክቶፕ መዳረሻ ለመፍቀድ መለያዎን እና ፒንዎን ከዚህ በታች ያረጋግጡ።</translation>
@@ -140,13 +136,16 @@
 <translation id="405887016757208221">የርቀት ኮምፒውተሩ ክፍለጊዜውን ለመጀመር ተስኖታል። ችግሩ ከቀጠለ እባክዎን አስተናጋጁን በድጋሚ ለማዋቀር ይሞክሩ።</translation>
 <translation id="4068946408131579958">ሁሉም ግንኙነቶች</translation>
 <translation id="409800995205263688">ማሳሰቢያ፦ የመምሪያ ቅንብሮች በአውታረ መረብዎ ውስጥ ባሉ ኮምፒውተሮች የሚኖሩ ግንኙነቶችን ብቻ ነው የሚፈቅዱት።</translation>
+<translation id="4126409073460786861">ማዋቀር ከተጠናቀቀ በኋላ ይህን ገጽ ያድሱት፣ ከዚያ መሣሪያዎን በመምረጥ እና ፒኑን በማስገባት ኮምፒውተሩን መድረስ ይችላሉ</translation>
 <translation id="4145029455188493639">እንደ <ph name="EMAIL_ADDRESS" /> ሆነው ገብተዋል።</translation>
 <translation id="4155497795971509630">አንዳንድ የሚያስፈልጉ ክፍሎች ይጎድላሉ። እባክዎ የሶፍትዌሩ የቅርብ ጊዜውን ስሪት መጫንዎን ያረጋግጡና እንደገና ይሞክሩ።</translation>
 <translation id="4156740505453712750">ይህንን ኮምፒውተር በተጠበቀ መዳረሻ ለመድረስ እባክዎ <ph name="BOLD_START" />ቢያንስ ስድስት አኃዞች<ph name="BOLD_END" /> የሆነ ፒን ይምረጡ። ይሄ ፒን ከሌላ ቦታ ሆኖ ሲገናኙ ያስፈልጋል።</translation>
+<translation id="4169432154993690151">የመገለጫ ስዕል ለመምረጥ Chrome የርቀት ዴስክቶፕ ካሜራዎን እንዲደርስ ይፍቀዱ</translation>
 <translation id="4176825807642096119">የመዳረሻ ኮድ</translation>
 <translation id="4207623512727273241">ከመቀጠልዎ በፊት እባክዎ ጫኚውን ያስሂዱት።</translation>
 <translation id="4227991223508142681">የአስተናጋጅ አቅርቦት መገልገያ</translation>
 <translation id="4240294130679914010">Chromoting የአስተናጋጅ ማራገፊያ</translation>
+<translation id="4249741460382919890">አጠጋላይ ጥገናዎች እና የማረጋጊያ ማሻሻያዎች።</translation>
 <translation id="4277463233460010382">ይህ ኮምፒውተር አንድ ወይም ከዚያ በላይ ደንበኞችን ፒን ሳያስገቡ እንዲገናኙ እንዲፈቅድ ተደርጎ ተዋቅሯል።</translation>
 <translation id="4277736576214464567">የመዳረሻ ኮዱ ልክ ያልሆነ ነው። እባክዎ እንደገና ይሞክሩ።</translation>
 <translation id="4361728918881830843">ከአንድ ሌላ ኮምፒውተር ጋር የርቀት ግንኙነቶችን ለማንቃት Chrome የርቀት ዴስክቶፕን እዚያው ይጫኑና «<ph name="BUTTON_NAME" />»ን ይጫኑ።</translation>
@@ -192,6 +191,7 @@
 <translation id="5064360042339518108"><ph name="HOSTNAME" /> (ከመስመር ውጪ)</translation>
 <translation id="5070121137485264635">የርቀት አስተናጋጁ ለሶስተኛ ወገን ድር ጣቢያ እንዲያረጋግጡ ይፈልጋል። ለመቀጠል Chrome የርቀት ዴስክቶፕ ይህን አድራሻ እንዲደርስበት ተጨማሪ ፍቃዶችን መስጠት አለብዎት፦</translation>
 <translation id="507204348399810022">ከ<ph name="HOSTNAME" /> ጋር ያሉ የርቀት ግንኙነቶችን ማሰናከል ይፈልጋሉ?</translation>
+<translation id="5081343395220691640">ከዚህ አገልጋይ ጋር መግባባት አልተቻለም፦<ph name="ERROR" /></translation>
 <translation id="5156271271724754543">እባክዎ ተመሳሳዩን ፒን በሁለቱም ሳጥኖች ውስጥ ያስገቡ።</translation>
 <translation id="5170982930780719864">ልክ ያልሆነ የአስተናጋጅ መታወቂያ።</translation>
 <translation id="518094545883702183">ይህ መረጃ ጥቅም ላይ የሚውለው ሪፖርት የሚያደርጉትን ችግር ለመመርመር ብቻ ነው፣ የሚገኘው ሪፖርትዎን ለሚመረምረው ሰው ብቻ ነው፣ እና ከ30 ቀኖች በላይ አይቆይም።</translation>
@@ -242,6 +242,7 @@
 <translation id="6381670701864002291">ሌላ ነገር።</translation>
 <translation id="6398765197997659313">ከሙሉ ማሳያ መስኮት ይውጡ</translation>
 <translation id="6441316101718669559">የዴስክቶፕ ውህደት በዚህ የመሣሪያ ስርዓት ላይ አይደገፍም። አሁንም መተግበሪያውን መጠቀም ይችላሉ፣ ነገር ግን የተጠቃሚ ተሞክሮው የወረደ ይሆናል።</translation>
+<translation id="6502629188777329097">ኮምፒውተርዎን ደህንነቱ በተጠበቀ ሁኔታ ይድረሱበት</translation>
 <translation id="652218476070540101">የዚህ ኮምፒውተር ፒን እየተዘመነ ነው…</translation>
 <translation id="6527303717912515753">አጋራ</translation>
 <translation id="6541219117979389420">የመተግበሪያ ምዝግብ ማስታወሻዎች እንደ የእርስዎ ማንነት (የኢሜይል አድራሻ) እና በGoogle Drive ውስጥ ያሉ የፋይሎች እና አቃፊዎች ስሞችን እና አቃፊዎችን ጨምሮ የግል መረጃን ሊያካትቱ ይችላሉ።</translation>
@@ -259,6 +260,7 @@
 <translation id="6748108480210050150">ከ</translation>
 <translation id="677755392401385740">አስተናጋጅ ለተጠቃሚ ተጀምሯል፦ <ph name="HOST_USERNAME" />።</translation>
 <translation id="6865175692670882333">ይመልከቱ/አርትዕ ያድርጉ</translation>
+<translation id="6913710942997637770">የመገለጫ ስዕል ለመምረጥ Chrome የርቀት ዴስክቶፕ ፎቶዎችዎን እንዲደርስ ይፍቀዱ</translation>
 <translation id="6930242544192836755">ጊዜ</translation>
 <translation id="6939719207673461467">የቁልፍ ሰሌዳን አሳይ/ደብቅ።</translation>
 <translation id="6944854424004126054">መስኮት ወደነበረበት ይመልሱ</translation>
@@ -269,6 +271,7 @@
 <translation id="6998989275928107238">ለ</translation>
 <translation id="7019153418965365059">ያልታወቀ የአስተናጋጅ ስህተት፦ <ph name="HOST_OFFLINE_REASON" />።</translation>
 <translation id="701976023053394610">የርቀት እርዳታ</translation>
+<translation id="7026930240735156896">ኮምፒውተርዎን ለርቀት መዳረሻ ለማዋቀር መመሪያዎቹን ይከተሉ</translation>
 <translation id="7038683108611689168">የአጠቃቀም ስታትስቲክስ እና የብልሽት ሪፖርቶችን እንድንሰበስብ በመፍቀድ Chromoting እንድናሻሽል ያግዙን።</translation>
 <translation id="7067321367069083429">ማያ ገጽ እንደ ማያንካ ይሆናል</translation>
 <translation id="7116737094673640201">እንኳን ወደ Chrome የርቀት ዴስክቶፕ በደህና መጡ</translation>
@@ -290,10 +293,10 @@
 <translation id="7672203038394118626">ለዚህ ኮምፒውተር የርቀት ግንኙነቶች ተሰናክለዋል።</translation>
 <translation id="7678209621226490279">መትከያ ወደ ግራ</translation>
 <translation id="7693372326588366043">የአስተናጋጆች ዝርዝር ያድሱ</translation>
+<translation id="7714222945760997814">ይህን ሪፖርት አድርግ</translation>
 <translation id="7782471917492991422">እባክዎ የኮምፒውተርዎ የኃይል አስተዳደር ቅንብሮችን ያረጋግጡና ስራ ሲፈታ እንዲተኛ አለመዋቀሩን ያረጋግጡ።</translation>
 <translation id="7810127880729796595">ስታቲስቲክስን አሳይ (ግንኙነት፦ <ph name="QUALITY" />)</translation>
 <translation id="7836926030608666805">አንዳንድ የሚያስፈልጉ ክፍሎች ይጎድላሉ። እባክዎ የቅርብ ጊዜውን የChrome ስሪት መጫንዎን ያረጋግጡና እንደገና ይሞክሩ።</translation>
-<translation id="7850909060902317210">ማቀናበሩን ለማጠናቀቅ የChrome ርቀት ዴስክቶፕ ሶፍትዌሩን ይጫኑና መመሪያዎቹን ይከተሉj</translation>
 <translation id="7868137160098754906">እባክዎ የእርስዎን ፒን ለርቀት ኮምፒውተር ያስገቡ</translation>
 <translation id="7869445566579231750">ይህን መተግበሪያ ለማሄድ ፍቃድ የለዎትም።</translation>
 <translation id="7895403300744144251">በርቀት ኮምፒውተሩ ላይ ያሉ የደህንነት መመሪያዎች ከእርስዎ መለያ ጋር ግንኙነቶችን አይፈቅዱም።</translation>

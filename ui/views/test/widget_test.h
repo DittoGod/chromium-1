@@ -100,6 +100,11 @@ class WidgetTest : public ViewsTestBase {
   // Return true if |window| is transparent according to the native platform.
   static bool IsNativeWindowTransparent(gfx::NativeWindow window);
 
+  // Returns whether |widget| has a Window shadow managed in this process. That
+  // is, a shadow that is drawn outside of the Widget bounds, and managed by the
+  // WindowManager.
+  static bool WidgetHasInProcessShadow(Widget* widget);
+
   // Returns the set of all Widgets that currently have a NativeWindow.
   static Widget::Widgets GetAllWidgets();
 
@@ -208,6 +213,26 @@ class WidgetClosingObserver : public WidgetObserver {
   base::RunLoop run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(WidgetClosingObserver);
+};
+
+// Use in tests to wait for a widget to be destroyed.
+// TODO(https://crrev.com/c/1086509): This is pretty similar to
+// WidgetClosingObserver. Can the two be combined?
+class WidgetDestroyedWaiter : public WidgetObserver {
+ public:
+  explicit WidgetDestroyedWaiter(Widget* widget);
+
+  // Wait for the widget to be destroyed, or return immediately if it was
+  // already destroyed since this object was created.
+  void Wait();
+
+ private:
+  // views::WidgetObserver
+  void OnWidgetDestroyed(Widget* widget) override;
+
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(WidgetDestroyedWaiter);
 };
 
 }  // namespace test

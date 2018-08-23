@@ -17,7 +17,7 @@
 #include "base/location.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/printing/cloud_print/privet_constants.h"
@@ -50,6 +50,19 @@ std::string MakeRangeHeader(int start, int end) {
 }
 
 }  // namespace
+
+// static
+bool PrivetURLFetcher::skip_retry_timeouts_for_tests_ = false;
+
+PrivetURLFetcher::RetryImmediatelyForTest::RetryImmediatelyForTest() {
+  DCHECK(!skip_retry_timeouts_for_tests_);
+  skip_retry_timeouts_for_tests_ = true;
+}
+
+PrivetURLFetcher::RetryImmediatelyForTest::~RetryImmediatelyForTest() {
+  DCHECK(skip_retry_timeouts_for_tests_);
+  skip_retry_timeouts_for_tests_ = false;
+}
 
 void PrivetURLFetcher::Delegate::OnNeedPrivetToken(TokenCallback callback) {
   OnError(0, TOKEN_ERROR);
@@ -163,16 +176,8 @@ void PrivetURLFetcher::Try() {
     url_fetcher_->SaveResponseToTemporaryFile(GetFileTaskRunner());
 
   // URLFetcher requires us to set upload data for POST requests.
-  if (request_type_ == net::URLFetcher::POST) {
-    if (upload_file_path_.empty()) {
-      url_fetcher_->SetUploadData(upload_content_type_, upload_data_);
-    } else {
-      url_fetcher_->SetUploadFilePath(
-          upload_content_type_, upload_file_path_, 0 /*offset*/,
-          std::numeric_limits<uint64_t>::max() /*length*/, GetFileTaskRunner());
-    }
-  }
-
+  if (request_type_ == net::URLFetcher::POST)
+    url_fetcher_->SetUploadData(upload_content_type_, upload_data_);
   url_fetcher_->Start();
 }
 
@@ -196,17 +201,8 @@ void PrivetURLFetcher::Start() {
 
 void PrivetURLFetcher::SetUploadData(const std::string& upload_content_type,
                                      const std::string& upload_data) {
-  DCHECK(upload_file_path_.empty());
   upload_content_type_ = upload_content_type;
   upload_data_ = upload_data;
-}
-
-void PrivetURLFetcher::SetUploadFilePath(
-    const std::string& upload_content_type,
-    const base::FilePath& upload_file_path) {
-  DCHECK(upload_data_.empty());
-  upload_content_type_ = upload_content_type;
-  upload_file_path_ = upload_file_path;
 }
 
 void PrivetURLFetcher::OnURLFetchComplete(const net::URLFetcher* source) {
@@ -332,6 +328,9 @@ void PrivetURLFetcher::ScheduleRetry(int timeout_seconds) {
   if (tries_ >= max_retries_)
     timeout_seconds_randomized = 0;
 
+  if (skip_retry_timeouts_for_tests_)
+    timeout_seconds_randomized = 0;
+
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&PrivetURLFetcher::Try, weak_factory_.GetWeakPtr()),
@@ -361,7 +360,7 @@ bool PrivetURLFetcher::PrivetErrorTransient(const std::string& error) {
 scoped_refptr<base::SequencedTaskRunner> PrivetURLFetcher::GetFileTaskRunner() {
   if (!file_task_runner_) {
     file_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-        {base::TaskPriority::BACKGROUND, base::MayBlock()});
+        {base::TaskPriority::BEST_EFFORT, base::MayBlock()});
   }
 
   return file_task_runner_;

@@ -3,14 +3,18 @@
 // found in the LICENSE file.
 
 const Action = {
-  VERIFY_APPINSTALLED: "verify_appinstalled",
-  VERIFY_PROMPT_APPINSTALLED: "verify_prompt_appinstalled",
-  VERIFY_BEFOREINSTALLPROMPT: "verify_beforeinstallprompt",
-  CALL_PROMPT_DELAYED: "call_prompt_delayed",
-  CALL_PROMPT_IN_HANDLER: "call_prompt_in_handler",
-  CALL_PROMPT_NO_USERCHOICE: "call_prompt_no_userchoice",
-  CANCEL_PROMPT: "cancel_prompt",
-  STASH_EVENT: "stash_event",
+  VERIFY_APPINSTALLED: 'verify_appinstalled',
+  VERIFY_PROMPT_APPINSTALLED: 'verify_prompt_appinstalled',
+  VERIFY_BEFOREINSTALLPROMPT: 'verify_beforeinstallprompt',
+  CALL_PROMPT_DELAYED: 'call_prompt_delayed',
+  CALL_PROMPT_IN_HANDLER: 'call_prompt_in_handler',
+  CALL_PROMPT_NO_USERCHOICE: 'call_prompt_no_userchoice',
+  CALL_STASHED_PROMPT_ON_CLICK: 'call_stashed_prompt_on_click',
+  CALL_STASHED_PROMPT_ON_CLICK_VERIFY_APPINSTALLED:
+      'call_stashed_prompt_on_click_verify_appinstalled',
+  CANCEL_PROMPT_AND_NAVIGATE: 'cancel_prompt_and_navigate',
+  CANCEL_PROMPT: 'cancel_prompt',
+  STASH_EVENT: 'stash_event',
 };
 
 const LISTENER = "listener";
@@ -52,7 +56,19 @@ function callStashedPrompt() {
   if (stashedEvent === null) {
       throw new Error('No event was previously stashed');
   }
-  stashedEvent.prompt();
+  callPrompt(stashedEvent);
+}
+
+function addClickListener(action) {
+  switch (action) {
+    case Action.CALL_STASHED_PROMPT_ON_CLICK:
+      window.addEventListener('click', callStashedPrompt);
+      break;
+    case Action.CALL_STASHED_PROMPT_ON_CLICK_VERIFY_APPINSTALLED:
+      window.addEventListener('click', callStashedPrompt);
+      verifyEvents("appinstalled");
+      break;
+  }
 }
 
 function addPromptListener(action) {
@@ -69,8 +85,8 @@ function addPromptListener(action) {
       case Action.CALL_PROMPT_NO_USERCHOICE:
         setTimeout(() => e.prompt(), 0);
         break;
-      case Action.CANCEL_PROMPT:
-        // Navigate the window to trigger the banner cancellation.
+      case Action.CANCEL_PROMPT_AND_NAVIGATE:
+        // Navigate the window to trigger cancellation in the renderer.
         window.location.href = "/";
         break;
       case Action.STASH_EVENT:
@@ -112,9 +128,15 @@ function initialize() {
     case Action.VERIFY_BEFOREINSTALLPROMPT:
       verifyEvents('beforeinstallprompt');
       break;
+    case Action.CALL_STASHED_PROMPT_ON_CLICK:
+    case Action.CALL_STASHED_PROMPT_ON_CLICK_VERIFY_APPINSTALLED:
+      addPromptListener(Action.STASH_EVENT);
+      addClickListener(action);
+      break;
     case Action.CALL_PROMPT_DELAYED:
     case Action.CALL_PROMPT_IN_HANDLER:
     case Action.CALL_PROMPT_NO_USERCHOICE:
+    case Action.CANCEL_PROMPT_AND_NAVIGATE:
     case Action.CANCEL_PROMPT:
     case Action.STASH_EVENT:
       addPromptListener(action);

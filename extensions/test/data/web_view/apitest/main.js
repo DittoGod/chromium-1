@@ -36,9 +36,11 @@ window.runTest = function(testName) {
 
 embedder.test = {};
 
-embedder.test.assertEq = function(a, b) {
+embedder.test.assertEq = function(a, b, message) {
   if (a != b) {
-    window.console.warn('assertion failed: ' + a + ' != ' + b);
+    window.console.warn(
+        'assertion failed: ' + a + ' != ' + b +
+        (message ? (': ' + message) : ''));
     embedder.test.fail();
   }
 };
@@ -96,36 +98,49 @@ function testAllowTransparencyAttribute() {
 }
 
 function testAPIMethodExistence() {
-  var apiMethodsToCheck = [
+  // See public-facing API functions in web_view_api_methods.js
+  var WEB_VIEW_API_METHODS = [
+    'addContentScripts',
     'back',
-    'find',
-    'forward',
     'canGoBack',
     'canGoForward',
+    'captureVisibleRegion',
     'clearData',
+    'executeScript',
+    'find',
+    'forward',
+    'getAudioState',
     'getProcessId',
+    'getUserAgent',
     'getZoom',
+    'getZoomMode',
     'go',
+    'insertCSS',
+    'isAudioMuted',
+    'isUserAgentOverridden',
+    'loadDataWithBaseUrl',
     'print',
+    'removeContentScripts',
     'reload',
+    'setAudioMuted',
+    'setUserAgentOverride',
     'setZoom',
+    'setZoomMode',
     'stop',
     'stopFinding',
-    'terminate',
-    'executeScript',
-    'insertCSS',
-    'getUserAgent',
-    'isUserAgentOverridden',
-    'setUserAgentOverride'
+    'terminate'
   ];
+
   var webview = document.createElement('webview');
+
+  for (var methodName of WEB_VIEW_API_METHODS) {
+    embedder.test.assertEq(
+        'function', typeof webview[methodName],
+        methodName + ' should be defined');
+  }
+
   webview.setAttribute('partition', arguments.callee.name);
   webview.addEventListener('loadstop', function(e) {
-    for (var i = 0; i < apiMethodsToCheck.length; ++i) {
-      embedder.test.assertEq('function',
-                             typeof webview[apiMethodsToCheck[i]]);
-    }
-
     // Check contentWindow.
     embedder.test.assertEq('object', typeof webview.contentWindow);
     embedder.test.assertEq('function',
@@ -134,6 +149,32 @@ function testAPIMethodExistence() {
   });
   webview.setAttribute('src', 'data:text/html,webview check api');
   document.body.appendChild(webview);
+}
+
+function testCustomElementCallbacksInaccessible() {
+  var CUSTOM_ELEMENT_CALLBACKS = [
+    // Custom Elements V0
+    // TODO(867831): Once we migrate to V1, we'll no longer need to check
+    // the V0 callbacks.
+    'createdCallback',
+    'attachedCallback',
+    'detachedCallback',
+    'attributeChangedCallback',
+
+    // Custom Elements V1
+    'connectedCallback',
+    'disconnectedCallback',
+    'attributeChangedCallback',
+    'adoptedCallback'
+  ];
+
+  var webview = document.createElement('webview');
+  for (var callbackName of CUSTOM_ELEMENT_CALLBACKS) {
+    embedder.test.assertEq(
+        'undefined', typeof webview[callbackName],
+        callbackName + ' should not be accessible');
+  }
+  embedder.test.succeed();
 }
 
 // This test verifies that assigning the src attribute the same value it had
@@ -1084,6 +1125,27 @@ function testLoadAbortNonWebSafeScheme() {
   document.body.appendChild(webview);
 };
 
+// Verifies that cancelling a navigation due to an unsupported protocol doesn't
+// cause a crash.
+function testLoadAbortUnknownScheme() {
+  var webview = document.createElement('webview');
+  var ftpURL = 'ftp://example.com/';
+  webview.addEventListener('loadabort', function(e) {
+    embedder.test.assertEq('ERR_UNKNOWN_URL_SCHEME', e.reason);
+    embedder.test.assertEq(ftpURL, e.url);
+  });
+  webview.addEventListener('loadstop', function(e) {
+    embedder.test.assertEq(ftpURL, webview.src);
+    embedder.test.succeed();
+  });
+  webview.addEventListener('exit', function(e) {
+    // We should not crash.
+    embedder.test.fail();
+  });
+  webview.src = ftpURL;
+  document.body.appendChild(webview);
+}
+
 // This test verifies that the loadStart isn't sent for same-document
 // navigations, while loadCommit is (per docs).
 function testLoadEventsSameDocumentNavigation() {
@@ -1147,21 +1209,6 @@ function testLoadStartLoadRedirect() {
       embedder.test.fail();
     }
   });
-  document.body.appendChild(webview);
-}
-
-function testNavigationToExternalProtocol() {
-  var webview = document.createElement('webview');
-  webview.addEventListener('loadstop', function(e) {
-    webview.addEventListener('loadabort', function(e) {
-      embedder.test.assertEq('ERR_UNKNOWN_URL_SCHEME', e.reason);
-      embedder.test.succeed();
-    });
-    webview.executeScript({
-      code: 'window.location.href = "tel:+12223334444";'
-    }, function(results) {});
-  });
-  webview.setAttribute('src', 'data:text/html,navigate to external protocol');
   document.body.appendChild(webview);
 }
 
@@ -1667,25 +1714,35 @@ function testWebRequestAPIWithHeaders() {
   }, requestFilter, extraInfoSpec);
 
   var loadstartCalled = false;
-  webview.addEventListener('loadstart', function(e) {
-    embedder.test.assertTrue(e.isTopLevel);
-    embedder.test.assertEq(embedder.detectUserAgentURL, e.url);
-    loadstartCalled = true;
-  });
 
-  webview.addEventListener('loadredirect', function(e) {
-    embedder.test.assertTrue(e.isTopLevel);
-    embedder.test.assertEq(embedder.detectUserAgentURL,
-        e.oldUrl.replace('127.0.0.1', 'localhost'));
-    embedder.test.assertEq(embedder.redirectGuestURLDest,
-        e.newUrl.replace('127.0.0.1', 'localhost'));
-    if (loadstartCalled) {
-      embedder.test.succeed();
-    } else {
-      embedder.test.fail();
-    }
-  });
-  webview.src = embedder.detectUserAgentURL;
+  var listener = function() {
+    webview.removeEventListener('loadstop', listener);
+    // Now load the real URL for the test.
+    webview.src = embedder.detectUserAgentURL;
+
+    webview.addEventListener('loadstart', function(e) {
+      embedder.test.assertTrue(e.isTopLevel);
+      embedder.test.assertEq(embedder.detectUserAgentURL, e.url);
+      loadstartCalled = true;
+    });
+
+    webview.addEventListener('loadredirect', function(e) {
+      embedder.test.assertTrue(e.isTopLevel);
+      embedder.test.assertEq(embedder.detectUserAgentURL,
+          e.oldUrl.replace('127.0.0.1', 'localhost'));
+      embedder.test.assertEq(embedder.redirectGuestURLDest,
+          e.newUrl.replace('127.0.0.1', 'localhost'));
+      if (loadstartCalled) {
+        embedder.test.succeed();
+      } else {
+        embedder.test.fail();
+      }
+    });
+  };
+  webview.addEventListener('loadstop', listener);
+
+  // Load an empty URL to wait for the webRequest listener to be set up.
+  webview.src = embedder.emptyGuestURL;
   document.body.appendChild(webview);
 }
 
@@ -1781,6 +1838,8 @@ function captureVisibleRegionDoCapture() {}
 embedder.test.testList = {
   'testAllowTransparencyAttribute': testAllowTransparencyAttribute,
   'testAPIMethodExistence': testAPIMethodExistence,
+  'testCustomElementCallbacksInaccessible':
+      testCustomElementCallbacksInaccessible,
   'testAssignSrcAfterCrash': testAssignSrcAfterCrash,
   'testAutosizeAfterNavigation': testAutosizeAfterNavigation,
   'testAutosizeBeforeNavigation': testAutosizeBeforeNavigation,
@@ -1820,11 +1879,11 @@ embedder.test.testList = {
   'testLoadAbortIllegalJavaScriptURL': testLoadAbortIllegalJavaScriptURL,
   'testLoadAbortInvalidNavigation': testLoadAbortInvalidNavigation,
   'testLoadAbortNonWebSafeScheme': testLoadAbortNonWebSafeScheme,
+  'testLoadAbortUnknownScheme': testLoadAbortUnknownScheme,
   'testLoadEventsSameDocumentNavigation': testLoadEventsSameDocumentNavigation,
   'testLoadProgressEvent': testLoadProgressEvent,
   'testLoadStartLoadRedirect': testLoadStartLoadRedirect,
   'testNavigateAfterResize': testNavigateAfterResize,
-  'testNavigationToExternalProtocol': testNavigationToExternalProtocol,
   'testNavOnConsecutiveSrcAttributeChanges':
       testNavOnConsecutiveSrcAttributeChanges,
   'testNavOnSrcAttributeChange': testNavOnSrcAttributeChange,

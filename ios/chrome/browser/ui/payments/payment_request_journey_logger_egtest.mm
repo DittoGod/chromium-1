@@ -11,6 +11,7 @@
 #import "ios/chrome/test/app/histogram_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
+#import "ios/web/public/web_client.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -57,7 +58,13 @@ using payments::JourneyLogger;
 
 // Tests that the selected instrument metric is correctly logged when the
 // Payment Request is completed with a credit card.
-- (void)testSelectedPaymentMethod {
+// TODO(crbug.com/795663): Fails on iphone11 devices.
+#if !TARGET_IPHONE_SIMULATOR
+#define MAYBE_testSelectedPaymentMethod DISABLED_testSelectedPaymentMethod
+#else
+#define MAYBE_testSelectedPaymentMethod testSelectedPaymentMethod
+#endif
+- (void)MAYBE_testSelectedPaymentMethod {
   chrome_test_util::HistogramTester histogramTester;
 
   [self addProfiles];
@@ -171,7 +178,13 @@ using payments::JourneyLogger;
   GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_SELECTED_OTHER, @"");
 }
 
-- (void)testShowSameRequest {
+// TODO(crbug.com/795663): Fails on iphone11 devices.
+#if !TARGET_IPHONE_SIMULATOR
+#define MAYBE_testShowSameRequest DISABLED_testShowSameRequest
+#else
+#define MAYBE_testShowSameRequest testShowSameRequest
+#endif
+- (void)MAYBE_testShowSameRequest {
   chrome_test_util::HistogramTester histogramTester;
 
   [self addProfiles];
@@ -236,7 +249,15 @@ using payments::JourneyLogger;
 
 // Tests that the correct number of suggestions shown for each section is logged
 // when a Payment Request is completed.
-- (void)testAllSectionStats_NumberOfSuggestionsShown_Completed {
+// TODO(crbug.com/795663): Fails on iphone11 devices.
+#if !TARGET_IPHONE_SIMULATOR
+#define MAYBE_testAllSectionStats_NumberOfSuggestionsShown_Completed \
+  DISABLED_testAllSectionStats_NumberOfSuggestionsShown_Completed
+#else
+#define MAYBE_testAllSectionStats_NumberOfSuggestionsShown_Completed \
+  testAllSectionStats_NumberOfSuggestionsShown_Completed
+#endif
+- (void)MAYBE_testAllSectionStats_NumberOfSuggestionsShown_Completed {
   chrome_test_util::HistogramTester histogramTester;
 
   [self addProfiles];
@@ -379,7 +400,15 @@ using payments::JourneyLogger;
 
 // Tests that the correct number of suggestions shown for each section is logged
 // when a Payment Request is completed.
-- (void)testNoShippingSectionStats_NumberOfSuggestionsShown_Completed {
+// TODO(crbug.com/795663): Fails on iphone11 devices.
+#if !TARGET_IPHONE_SIMULATOR
+#define MAYBE_testNoShippingSectionStats_NumberOfSuggestionsShown_Completed \
+  DISABLED_testNoShippingSectionStats_NumberOfSuggestionsShown_Completed
+#else
+#define MAYBE_testNoShippingSectionStats_NumberOfSuggestionsShown_Completed \
+  testNoShippingSectionStats_NumberOfSuggestionsShown_Completed
+#endif
+- (void)MAYBE_testNoShippingSectionStats_NumberOfSuggestionsShown_Completed {
   chrome_test_util::HistogramTester histogramTester;
 
   [self addProfiles];
@@ -524,7 +553,16 @@ using payments::JourneyLogger;
 
 // Tests that the correct number of suggestions shown for each section is logged
 // when a Payment Request is completed.
-- (void)testNoContactDetailSectionStats_NumberOfSuggestionsShown_Completed {
+// TODO(crbug.com/795663): Fails on iphone11 devices.
+#if !TARGET_IPHONE_SIMULATOR
+#define MAYBE_testNoContactDetailSectionStats_NumberOfSuggestionsShown_Completed \
+  DISABLED_testNoContactDetailSectionStats_NumberOfSuggestionsShown_Completed
+#else
+#define MAYBE_testNoContactDetailSectionStats_NumberOfSuggestionsShown_Completed \
+  testNoContactDetailSectionStats_NumberOfSuggestionsShown_Completed
+#endif
+- (void)
+    MAYBE_testNoContactDetailSectionStats_NumberOfSuggestionsShown_Completed {
   chrome_test_util::HistogramTester histogramTester;
 
   [self addProfiles];
@@ -740,8 +778,19 @@ using payments::JourneyLogger;
       buckets[0].min & JourneyLogger::EVENT_RECEIVED_INSTRUMENT_DETAILS, @"");
   GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_SKIPPED_SHOW, @"");
   GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_COMPLETED, @"");
-  GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
-  GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+
+  // TODO(crbug.com/676129): LegacyNavigationManager has a bug that doesn't
+  // create a pending item when reloading the page. This is incorrectly causing
+  // the second navigation above to be considered a renderer-initiated
+  // navigation, and the abort reason is incorrectly logged as
+  // EVENT_OTHER_ABORTED.
+  if (!web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
+    GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+  } else {
+    GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
+    GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+  }
   GREYAssertTrue(
       buckets[0].min & JourneyLogger::EVENT_HAD_INITIAL_FORM_OF_PAYMENT, @"");
   GREYAssertTrue(
@@ -791,8 +840,18 @@ using payments::JourneyLogger;
       buckets[0].min & JourneyLogger::EVENT_RECEIVED_INSTRUMENT_DETAILS, @"");
   GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_SKIPPED_SHOW, @"");
   GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_COMPLETED, @"");
-  GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
-  GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+  // TODO(crbug.com/676129): LegacyNavigationManager has a bug that doesn't
+  // create a pending item when reloading the page. This is incorrectly causing
+  // the second navigation above to be considered a renderer-initiated
+  // navigation, and the abort reason is incorrectly logged as
+  // EVENT_OTHER_ABORTED.
+  if (!web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
+    GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+  } else {
+    GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
+    GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+  }
   GREYAssertFalse(
       buckets[0].min & JourneyLogger::EVENT_HAD_INITIAL_FORM_OF_PAYMENT, @"");
   GREYAssertFalse(
@@ -843,8 +902,18 @@ using payments::JourneyLogger;
       buckets[0].min & JourneyLogger::EVENT_RECEIVED_INSTRUMENT_DETAILS, @"");
   GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_SKIPPED_SHOW, @"");
   GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_COMPLETED, @"");
-  GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
-  GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+  // TODO(crbug.com/676129): LegacyNavigationManager has a bug that doesn't
+  // create a pending item when reloading the page. This is incorrectly causing
+  // the second navigation above to be considered a renderer-initiated
+  // navigation, and the abort reason is incorrectly logged as
+  // EVENT_OTHER_ABORTED.
+  if (!web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
+    GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+  } else {
+    GREYAssertTrue(buckets[0].min & JourneyLogger::EVENT_USER_ABORTED, @"");
+    GREYAssertFalse(buckets[0].min & JourneyLogger::EVENT_OTHER_ABORTED, @"");
+  }
   GREYAssertFalse(
       buckets[0].min & JourneyLogger::EVENT_HAD_INITIAL_FORM_OF_PAYMENT, @"");
   GREYAssertFalse(

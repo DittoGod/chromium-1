@@ -5,8 +5,9 @@
 #include "chrome/browser/offline_pages/background_loader_offliner.h"
 
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_mock_time_message_loop_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -33,6 +34,11 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace {
+char kShortSnapshotDelayForTest[] =
+    "short-offline-page-snapshot-delay-for-test";
+};  // namespace
 
 namespace offline_pages {
 
@@ -66,9 +72,10 @@ class MockOfflinePageModel : public StubOfflinePageModel {
 
   void SavePage(const SavePageParams& save_page_params,
                 std::unique_ptr<OfflinePageArchiver> archiver,
-                const SavePageCallback& callback) override {
+                content::WebContents* web_contents,
+                SavePageCallback callback) override {
     mock_saving_ = true;
-    save_page_callback_ = callback;
+    save_page_callback_ = std::move(callback);
     save_page_params_ = save_page_params;
   }
 
@@ -76,30 +83,30 @@ class MockOfflinePageModel : public StubOfflinePageModel {
     DCHECK(mock_saving_);
     mock_saving_ = false;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(save_page_callback_,
-                              SavePageResult::ARCHIVE_CREATION_FAILED, 0));
+        FROM_HERE, base::BindOnce(std::move(save_page_callback_),
+                                  SavePageResult::ARCHIVE_CREATION_FAILED, 0));
   }
 
   void CompleteSavingAsSuccess() {
     DCHECK(mock_saving_);
     mock_saving_ = false;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(save_page_callback_, SavePageResult::SUCCESS, 123456));
+        FROM_HERE, base::BindOnce(std::move(save_page_callback_),
+                                  SavePageResult::SUCCESS, 123456));
   }
 
   void CompleteSavingAsAlreadyExists() {
     DCHECK(mock_saving_);
     mock_saving_ = false;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(save_page_callback_,
-                              SavePageResult::ALREADY_EXISTS, 123456));
+        FROM_HERE, base::BindOnce(std::move(save_page_callback_),
+                                  SavePageResult::ALREADY_EXISTS, 123456));
   }
 
   void DeletePagesByOfflineId(const std::vector<int64_t>& offline_ids,
-                              const DeletePageCallback& callback) override {
+                              DeletePageCallback callback) override {
     mock_deleting_ = true;
-    callback.Run(DeletePageResult::SUCCESS);
+    std::move(callback).Run(DeletePageResult::SUCCESS);
   }
 
   bool mock_saving() const { return mock_saving_; }
@@ -172,17 +179,17 @@ class BackgroundLoaderOfflinerTest : public testing::Test {
   void SetUp() override;
 
   TestBackgroundLoaderOffliner* offliner() const { return offliner_.get(); }
-  Offliner::CompletionCallback const completion_callback() {
-    return base::Bind(&BackgroundLoaderOfflinerTest::OnCompletion,
-                      base::Unretained(this));
+  Offliner::CompletionCallback completion_callback() {
+    return base::BindOnce(&BackgroundLoaderOfflinerTest::OnCompletion,
+                          base::Unretained(this));
   }
   Offliner::ProgressCallback const progress_callback() {
-    return base::Bind(&BackgroundLoaderOfflinerTest::OnProgress,
-                      base::Unretained(this));
+    return base::BindRepeating(&BackgroundLoaderOfflinerTest::OnProgress,
+                               base::Unretained(this));
   }
-  Offliner::CancelCallback const cancel_callback() {
-    return base::Bind(&BackgroundLoaderOfflinerTest::OnCancel,
-                      base::Unretained(this));
+  Offliner::CancelCallback cancel_callback() {
+    return base::BindOnce(&BackgroundLoaderOfflinerTest::OnCancel,
+                          base::Unretained(this));
   }
   base::Callback<void(bool)> const can_download_callback() {
     return base::Bind(&BackgroundLoaderOfflinerTest::OnCanDownload,
@@ -208,15 +215,12 @@ class BackgroundLoaderOfflinerTest : public testing::Test {
 
   void CompleteLoading() {
     // Reset snapshot controller.
-    std::unique_ptr<SnapshotController> snapshot_controller(
-        new SnapshotController(base::ThreadTaskRunnerHandle::Get(),
-                               offliner_.get(),
-                               0L /* DelayAfterDocumentAvailable */,
-                               0L /* DelayAfterDocumentOnLoad */,
-                               0L /* DelayAfterRenovationsCompleted */,
-                               false /* DocumentAvailableTriggersSnapshot */,
-                               false /* RenovationsEnabled */));
-    offliner_->SetSnapshotControllerForTest(std::move(snapshot_controller));
+    std::unique_ptr<BackgroundSnapshotController> snapshot_controller(
+        new BackgroundSnapshotController(base::ThreadTaskRunnerHandle::Get(),
+                                         offliner_.get(),
+                                         false /* RenovationsEnabled */));
+    offliner_->SetBackgroundSnapshotControllerForTest(
+        std::move(snapshot_controller));
     // Call complete loading.
     offliner()->DocumentOnLoadCompletedInMainFrame();
     PumpLoop();
@@ -264,8 +268,12 @@ BackgroundLoaderOfflinerTest::BackgroundLoaderOfflinerTest()
 BackgroundLoaderOfflinerTest::~BackgroundLoaderOfflinerTest() {}
 
 void BackgroundLoaderOfflinerTest::SetUp() {
+  // Set the snapshot controller delay command line switch to short delays.
+  base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+  cl->AppendSwitch(kShortSnapshotDelayForTest);
+
   std::unique_ptr<TestLoadTerminationListener> listener =
-      base::MakeUnique<TestLoadTerminationListener>();
+      std::make_unique<TestLoadTerminationListener>();
   load_termination_listener_ = listener.get();
   model_ = new MockOfflinePageModel();
   policy_.reset(new OfflinerPolicy());
@@ -600,7 +608,8 @@ TEST_F(BackgroundLoaderOfflinerTest, FailsOnErrorPage) {
   PumpLoop();
 
   EXPECT_TRUE(completion_callback_called());
-  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED, request_status());
+  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED_NET_ERROR,
+            request_status());
 }
 
 TEST_F(BackgroundLoaderOfflinerTest, FailsOnInternetDisconnected) {
@@ -624,7 +633,8 @@ TEST_F(BackgroundLoaderOfflinerTest, FailsOnInternetDisconnected) {
   PumpLoop();
 
   EXPECT_TRUE(completion_callback_called());
-  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED, request_status());
+  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED_NET_ERROR,
+            request_status());
 }
 
 TEST_F(BackgroundLoaderOfflinerTest, DoesNotCrashWithNullResponseHeaders) {

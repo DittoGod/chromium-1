@@ -13,6 +13,7 @@
 #include "base/i18n/time_formatting.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -26,7 +27,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/upload_list/upload_list.h"
 #include "components/version_info/version_info.h"
-#include "components/webrtc_logging/browser/log_list.h"
+#include "components/webrtc_logging/browser/text_log_list.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -76,7 +77,7 @@ content::WebUIDataSource* CreateWebRtcLogsUIHTMLSource() {
 ////////////////////////////////////////////////////////////////////////////////
 
 // The handler for Javascript messages for the chrome://webrtc-logs/ page.
-class WebRtcLogsDOMHandler : public WebUIMessageHandler {
+class WebRtcLogsDOMHandler final : public WebUIMessageHandler {
  public:
   explicit WebRtcLogsDOMHandler(Profile* profile);
   ~WebRtcLogsDOMHandler() override;
@@ -85,8 +86,6 @@ class WebRtcLogsDOMHandler : public WebUIMessageHandler {
   void RegisterMessages() override;
 
  private:
-  void OnUploadListAvailable();
-
   // Asynchronously fetches the list of upload WebRTC logs. Called from JS.
   void HandleRequestWebRtcLogs(const base::ListValue* args);
 
@@ -99,23 +98,18 @@ class WebRtcLogsDOMHandler : public WebUIMessageHandler {
   // The directory where the logs are stored.
   base::FilePath log_dir_;
 
-  // Set when |upload_list_| has finished populating the list of logs.
-  bool list_available_;
-
-  // Set when the webpage wants to update the list (on the webpage) but
-  // |upload_list_| hasn't finished populating the list of logs yet.
-  bool js_request_pending_;
+  // Factory for creating weak references to instances of this class.
+  base::WeakPtrFactory<WebRtcLogsDOMHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(WebRtcLogsDOMHandler);
 };
 
 WebRtcLogsDOMHandler::WebRtcLogsDOMHandler(Profile* profile)
     : log_dir_(
-          webrtc_logging::LogList::GetWebRtcLogDirectoryForBrowserContextPath(
-              profile->GetPath())),
-      list_available_(false),
-      js_request_pending_(false) {
-  upload_list_ = webrtc_logging::LogList::CreateWebRtcLogList(profile);
+          webrtc_logging::TextLogList::
+              GetWebRtcLogDirectoryForBrowserContextPath(profile->GetPath())),
+      weak_ptr_factory_(this) {
+  upload_list_ = webrtc_logging::TextLogList::CreateWebRtcLogList(profile);
 }
 
 WebRtcLogsDOMHandler::~WebRtcLogsDOMHandler() {
@@ -123,26 +117,19 @@ WebRtcLogsDOMHandler::~WebRtcLogsDOMHandler() {
 }
 
 void WebRtcLogsDOMHandler::RegisterMessages() {
-  upload_list_->Load(base::BindOnce(
-      &WebRtcLogsDOMHandler::OnUploadListAvailable, base::Unretained(this)));
+  upload_list_->Load(base::BindOnce(&WebRtcLogsDOMHandler::UpdateUI,
+                                    weak_ptr_factory_.GetWeakPtr()));
 
-  web_ui()->RegisterMessageCallback("requestWebRtcLogsList",
-      base::Bind(&WebRtcLogsDOMHandler::HandleRequestWebRtcLogs,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "requestWebRtcLogsList",
+      base::BindRepeating(&WebRtcLogsDOMHandler::HandleRequestWebRtcLogs,
+                          weak_ptr_factory_.GetWeakPtr()));
 }
 
 void WebRtcLogsDOMHandler::HandleRequestWebRtcLogs(
     const base::ListValue* args) {
-  if (list_available_)
-    UpdateUI();
-  else
-    js_request_pending_ = true;
-}
-
-void WebRtcLogsDOMHandler::OnUploadListAvailable() {
-  list_available_ = true;
-  if (js_request_pending_)
-    UpdateUI();
+  upload_list_->Load(base::BindOnce(&WebRtcLogsDOMHandler::UpdateUI,
+                                    weak_ptr_factory_.GetWeakPtr()));
 }
 
 void WebRtcLogsDOMHandler::UpdateUI() {
@@ -204,8 +191,8 @@ void WebRtcLogsDOMHandler::UpdateUI() {
 
   base::Value version(version_info::GetVersionNumber());
 
-  web_ui()->CallJavascriptFunctionUnsafe("updateWebRtcLogsList", upload_list,
-                                         version);
+  AllowJavascript();
+  CallJavascriptFunction("updateWebRtcLogsList", upload_list, version);
 }
 
 }  // namespace

@@ -8,8 +8,8 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -77,15 +77,15 @@ class OptimizationHintsComponentInstallerTest : public PlatformTest {
     ASSERT_TRUE(component_install_dir_.CreateUniqueTempDir());
 
     auto optimization_guide_service =
-        base::MakeUnique<TestOptimizationGuideService>(
+        std::make_unique<TestOptimizationGuideService>(
             base::ThreadTaskRunnerHandle::Get());
     optimization_guide_service_ = optimization_guide_service.get();
 
-    pref_service_ = base::MakeUnique<TestingPrefServiceSimple>();
+    pref_service_ = std::make_unique<TestingPrefServiceSimple>();
 
     TestingBrowserProcess::GetGlobal()->SetOptimizationGuideService(
         std::move(optimization_guide_service));
-    policy_ = base::MakeUnique<OptimizationHintsComponentInstallerPolicy>();
+    policy_ = std::make_unique<OptimizationHintsComponentInstallerPolicy>();
   }
 
   void TearDown() override {

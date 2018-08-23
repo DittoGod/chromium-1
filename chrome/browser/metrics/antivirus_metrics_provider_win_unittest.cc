@@ -7,11 +7,10 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_checker.h"
@@ -59,7 +58,7 @@ class AntiVirusMetricsProviderTest : public ::testing::TestWithParam<bool> {
   AntiVirusMetricsProviderTest()
       : got_results_(false),
         expect_unhashed_value_(GetParam()),
-        provider_(base::MakeUnique<AntiVirusMetricsProvider>()),
+        provider_(std::make_unique<AntiVirusMetricsProvider>()),
         weak_ptr_factory_(this) {}
 
   void GetMetricsCallback() {

@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -16,11 +17,6 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
-        {
-          "object": "LayoutBlockFlow DIV id='target'",
-          "rect": [0, 0, 1016, 128],
-          "reason": "style change"
-        },
         {
           "object": "LayoutBlockFlow DIV id='target'",
           "rect": [0, 0, 1016, 128],
@@ -40,12 +36,6 @@
         [-216, 0, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "style change"
     }
   ]
 }

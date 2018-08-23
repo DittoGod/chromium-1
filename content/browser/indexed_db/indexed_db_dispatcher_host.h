@@ -23,6 +23,7 @@
 #include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "mojo/public/cpp/bindings/strong_associated_binding_set.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace base {
 class SequencedTaskRunner;
@@ -49,7 +50,7 @@ class CONTENT_EXPORT IndexedDBDispatcherHost
       scoped_refptr<IndexedDBContextImpl> indexed_db_context,
       scoped_refptr<ChromeBlobStorageContext> blob_storage_context);
 
-  void AddBinding(::indexed_db::mojom::FactoryAssociatedRequest request);
+  void AddBinding(::indexed_db::mojom::FactoryRequest request);
 
   void AddDatabaseBinding(
       std::unique_ptr<::indexed_db::mojom::Database> database,
@@ -73,8 +74,7 @@ class CONTENT_EXPORT IndexedDBDispatcherHost
   // Called by UI thread. Used to kill outstanding bindings and weak pointers
   // in callbacks.
   void RenderProcessExited(RenderProcessHost* host,
-                           base::TerminationStatus status,
-                           int exit_code) override;
+                           const ChildProcessTerminationInfo& info) override;
 
  private:
   class IDBSequenceHelper;
@@ -118,7 +118,7 @@ class CONTENT_EXPORT IndexedDBDispatcherHost
   // Used to set file permissions for blob storage.
   const int ipc_process_id_;
 
-  mojo::AssociatedBindingSet<::indexed_db::mojom::Factory> bindings_;
+  mojo::BindingSet<::indexed_db::mojom::Factory> bindings_;
 
   mojo::StrongAssociatedBindingSet<::indexed_db::mojom::Database>
       database_bindings_;

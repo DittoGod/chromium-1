@@ -28,7 +28,8 @@ AwUrlCheckerDelegateImpl::AwUrlCheckerDelegateImpl(
       ui_manager_(std::move(ui_manager)),
       threat_types_(safe_browsing::CreateSBThreatTypeSet(
           {safe_browsing::SB_THREAT_TYPE_URL_MALWARE,
-           safe_browsing::SB_THREAT_TYPE_URL_PHISHING})),
+           safe_browsing::SB_THREAT_TYPE_URL_PHISHING,
+           safe_browsing::SB_THREAT_TYPE_URL_UNWANTED})),
       whitelist_manager_(whitelist_manager) {}
 
 AwUrlCheckerDelegateImpl::~AwUrlCheckerDelegateImpl() = default;
@@ -47,8 +48,8 @@ void AwUrlCheckerDelegateImpl::StartDisplayingBlockingPageHelper(
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&AwUrlCheckerDelegateImpl::StartApplicationResponse,
-                 ui_manager_, resource, std::move(request)));
+      base::BindOnce(&AwUrlCheckerDelegateImpl::StartApplicationResponse,
+                     ui_manager_, resource, std::move(request)));
 }
 
 bool AwUrlCheckerDelegateImpl::IsUrlWhitelisted(const GURL& url) {
@@ -77,6 +78,10 @@ bool AwUrlCheckerDelegateImpl::ShouldSkipRequestCheck(
   return client && !client->GetSafeBrowsingEnabled();
 }
 
+void AwUrlCheckerDelegateImpl::NotifySuspiciousSiteDetected(
+    const base::RepeatingCallback<content::WebContents*()>&
+        web_contents_getter) {}
+
 const safe_browsing::SBThreatTypeSet&
 AwUrlCheckerDelegateImpl::GetThreatTypes() {
   return threat_types_;
@@ -101,10 +106,12 @@ void AwUrlCheckerDelegateImpl::StartApplicationResponse(
       AwContentsClientBridge::FromWebContents(web_contents);
 
   if (client) {
-    base::Callback<void(SafeBrowsingAction, bool)> callback = base::Bind(
-        &AwUrlCheckerDelegateImpl::DoApplicationResponse, ui_manager, resource);
+    base::OnceCallback<void(SafeBrowsingAction, bool)> callback =
+        base::BindOnce(&AwUrlCheckerDelegateImpl::DoApplicationResponse,
+                       ui_manager, resource);
 
-    client->OnSafeBrowsingHit(request, resource.threat_type, callback);
+    client->OnSafeBrowsingHit(request, resource.threat_type,
+                              std::move(callback));
   }
 }
 
@@ -123,7 +130,7 @@ void AwUrlCheckerDelegateImpl::DoApplicationResponse(
     case SafeBrowsingAction::SHOW_INTERSTITIAL:
       content::BrowserThread::PostTask(
           content::BrowserThread::UI, FROM_HERE,
-          base::Bind(
+          base::BindOnce(
               &AwUrlCheckerDelegateImpl::StartDisplayingDefaultBlockingPage,
               ui_manager, resource));
       return;
@@ -169,7 +176,7 @@ void AwUrlCheckerDelegateImpl::StartDisplayingDefaultBlockingPage(
 
   // Reporting back that it is not okay to proceed with loading the URL.
   content::BrowserThread::PostTask(content::BrowserThread::IO, FROM_HERE,
-                                   base::Bind(resource.callback, false));
+                                   base::BindOnce(resource.callback, false));
 }
 
 }  // namespace android_webview

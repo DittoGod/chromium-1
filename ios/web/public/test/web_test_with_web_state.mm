@@ -4,12 +4,13 @@
 
 #import "ios/web/public/test/web_test_with_web_state.h"
 
+#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "base/scoped_observer.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#import "ios/testing/wait_util.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
+#import "ios/web/navigation/wk_navigation_util.h"
 #import "ios/web/public/web_client.h"
 #include "ios/web/public/web_state/url_verification_constants.h"
 #include "ios/web/public/web_state/web_state_observer.h"
@@ -20,8 +21,9 @@
 #error "This file requires ARC support."
 #endif
 
-using testing::WaitUntilConditionOrTimeout;
-using testing::kWaitForJSCompletionTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForJSCompletionTimeout;
+using base::test::ios::kWaitForPageLoadTimeout;
 
 namespace {
 // Returns CRWWebController for the given |web_state|.
@@ -61,7 +63,7 @@ void WebTestWithWebState::AddPendingItem(const GURL& url,
   GetWebController(web_state())
       .webStateImpl->GetNavigationManagerImpl()
       .AddPendingItem(url, Referrer(), transition,
-                      web::NavigationInitiationType::USER_INITIATED,
+                      web::NavigationInitiationType::BROWSER_INITIATED,
                       web::NavigationManager::UserAgentOverrideOption::INHERIT);
 }
 
@@ -102,15 +104,15 @@ void WebTestWithWebState::LoadHtml(NSString* html, const GURL& url) {
   CRWWebController* web_controller = GetWebController(web_state());
   ASSERT_EQ(PAGE_LOADED, web_controller.loadPhase);
 
-  // If the underlying WKWebView is empty, first load a placeholder about:blank
-  // to create a WKBackForwardListItem to store the NavigationItem associated
-  // with the |-loadHTML|.
+  // If the underlying WKWebView is empty, first load a placeholder to create a
+  // WKBackForwardListItem to store the NavigationItem associated with the
+  // |-loadHTML|.
   // TODO(crbug.com/777884): consider changing |-loadHTML| to match WKWebView's
   // |-loadHTMLString:baseURL| that doesn't create a navigation entry.
   if (web::GetWebClient()->IsSlimNavigationManagerEnabled() &&
       !web_state()->GetNavigationManager()->GetItemCount()) {
-    GURL url(url::kAboutBlankURL);
-    NavigationManager::WebLoadParams params(url);
+    GURL placeholder_url = wk_navigation_util::CreatePlaceholderUrlForUrl(url);
+    NavigationManager::WebLoadParams params(placeholder_url);
     web_state()->GetNavigationManager()->LoadURLWithParams(params);
     base::test::ios::WaitUntilCondition(^{
       return web_controller.loadPhase == PAGE_LOADED;
@@ -125,10 +127,11 @@ void WebTestWithWebState::LoadHtml(NSString* html, const GURL& url) {
     return web_controller.loadPhase == PAGE_LOADED;
   });
 
-  // Reload the page if script execution is not possible.
-  if (![ExecuteJavaScript(@"0;") isEqual:@0]) {
-    LoadHtml(html, url);
-  }
+  // Wait until the script execution is possible. Script execution will fail if
+  // WKUserScript was not jet injected by WKWebView.
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^bool {
+    return [ExecuteJavaScript(@"0;") isEqual:@0];
+  }));
 }
 
 void WebTestWithWebState::LoadHtml(NSString* html) {
@@ -146,7 +149,7 @@ void WebTestWithWebState::WaitForBackgroundTasks() {
   // Because tasks can add new tasks to either queue, the loop continues until
   // the first pass where no activity is seen from either queue.
   bool activitySeen = false;
-  base::MessageLoop* messageLoop = base::MessageLoop::current();
+  base::MessageLoopCurrent messageLoop = base::MessageLoopCurrent::Get();
   messageLoop->AddTaskObserver(this);
   do {
     activitySeen = false;
@@ -169,7 +172,7 @@ void WebTestWithWebState::WaitForBackgroundTasks() {
 
 void WebTestWithWebState::WaitForCondition(ConditionBlock condition) {
   base::test::ios::WaitUntilCondition(condition, true,
-                                      base::TimeDelta::FromSeconds(10));
+                                      base::TimeDelta::FromSeconds(1000));
 }
 
 id WebTestWithWebState::ExecuteJavaScript(NSString* script) {

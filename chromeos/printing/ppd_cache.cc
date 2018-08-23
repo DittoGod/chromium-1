@@ -15,8 +15,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
@@ -148,8 +148,8 @@ class PpdCacheImpl : public PpdCache {
   // be invoked on completion.
   void Store(const std::string& key, const std::string& contents) override {
     store_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&StoreImpl, cache_base_dir_, key, contents,
-                              base::TimeDelta()));
+        FROM_HERE, base::BindOnce(&StoreImpl, cache_base_dir_, key, contents,
+                                  base::TimeDelta()));
   }
 
   void StoreForTesting(const std::string& key,
@@ -180,7 +180,7 @@ scoped_refptr<PpdCache> PpdCache::Create(const base::FilePath& cache_base_dir) {
                            {base::TaskPriority::USER_VISIBLE, base::MayBlock(),
                             base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}),
                        base::CreateSequencedTaskRunnerWithTraits(
-                           {base::TaskPriority::BACKGROUND, base::MayBlock(),
+                           {base::TaskPriority::BEST_EFFORT, base::MayBlock(),
                             base::TaskShutdownBehavior::BLOCK_SHUTDOWN})));
 }
 

@@ -65,8 +65,8 @@ void AutomationEventRouter::RegisterListenerWithDesktopPermission(
            true);
 }
 
-void AutomationEventRouter::DispatchAccessibilityEvent(
-    const ExtensionMsg_AccessibilityEventParams& params) {
+void AutomationEventRouter::DispatchAccessibilityEvents(
+    const ExtensionMsg_AccessibilityEventBundleParams& event_bundle) {
   if (active_profile_ != ProfileManager::GetActiveUserProfile()) {
     active_profile_ = ProfileManager::GetActiveUserProfile();
     UpdateActiveProfile();
@@ -74,15 +74,15 @@ void AutomationEventRouter::DispatchAccessibilityEvent(
 
   for (const auto& listener : listeners_) {
     // Skip listeners that don't want to listen to this tree.
-    if (!listener.desktop &&
-        listener.tree_ids.find(params.tree_id) == listener.tree_ids.end()) {
+    if (!listener.desktop && listener.tree_ids.find(event_bundle.tree_id) ==
+                                 listener.tree_ids.end()) {
       continue;
     }
 
     content::RenderProcessHost* rph =
         content::RenderProcessHost::FromID(listener.process_id);
-    rph->Send(new ExtensionMsg_AccessibilityEvent(params,
-                                                  listener.is_active_profile));
+    rph->Send(new ExtensionMsg_AccessibilityEventBundle(
+        event_bundle, listener.is_active_profile));
   }
 }
 
@@ -115,6 +115,9 @@ void AutomationEventRouter::DispatchTreeDestroyedEvent(
       api::automation_internal::OnAccessibilityTreeDestroyed::kEventName,
       std::move(args), browser_context);
   EventRouter::Get(browser_context)->BroadcastEvent(std::move(event));
+
+  if (tree_destroyed_callback_for_test_)
+    tree_destroyed_callback_for_test_.Run(tree_id);
 }
 
 void AutomationEventRouter::DispatchActionResult(const ui::AXActionData& data,
@@ -133,6 +136,11 @@ void AutomationEventRouter::DispatchActionResult(const ui::AXActionData& data,
       active_profile_);
   EventRouter::Get(active_profile_)
       ->DispatchEventToExtension(data.source_extension_id, std::move(event));
+}
+
+void AutomationEventRouter::SetTreeDestroyedCallbackForTest(
+    base::RepeatingCallback<void(int)> cb) {
+  tree_destroyed_callback_for_test_ = cb;
 }
 
 AutomationEventRouter::AutomationListener::AutomationListener() {

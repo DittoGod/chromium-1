@@ -76,7 +76,7 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/favicon/core/favicon_driver_observer.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/omnibox/browser/omnibox_view.h"
@@ -88,6 +88,7 @@
 #include "components/variations/entropy_provider.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_controller.h"
@@ -427,21 +428,27 @@ class NavigationOrSwapObserver : public WebContentsObserver,
   }
 
   // TabStripModelObserver implementation:
-  void TabReplacedAt(TabStripModel* tab_strip_model,
-                     WebContents* old_contents,
-                     WebContents* new_contents,
-                     int index) override {
-    if (old_contents != web_contents())
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override {
+    if (change.type() != TabStripModelChange::kReplaced)
       return;
-    // Switch to observing the new WebContents.
-    Observe(new_contents);
-    if (new_contents->IsLoading()) {
-      // If the new WebContents is still loading, wait for it to complete. Only
-      // one load post-swap is supported.
-      did_start_loading_ = true;
-      number_of_loads_ = 1;
-    } else {
-      loop_.Quit();
+
+    for (const auto& delta : change.deltas()) {
+      if (delta.replace.old_contents != web_contents())
+        continue;
+
+      // Switch to observing the new WebContents.
+      Observe(delta.replace.new_contents);
+      if (delta.replace.new_contents->IsLoading()) {
+        // If the new WebContents is still loading, wait for it to complete.
+        // Only one load post-swap is supported.
+        did_start_loading_ = true;
+        number_of_loads_ = 1;
+      } else {
+        loop_.Quit();
+      }
     }
   }
 
@@ -529,17 +536,6 @@ page_load_metrics::PageLoadExtraInfo GenericPageLoadExtraInfo(
       dest_url, false /* started_in_foreground */);
 }
 
-// Helper function, to allow passing a UI closure to
-// CreateHangingFirstRequestInterceptor() instead of a IO callback.
-base::Callback<void(net::URLRequest*)> GetIOCallbackFromUIClosure(
-    base::Closure ui_closure) {
-  auto lambda = [](base::Closure closure, net::URLRequest*) {
-    content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                     closure);
-  };
-  return base::Bind(lambda, ui_closure);
-}
-
 }  // namespace
 
 class PrerenderBrowserTest : public test_utils::PrerenderInProcessBrowserTest {
@@ -592,8 +588,6 @@ class PrerenderBrowserTest : public test_utils::PrerenderInProcessBrowserTest {
   void SetUpOnMainThread() override {
     test_utils::PrerenderInProcessBrowserTest::SetUpOnMainThread();
     prerender::PrerenderManager::SetMode(
-        prerender::PrerenderManager::PRERENDER_MODE_ENABLED);
-    prerender::PrerenderManager::SetOmniboxMode(
         prerender::PrerenderManager::PRERENDER_MODE_ENABLED);
     const testing::TestInfo* const test_info =
         testing::UnitTest::GetInstance()->current_test_info();
@@ -714,24 +708,6 @@ class PrerenderBrowserTest : public test_utils::PrerenderInProcessBrowserTest {
         "window.domAutomationController.send(IsOriginalPrerenderPage())",
         &original_prerender_page));
     EXPECT_TRUE(original_prerender_page);
-  }
-
-  // Goes back to the page that was active before the prerender was swapped
-  // in. This must be called when the prerendered page is the current page
-  // in the active tab.
-  void GoBackToPageBeforePrerender() {
-    WebContents* tab = GetActiveWebContents();
-    ASSERT_TRUE(tab);
-    EXPECT_FALSE(tab->IsLoading());
-    TestNavigationObserver back_nav_observer(tab);
-    chrome::GoBack(current_browser(), WindowOpenDisposition::CURRENT_TAB);
-    back_nav_observer.Wait();
-    bool js_result;
-    ASSERT_TRUE(content::ExecuteScriptAndExtractBool(
-        tab,
-        "window.domAutomationController.send(DidBackToOriginalPagePass())",
-        &js_result));
-    EXPECT_TRUE(js_result);
   }
 
   void DisableJavascriptCalls() {
@@ -893,12 +869,10 @@ class PrerenderBrowserTest : public test_utils::PrerenderInProcessBrowserTest {
   }
 
   base::SimpleTestTickClock* OverridePrerenderManagerTimeTicks() {
-    auto clock = base::MakeUnique<base::SimpleTestTickClock>();
-    auto* clock_ptr = clock.get();
     // The default zero time causes the prerender manager to do strange things.
-    clock->Advance(base::TimeDelta::FromSeconds(1));
-    GetPrerenderManager()->SetTickClockForTesting(std::move(clock));
-    return clock_ptr;
+    clock_.Advance(base::TimeDelta::FromSeconds(1));
+    GetPrerenderManager()->SetTickClockForTesting(&clock_);
+    return &clock_;
   }
 
   void SetMidLoadClockAdvance(base::SimpleTestTickClock* clock,
@@ -918,31 +892,23 @@ class PrerenderBrowserTest : public test_utils::PrerenderInProcessBrowserTest {
   void CreateHangingFirstRequestInterceptor(const GURL& url,
                                             const base::FilePath& file,
                                             base::Closure closure) {
-    // TODO(jam): use the URLLoaderInterceptor for the non-network service path
-    // once http://crbug.com/740130 is fixed.
-    if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-      DCHECK(!interceptor_);
-      interceptor_ = std::make_unique<content::URLLoaderInterceptor>(
-          base::BindLambdaForTesting(
-              [=](content::URLLoaderInterceptor::RequestParams* params) {
-                if (params->url_request.url == url) {
-                  static bool first = true;
-                  if (first) {
-                    first = false;
-                    // Need to leak the client pipe, or else the renderer will
-                    // get a disconnect error and load the error page.
-                    auto* leak_client = new network::mojom::URLLoaderClientPtr;
-                    *leak_client = std::move(params->client);
-                    closure.Run();
-                    return true;
-                  }
+    DCHECK(!interceptor_);
+    interceptor_ = std::make_unique<content::URLLoaderInterceptor>(
+        base::BindLambdaForTesting(
+            [=](content::URLLoaderInterceptor::RequestParams* params) {
+              if (params->url_request.url == url) {
+                static bool first = true;
+                if (first) {
+                  first = false;
+                  // Need to leak the client pipe, or else the renderer will
+                  // get a disconnect error and load the error page.
+                  (void)params->client.PassInterface().PassHandle().release();
+                  closure.Run();
+                  return true;
                 }
-                return false;
-              }));
-    } else {
-      test_utils::CreateHangingFirstRequestInterceptor(
-          url, file, GetIOCallbackFromUIClosure(closure));
-    }
+              }
+              return false;
+            }));
   }
 
  private:
@@ -1058,6 +1024,9 @@ class PrerenderBrowserTest : public test_utils::PrerenderInProcessBrowserTest {
       observer.Wait();
     }
   }
+
+  // Test TickClock that is set by OverridePrerenderManagerTimeTicks().
+  base::SimpleTestTickClock clock_;
 
   GURL dest_url_;
   bool call_javascript_;
@@ -1467,8 +1436,9 @@ IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, PrerenderNaClPluginDisabled) {
 // http://crbug.com/100514
 #define MAYBE_PrerenderIframeDelayLoadPlugin \
         DISABLED_PrerenderIframeDelayLoadPlugin
-#elif defined(OS_WIN) && defined(ARCH_CPU_X86_64)
-// TODO(jschuh): Failing plugin tests. crbug.com/244653
+#elif defined(OS_WIN)
+// TODO(jschuh): Failing plugin tests. https://crbug.com/244653,
+// https://crbug.com/876872
 #define MAYBE_PrerenderIframeDelayLoadPlugin \
         DISABLED_PrerenderIframeDelayLoadPlugin
 #else
@@ -2447,7 +2417,13 @@ IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, PrerenderUnload) {
 // Checks that a beforeunload handler is executed on the referring page when a
 // prerendered page is swapped in. Also checks that the WebContents of the
 // referring page is destroyed.
-IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, PrerenderBeforeUnload) {
+// Disabled on Windows. See https://crbug.com/875404.
+#if defined(OS_WIN)
+#define MAYBE_PrerenderBeforeUnload DISABLED_PrerenderBeforeUnload
+#else
+#define MAYBE_PrerenderBeforeUnload PrerenderBeforeUnload
+#endif
+IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, MAYBE_PrerenderBeforeUnload) {
   set_loader_path("/prerender/prerender_loader_with_beforeunload.html");
   PrerenderTestURL("/prerender/prerender_page.html", FINAL_STATUS_USED, 1);
   WebContentsDestructionObserver destruction_observer(GetActiveWebContents());
@@ -2596,16 +2572,6 @@ IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest,
   agent->DetachClient(&client);
 }
 
-// Validate that the sessionStorage namespace remains the same when swapping
-// in a prerendered page.
-IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, PrerenderSessionStorage) {
-  set_loader_path("/prerender/prerender_loader_with_session_storage.html");
-  PrerenderTestURL(GetCrossDomainTestUrl("prerender/prerender_page.html"),
-                   FINAL_STATUS_USED, 1);
-  NavigateToDestURL();
-  GoBackToPageBeforePrerender();
-}
-
 // Checks that the referrer policy is used when prerendering.
 IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, PrerenderReferrerPolicy) {
   set_loader_path("/prerender/prerender_loader_with_referrer_policy.html");
@@ -2650,7 +2616,7 @@ IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, PrerenderCancelReferrerPolicy) {
 
 // Test interaction of the webNavigation and tabs API with prerender.
 class PrerenderBrowserTestWithExtensions : public PrerenderBrowserTest,
-                                           public ExtensionApiTest {
+                                           public extensions::ExtensionApiTest {
  public:
   PrerenderBrowserTestWithExtensions() {
     // The individual tests start the test server through ExtensionApiTest, so
@@ -2661,27 +2627,27 @@ class PrerenderBrowserTestWithExtensions : public PrerenderBrowserTest,
   void SetUp() override { PrerenderBrowserTest::SetUp(); }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionApiTest::SetUpCommandLine(command_line);
+    extensions::ExtensionApiTest::SetUpCommandLine(command_line);
   }
 
   void SetUpInProcessBrowserTestFixture() override {
     PrerenderBrowserTest::SetUpInProcessBrowserTestFixture();
-    ExtensionApiTest::SetUpInProcessBrowserTestFixture();
+    extensions::ExtensionApiTest::SetUpInProcessBrowserTestFixture();
   }
 
   void TearDownInProcessBrowserTestFixture() override {
     PrerenderBrowserTest::TearDownInProcessBrowserTestFixture();
-    ExtensionApiTest::TearDownInProcessBrowserTestFixture();
+    extensions::ExtensionApiTest::TearDownInProcessBrowserTestFixture();
   }
 
   void TearDownOnMainThread() override {
     PrerenderBrowserTest::TearDownOnMainThread();
-    ExtensionApiTest::TearDownOnMainThread();
+    extensions::ExtensionApiTest::TearDownOnMainThread();
   }
 
   void SetUpOnMainThread() override {
     PrerenderBrowserTest::SetUpOnMainThread();
-    ExtensionApiTest::SetUpOnMainThread();
+    extensions::ExtensionApiTest::SetUpOnMainThread();
   }
 };
 
@@ -2736,6 +2702,9 @@ IN_PROC_BROWSER_TEST_F(PrerenderBrowserTestWithExtensions, TabsApi) {
 // Test that prerenders abort when navigating to a stream.
 // See chrome/browser/extensions/api/streams_private/streams_private_apitest.cc
 IN_PROC_BROWSER_TEST_F(PrerenderBrowserTestWithExtensions, StreamsTest) {
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService))
+    return;  // Streams not used with network service.
+
   ASSERT_TRUE(StartEmbeddedTestServer());
 
   const extensions::Extension* extension = LoadExtension(
@@ -3210,7 +3179,10 @@ class HangingURLLoader : public network::mojom::URLLoader {
       : client_(std::move(client)) {}
   ~HangingURLLoader() override {}
   // mojom::URLLoader implementation:
-  void FollowRedirect() override {}
+  void FollowRedirect(const base::Optional<std::vector<std::string>>&
+                          to_be_removed_request_headers,
+                      const base::Optional<net::HttpRequestHeaders>&
+                          modified_request_headers) override {}
   void ProceedWithResponse() override {}
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {
@@ -3289,7 +3261,9 @@ IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, ResourcePriorityOverlappingSwap) {
   EXPECT_GT(priority, net::IDLE);
 }
 
-IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, FirstContentfulPaintTimingSimple) {
+// Flaky on chromium.linux/Linux Tests (dbg). https://crbug.com/832597
+IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest,
+                       DISABLED_FirstContentfulPaintTimingSimple) {
   GetPrerenderManager()->DisablePageLoadMetricsObserverForTesting();
   base::SimpleTestTickClock* clock = OverridePrerenderManagerTimeTicks();
   PrerenderTestURL("/prerender/prerender_page.html", FINAL_STATUS_USED, 1);
@@ -3505,6 +3479,7 @@ IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest,
 IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, FirstContentfulPaintHidden) {
   GetPrerenderManager()->DisablePageLoadMetricsObserverForTesting();
   base::SimpleTestTickClock* clock = OverridePrerenderManagerTimeTicks();
+
   base::TimeTicks load_start = clock->NowTicks();
   PrerenderTestURL("/prerender/prerender_page.html", FINAL_STATUS_USED, 1);
 
@@ -3534,8 +3509,9 @@ IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest, FirstContentfulPaintHidden) {
       "Prerender.websame_PrefetchTTFCP.Warm.Cacheable.Hidden", 1654, 1);
 }
 
+// Flaky on chromium.linux/Linux Tests (dbg). https://crbug.com/832597
 IN_PROC_BROWSER_TEST_F(PrerenderBrowserTest,
-                       FirstContentfulPaintHiddenNoCommit) {
+                       DISABLED_FirstContentfulPaintHiddenNoCommit) {
   GetPrerenderManager()->DisablePageLoadMetricsObserverForTesting();
   base::SimpleTestTickClock* clock = OverridePrerenderManagerTimeTicks();
 

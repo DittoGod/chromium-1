@@ -4,7 +4,7 @@
 
 #include "printing/print_job_constants.h"
 
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 
 namespace printing {
 
@@ -50,6 +50,9 @@ const char kSettingDeviceName[] = "deviceName";
 // Option to disable scaling. True if scaling is disabled else false.
 const char kSettingDisableScaling[] = "disableScaling";
 
+// Default DPI
+const char kSettingDpiDefault[] = "dpiDefault";
+
 // Horizontal DPI
 const char kSettingDpiHorizontal[] = "dpiHorizontal";
 
@@ -65,9 +68,6 @@ const char kSettingDuplexMode[] = "duplex";
 // Option to fit source page contents to printer paper size: true if
 // selected else false.
 const char kSettingFitToPageEnabled[] = "fitToPageEnabled";
-
-// True, when a new set of draft preview data is required.
-const char kSettingGenerateDraftData[] = "generateDraftData";
 
 // Option to print headers and Footers: true if selected, false if not.
 const char kSettingHeaderFooterEnabled[] = "headerFooterEnabled";
@@ -172,6 +172,9 @@ const char kSettingPrintWithExtension[] = "printWithExtension";
 // Scaling factor
 const char kSettingScaleFactor[] = "scaleFactor";
 
+// Number of pages per sheet.
+const char kSettingPagesPerSheet[] = "pagesPerSheet";
+
 // Whether to rasterize the PDF for printing.
 const char kSettingRasterizePdf[] = "rasterizePDF";
 
@@ -184,10 +187,8 @@ const char kSettingShouldPrintBackgrounds[] = "shouldPrintBackgrounds";
 // Whether to print selection only.
 const char kSettingShouldPrintSelectionOnly[] = "shouldPrintSelectionOnly";
 
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
 // Whether to print using the system dialog.
 const char kSettingShowSystemDialog[] = "showSystemDialog";
-#endif
 
 // Indices used to represent first preview page and complete preview document.
 const int FIRST_PAGE_INDEX = 0;

@@ -24,29 +24,31 @@ namespace content {
 
 namespace {
 
-void FillCacheInfo(const AppCache* cache,
-                   const GURL& manifest_url,
-                   AppCacheStatus status, AppCacheInfo* info) {
-  info->manifest_url = manifest_url;
-  info->status = status;
+AppCacheInfo CreateCacheInfo(const AppCache* cache,
+                             const GURL& manifest_url,
+                             AppCacheStatus status) {
+  AppCacheInfo info;
+  info.manifest_url = manifest_url;
+  info.status = status;
 
   if (!cache)
-    return;
+    return info;
 
-  info->cache_id = cache->cache_id();
+  info.cache_id = cache->cache_id();
 
   if (!cache->is_complete())
-    return;
+    return info;
 
   DCHECK(cache->owning_group());
-  info->is_complete = true;
-  info->group_id = cache->owning_group()->group_id();
-  info->last_update_time = cache->update_time();
-  info->creation_time = cache->owning_group()->creation_time();
-  info->size = cache->cache_size();
+  info.is_complete = true;
+  info.group_id = cache->owning_group()->group_id();
+  info.last_update_time = cache->update_time();
+  info.creation_time = cache->owning_group()->creation_time();
+  info.size = cache->cache_size();
+  return info;
 }
 
-}  // Anonymous namespace
+}  // namespace
 
 AppCacheHost::AppCacheHost(int host_id,
                            AppCacheFrontend* frontend,
@@ -79,7 +81,7 @@ AppCacheHost::~AppCacheHost() {
   if (group_being_updated_.get())
     group_being_updated_->RemoveUpdateObserver(this);
   storage()->CancelDelegateCallbacks(this);
-  if (service()->quota_manager_proxy() && !origin_in_use_.is_empty())
+  if (service()->quota_manager_proxy() && !origin_in_use_.unique())
     service()->quota_manager_proxy()->NotifyOriginNoLongerInUse(origin_in_use_);
 }
 
@@ -108,8 +110,8 @@ bool AppCacheHost::SelectCache(const GURL& document_url,
     return true;
   }
 
-  origin_in_use_ = document_url.GetOrigin();
-  if (service()->quota_manager_proxy() && !origin_in_use_.is_empty())
+  origin_in_use_ = url::Origin::Create(document_url);
+  if (service()->quota_manager_proxy() && !origin_in_use_.unique())
     service()->quota_manager_proxy()->NotifyOriginInUse(origin_in_use_);
 
   if (main_resource_blocked_)
@@ -463,9 +465,8 @@ void AppCacheHost::OnUpdateComplete(AppCacheGroup* group) {
 
   if (associated_cache_info_pending_ && associated_cache_.get() &&
       associated_cache_->is_complete()) {
-    AppCacheInfo info;
-    FillCacheInfo(
-        associated_cache_.get(), preferred_manifest_url_, GetStatus(), &info);
+    AppCacheInfo info = CreateCacheInfo(associated_cache_.get(),
+                                        preferred_manifest_url_, GetStatus());
     associated_cache_info_pending_ = false;
     // In the network service world, we need to pass the URLLoaderFactory
     // instance to the renderer which it can use to request subresources.
@@ -509,20 +510,6 @@ void AppCacheHost::NotifyMainResourceBlocked(const GURL& manifest_url) {
   blocked_manifest_url_ = manifest_url;
 }
 
-void AppCacheHost::PrepareForTransfer() {
-  // This can only happen prior to the document having been loaded.
-  DCHECK(!associated_cache());
-  DCHECK(!is_selection_pending());
-  DCHECK(!group_being_updated_.get());
-  host_id_ = kAppCacheNoHostId;
-  frontend_ = nullptr;
-}
-
-void AppCacheHost::CompleteTransfer(int host_id, AppCacheFrontend* frontend) {
-  host_id_ = host_id;
-  frontend_ = frontend;
-}
-
 base::WeakPtr<AppCacheHost> AppCacheHost::GetWeakPtr() {
   return weak_factory_.GetWeakPtr();
 }
@@ -539,7 +526,8 @@ void AppCacheHost::MaybePassSubresourceFactory() {
   network::mojom::URLLoaderFactoryPtr factory_ptr = nullptr;
 
   AppCacheSubresourceURLFactory::CreateURLLoaderFactory(
-      service()->url_loader_factory_getter(), GetWeakPtr(), &factory_ptr);
+      service()->url_loader_factory_getter()->GetNetworkFactory(), GetWeakPtr(),
+      &factory_ptr);
 
   frontend_->OnSetSubresourceFactory(host_id(), std::move(factory_ptr));
 }
@@ -575,11 +563,10 @@ void AppCacheHost::AssociateCacheHelper(AppCache* cache,
   associated_cache_ = cache;
   SetSwappableCache(cache ? cache->owning_group() : nullptr);
   associated_cache_info_pending_ = cache && !cache->is_complete();
-  AppCacheInfo info;
   if (cache)
     cache->AssociateHost(this);
 
-  FillCacheInfo(cache, manifest_url, GetStatus(), &info);
+  AppCacheInfo info = CreateCacheInfo(cache, manifest_url, GetStatus());
   // In the network service world, we need to pass the URLLoaderFactory
   // instance to the renderer which it can use to request subresources.
   // This ensures that they can be served out of the AppCache.

@@ -6,14 +6,13 @@
 
 #include <utility>
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "components/update_client/component.h"
 #include "components/update_client/configurator.h"
 #include "components/update_client/task_traits.h"
@@ -56,6 +55,11 @@ base::CommandLine ActionRunner::MakeCommandLine(
     command_line.AppendSwitch("system");
   command_line.AppendSwitchASCII(
       "browser-version", component_.config()->GetBrowserVersion().GetString());
+  command_line.AppendSwitchASCII("sessionid", component_.session_id());
+  const auto app_guid = component_.config()->GetAppGuid();
+  if (!app_guid.empty())
+    command_line.AppendSwitchASCII("appguid", app_guid);
+  VLOG(1) << "run action: " << command_line.GetCommandLineString();
   return command_line;
 }
 

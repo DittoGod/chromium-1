@@ -9,8 +9,8 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "components/image_fetcher/core/image_fetcher.h"
 #include "components/suggestions/image_encoder.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -30,15 +30,6 @@ std::unique_ptr<SkBitmap> DecodeImage(
     scoped_refptr<base::RefCountedMemory> encoded_data) {
   return suggestions::DecodeJPEGToSkBitmap(encoded_data->front(),
                                            encoded_data->size());
-}
-
-// Wraps an ImageManager callback so that it can be used with the ImageFetcher.
-void WrapCallback(
-    const suggestions::ImageManager::ImageCallback& wrapped_callback,
-    const std::string& url,
-    const gfx::Image& image,
-    const image_fetcher::RequestMetadata& metadata) {
-  wrapped_callback.Run(GURL(url), image);
 }
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
@@ -90,11 +81,10 @@ ImageManager::ImageManager(
           {base::TaskPriority::USER_VISIBLE})),
       database_ready_(false),
       weak_ptr_factory_(this) {
-  image_fetcher_->SetImageFetcherDelegate(this);
   database_->Init(kDatabaseUMAClientName, database_dir,
                   leveldb_proto::CreateSimpleOptions(),
-                  base::Bind(&ImageManager::OnDatabaseInit,
-                             weak_ptr_factory_.GetWeakPtr()));
+                  base::BindOnce(&ImageManager::OnDatabaseInit,
+                                 weak_ptr_factory_.GetWeakPtr()));
 }
 
 ImageManager::~ImageManager() {}
@@ -142,17 +132,23 @@ void ImageManager::GetImageForURL(const GURL& url, ImageCallback callback) {
   ServeFromCacheOrNetwork(url, image_url, callback);
 }
 
-void ImageManager::OnImageFetched(const std::string& url,
-                                  const gfx::Image& image) {
+void ImageManager::SaveImageAndForward(
+    const ImageCallback& image_callback,
+    const std::string& url,
+    const gfx::Image& image,
+    const image_fetcher::RequestMetadata& metadata) {
   // |image| can be empty if image fetch was unsuccessful.
   if (!image.IsEmpty())
     SaveImage(url, *image.ToSkBitmap());
+
+  image_callback.Run(GURL(url), image);
 }
 
 bool ImageManager::GetImageURL(const GURL& url, GURL* image_url) {
   DCHECK(image_url);
   std::map<GURL, GURL>::iterator it = image_url_map_.find(url);
-  if (it == image_url_map_.end()) return false;  // Not found.
+  if (it == image_url_map_.end())
+    return false;  // Not found.
   *image_url = it->second;
   return true;
 }
@@ -175,16 +171,17 @@ void ImageManager::QueueCacheRequest(const GURL& url,
   pending_cache_requests_[url] = request;
 }
 
-void ImageManager::OnCacheImageDecoded(
-    const GURL& url,
-    const GURL& image_url,
-    const ImageCallback& callback,
-    std::unique_ptr<SkBitmap> bitmap) {
-  if (bitmap.get()) {
+void ImageManager::OnCacheImageDecoded(const GURL& url,
+                                       const GURL& image_url,
+                                       const ImageCallback& callback,
+                                       std::unique_ptr<SkBitmap> bitmap) {
+  if (bitmap) {
     callback.Run(url, gfx::Image::CreateFrom1xBitmap(*bitmap));
   } else {
-    image_fetcher_->StartOrQueueNetworkRequest(
-        url.spec(), image_url, base::Bind(&WrapCallback, callback),
+    image_fetcher_->FetchImage(
+        url.spec(), image_url,
+        base::BindRepeating(&ImageManager::SaveImageAndForward,
+                            base::Unretained(this), callback),
         kTrafficAnnotation);
   }
 }
@@ -198,21 +195,22 @@ scoped_refptr<base::RefCountedMemory> ImageManager::GetEncodedImageFromCache(
   return nullptr;
 }
 
-void ImageManager::ServeFromCacheOrNetwork(
-    const GURL& url,
-    const GURL& image_url,
-    ImageCallback callback) {
+void ImageManager::ServeFromCacheOrNetwork(const GURL& url,
+                                           const GURL& image_url,
+                                           ImageCallback callback) {
   scoped_refptr<base::RefCountedMemory> encoded_data =
       GetEncodedImageFromCache(url);
-  if (encoded_data.get()) {
+  if (encoded_data) {
     base::PostTaskAndReplyWithResult(
         background_task_runner_.get(), FROM_HERE,
         base::Bind(&DecodeImage, encoded_data),
         base::Bind(&ImageManager::OnCacheImageDecoded,
                    weak_ptr_factory_.GetWeakPtr(), url, image_url, callback));
   } else {
-    image_fetcher_->StartOrQueueNetworkRequest(
-        url.spec(), image_url, base::Bind(&WrapCallback, callback),
+    image_fetcher_->FetchImage(
+        url.spec(), image_url,
+        base::BindRepeating(&ImageManager::SaveImageAndForward,
+                            base::Unretained(this), callback),
         kTrafficAnnotation);
   }
 }
@@ -229,7 +227,8 @@ void ImageManager::SaveImage(const std::string& url, const SkBitmap& bitmap) {
   // Update the image map.
   image_map_.insert({url, encoded_data});
 
-  if (!database_ready_) return;
+  if (!database_ready_)
+    return;
 
   // Save the resulting bitmap to the database.
   ImageData data;
@@ -242,8 +241,8 @@ void ImageManager::SaveImage(const std::string& url, const SkBitmap& bitmap) {
   entries_to_save->push_back(std::make_pair(data.url(), data));
   database_->UpdateEntries(std::move(entries_to_save),
                            std::move(keys_to_remove),
-                           base::Bind(&ImageManager::OnDatabaseSave,
-                                      weak_ptr_factory_.GetWeakPtr()));
+                           base::BindOnce(&ImageManager::OnDatabaseSave,
+                                          weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ImageManager::OnDatabaseInit(bool success) {
@@ -253,8 +252,8 @@ void ImageManager::OnDatabaseInit(bool success) {
     ServePendingCacheRequests();
     return;
   }
-  database_->LoadEntries(base::Bind(&ImageManager::OnDatabaseLoad,
-                                    weak_ptr_factory_.GetWeakPtr()));
+  database_->LoadEntries(base::BindOnce(&ImageManager::OnDatabaseLoad,
+                                        weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ImageManager::OnDatabaseLoad(bool success,

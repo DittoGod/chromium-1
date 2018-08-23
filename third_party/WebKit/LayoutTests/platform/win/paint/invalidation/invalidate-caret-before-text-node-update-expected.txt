@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -37,16 +38,6 @@
           "reason": "caret"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='root' class='editing'",
-      "reason": "full"
-    },
-    {
-      "object": "Caret",
-      "reason": "caret"
     }
   ]
 }

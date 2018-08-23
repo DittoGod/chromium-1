@@ -13,7 +13,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user_image/user_image.h"
 #include "components/user_manager/user_info.h"
 #include "components/user_manager/user_manager_export.h"
@@ -87,6 +87,9 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // Returns the user type.
   virtual UserType GetType() const = 0;
 
+  // Will LOG(FATAL) unless overridden.
+  virtual void UpdateType(UserType user_type);
+
   // Returns true if user has gaia account. True for users of types
   // USER_TYPE_REGULAR and USER_TYPE_CHILD.
   virtual bool HasGaiaAccount() const;
@@ -96,6 +99,9 @@ class USER_MANAGER_EXPORT User : public UserInfo {
 
   // Returns true if user is supervised.
   virtual bool IsSupervised() const;
+
+  // Returns true if user is child.
+  virtual bool IsChild() const;
 
   // True if user image can be synced.
   virtual bool CanSyncImage() const;

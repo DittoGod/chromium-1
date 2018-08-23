@@ -26,17 +26,19 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.android_webview.AwContents;
+import org.chromium.android_webview.AwRenderProcess;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.AwSwitches;
 import org.chromium.android_webview.renderer_priority.RendererPriority;
 import org.chromium.android_webview.test.TestAwContentsClient.OnDownloadStartHelper;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.parameter.SkipCommandLineParameterization;
-import org.chromium.content.common.ContentSwitches;
+import org.chromium.content_public.common.ContentSwitches;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.util.TestWebServer;
@@ -60,6 +62,7 @@ public class AwContentsTest {
     public AwActivityTestRule mActivityTestRule = new AwActivityTestRule();
 
     private TestAwContentsClient mContentsClient = new TestAwContentsClient();
+    private volatile Integer mHistogramTotalCount = 0;
 
     @Test
     @SmallTest
@@ -718,6 +721,47 @@ public class AwContentsTest {
         });
     }
 
+    private AwRenderProcess getRenderProcessOnUiThread(final AwContents awContents)
+            throws Exception {
+        return ThreadUtils.runOnUiThreadBlocking(() -> awContents.getRenderProcess());
+    }
+
+    @Test
+    @Feature({"AndroidWebView"})
+    @SmallTest
+    @CommandLineFlags.Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
+    @SkipCommandLineParameterization
+    public void testRenderProcessInMultiProcessMode() throws Throwable {
+        AwTestContainerView testView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
+        final AwContents awContents = testView.getAwContents();
+
+        final AwRenderProcess preLoadRenderProcess = getRenderProcessOnUiThread(awContents);
+        Assert.assertNotNull(preLoadRenderProcess);
+
+        mActivityTestRule.loadUrlSync(awContents, mContentsClient.getOnPageFinishedHelper(),
+                ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
+
+        final AwRenderProcess postLoadRenderProcess = getRenderProcessOnUiThread(awContents);
+        Assert.assertEquals(preLoadRenderProcess, postLoadRenderProcess);
+    }
+
+    @Test
+    @Feature({"AndroidWebView"})
+    @SmallTest
+    @SkipCommandLineParameterization
+    public void testNoRenderProcessInSingleProcessMode() throws Throwable {
+        AwTestContainerView testView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
+        final AwContents awContents = testView.getAwContents();
+
+        mActivityTestRule.loadUrlSync(awContents, mContentsClient.getOnPageFinishedHelper(),
+                ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
+
+        final AwRenderProcess renderProcess = getRenderProcessOnUiThread(awContents);
+        Assert.assertEquals(renderProcess, null);
+    }
+
     /** Regression test for https://crbug.com/732976. Load a data URL, then immediately
      * after that load a javascript URL. The data URL navigation shouldn't be blocked.
      */
@@ -742,5 +786,118 @@ public class AwContentsTest {
         TestAwContentsClient.AddMessageToConsoleHelper consoleHelper =
                 mContentsClient.getAddMessageToConsoleHelper();
         Assert.assertEquals(0, consoleHelper.getMessages().size());
+    }
+
+    private int getHistogramSampleCount(String name) throws Throwable {
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                mHistogramTotalCount = RecordHistogram.getHistogramTotalCountForTesting(name);
+            }
+        });
+        return mHistogramTotalCount;
+    }
+
+    @Test
+    @Feature({"AndroidWebView"})
+    @SmallTest
+    public void testLoadDataRecordsOctothorpeHistogram() throws Throwable {
+        AwTestContainerView testView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
+        final AwContents awContents = testView.getAwContents();
+
+        // AwContents.DATA_URI_HISTOGRAM_NAME is a boolean histogram, but as it only records
+        // positive samples we can just use the total count directly.
+        Assert.assertEquals(0, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // Check a URL with no '#' character.
+        mActivityTestRule.runOnUiThread(
+                () -> { awContents.loadData("<html>test</html>", "text/html", null); });
+        Assert.assertEquals(0, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // Check a URL with a '#' character.
+        mActivityTestRule.runOnUiThread(
+                () -> { awContents.loadData("<html>test#foo</html>", "text/html", null); });
+        Assert.assertEquals(1, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // An encoded '#' should not cause the histogram to increment.
+        mActivityTestRule.runOnUiThread(
+                () -> { awContents.loadData("<html>test%23foo</html>", "text/html", null); });
+        Assert.assertEquals(1, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // Finally, check null values are handled correctly.
+        mActivityTestRule.runOnUiThread(() -> { awContents.loadData(null, "text/html", "utf-8"); });
+        Assert.assertEquals(1, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+    }
+
+    @Test
+    @Feature({"AndroidWebView"})
+    @SmallTest
+    public void testLoadDataWithBaseURLRecordsOctothorpeHistogram() throws Throwable {
+        AwTestContainerView testView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
+        final AwContents awContents = testView.getAwContents();
+
+        // AwContents.DATA_URI_HISTOGRAM_NAME is a boolean histogram, but as it only records
+        // positive samples we can just use the total count directly.
+        Assert.assertEquals(0, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // Check a URL with no '#' character.
+        mActivityTestRule.runOnUiThread(() -> {
+            awContents.loadDataWithBaseURL(
+                    "http://www.example.com", "<html>test</html>", "text/html", null, null);
+        });
+        Assert.assertEquals(0, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // Check a URL with a '#' character.
+        mActivityTestRule.runOnUiThread(() -> {
+            awContents.loadDataWithBaseURL(
+                    "http://www.example.com", "<html>test#foo</html>", "text/html", null, null);
+        });
+        Assert.assertEquals(1, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // An encoded '#' should not cause the histogram to increment.
+        mActivityTestRule.runOnUiThread(() -> {
+            awContents.loadDataWithBaseURL(
+                    "http://www.example.com", "<html>test%23foo</html>", "text/html", null, null);
+        });
+        Assert.assertEquals(1, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // Finally, check null values are handled correctly.
+        mActivityTestRule.runOnUiThread(() -> {
+            awContents.loadDataWithBaseURL("http://www.example.com", null, "text/html", null, null);
+        });
+        Assert.assertEquals(1, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+    }
+
+    @Test
+    @Feature({"AndroidWebView"})
+    @SmallTest
+    public void testLoadUrlRecordsOctothorpeHistogram() throws Throwable {
+        AwTestContainerView testView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
+        final AwContents awContents = testView.getAwContents();
+
+        // AwContents.DATA_URI_HISTOGRAM_NAME is a boolean histogram, but as it only records
+        // positive samples we can just use the total count directly.
+        Assert.assertEquals(0, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // Check a URL with no '#' character.
+        mActivityTestRule.runOnUiThread(
+                () -> { awContents.loadUrl("data:text/html,<html>test</html>"); });
+        Assert.assertEquals(0, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // Check a URL with a '#' character.
+        mActivityTestRule.runOnUiThread(
+                () -> { awContents.loadUrl("data:text/html,<html>test#foo</html>"); });
+        Assert.assertEquals(1, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // An encoded '#' should not cause the histogram to increment.
+        mActivityTestRule.runOnUiThread(
+                () -> { awContents.loadUrl("data:text/html,<html>test%23foo</html>"); });
+        Assert.assertEquals(1, getHistogramSampleCount(AwContents.DATA_URI_HISTOGRAM_NAME));
+
+        // |loadUrl| doesn't allow a null url, so it is not necessary to check that for this API.
+        // See http://crbug.com/864708.
     }
 }

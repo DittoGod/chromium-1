@@ -16,7 +16,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -85,7 +85,7 @@ static void PostHttpUpgradeCallback(
     std::unique_ptr<net::StreamSocket> socket) {
   response_task_runner->PostTask(
       FROM_HERE, base::BindOnce(callback, result, extensions, body_head,
-                                base::Passed(&socket)));
+                                std::move(socket)));
 }
 
 class HttpRequest {
@@ -357,7 +357,7 @@ class DevicesRequest : public base::RefCountedThreadSafe<DevicesRequest> {
   friend class base::RefCountedThreadSafe<DevicesRequest>;
   ~DevicesRequest() {
     response_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(callback_, base::Passed(&descriptors_)));
+        FROM_HERE, base::BindOnce(callback_, std::move(descriptors_)));
   }
 
   typedef std::vector<std::string> Serials;
@@ -534,7 +534,7 @@ AndroidDeviceManager::HandlerThread::~HandlerThread() {
     return;
   // Shut down thread on a thread other than UI so it can join a thread.
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND},
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
                            base::BindOnce(&HandlerThread::StopThread, thread_));
 }
 

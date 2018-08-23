@@ -11,6 +11,7 @@
 #include "base/containers/span.h"
 #include "cc/paint/transfer_cache_deserialize_helper.h"
 #include "cc/paint/transfer_cache_serialize_helper.h"
+#include "third_party/skia/include/gpu/GrContext.h"
 
 class GrContext;
 
@@ -32,11 +33,17 @@ class TransferCacheTestHelper : public TransferCacheDeserializeHelper,
   void UnlockEntriesDirect(const std::vector<EntryKey>& keys);
   void DeleteEntryDirect(const EntryKey& key);
 
- protected:
   // Deserialization helpers.
   ServiceTransferCacheEntry* GetEntryInternal(TransferCacheEntryType type,
                                               uint32_t id) override;
 
+  const EntryKey& GetLastAddedEntry() const { return last_added_entry_; }
+
+  void CreateLocalEntry(
+      uint32_t id,
+      std::unique_ptr<ServiceTransferCacheEntry> entry) override;
+
+ protected:
   // Serialization helpers.
   bool LockEntryInternal(const EntryKey& key) override;
   void CreateEntryInternal(const ClientTransferCacheEntry& entry) override;
@@ -47,9 +54,12 @@ class TransferCacheTestHelper : public TransferCacheDeserializeHelper,
   void EnforceLimits();
 
   std::map<EntryKey, std::unique_ptr<ServiceTransferCacheEntry>> entries_;
+  std::set<EntryKey> local_entries_;
   std::set<EntryKey> locked_entries_;
+  EntryKey last_added_entry_ = {TransferCacheEntryType::kRawMemory, ~0};
 
   GrContext* context_ = nullptr;
+  sk_sp<GrContext> owned_context_;
   size_t cached_items_limit_ = std::numeric_limits<size_t>::max();
 };
 

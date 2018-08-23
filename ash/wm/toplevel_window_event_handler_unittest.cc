@@ -8,6 +8,7 @@
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/window_factory.h"
 #include "ash/wm/resize_shadow.h"
 #include "ash/wm/resize_shadow_controller.h"
 #include "ash/wm/window_state.h"
@@ -16,7 +17,7 @@
 #include "ash/wm/workspace_controller.h"
 #include "base/compiler_specific.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "services/ui/public/interfaces/window_manager_constants.mojom.h"
+#include "services/ui/public/interfaces/window_tree_constants.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/capture_client.h"
@@ -60,8 +61,9 @@ class ToplevelWindowEventHandlerTest : public AshTestBase {
  protected:
   aura::Window* CreateWindow(int hittest_code) {
     TestWindowDelegate* d1 = new TestWindowDelegate(hittest_code);
-    aura::Window* w1 = new aura::Window(d1);
-    w1->SetType(aura::client::WINDOW_TYPE_NORMAL);
+    aura::Window* w1 =
+        window_factory::NewWindow(d1, aura::client::WINDOW_TYPE_NORMAL)
+            .release();
     w1->set_id(1);
     w1->Init(ui::LAYER_TEXTURED);
     aura::Window* parent = Shell::GetContainer(Shell::GetPrimaryRootWindow(),

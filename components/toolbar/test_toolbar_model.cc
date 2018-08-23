@@ -19,11 +19,11 @@ TestToolbarModel::TestToolbarModel()
 TestToolbarModel::~TestToolbarModel() {}
 
 base::string16 TestToolbarModel::GetFormattedFullURL() const {
-  return text_;
+  return formatted_full_url_;
 }
 
 base::string16 TestToolbarModel::GetURLForDisplay() const {
-  return text_;
+  return url_for_display_;
 }
 
 GURL TestToolbarModel::GetURL() const {
@@ -40,6 +40,10 @@ const gfx::VectorIcon& TestToolbarModel::GetVectorIcon() const {
 }
 
 base::string16 TestToolbarModel::GetSecureVerboseText() const {
+  return base::string16();
+}
+
+base::string16 TestToolbarModel::GetSecureAccessibilityText() const {
   return base::string16();
 }
 

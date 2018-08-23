@@ -6,7 +6,7 @@
         width: 100px;
     }
     #test1 .parent {
-        background-image: url(../resources/animated.gif)
+        background-image: url(../svg/resources/animated-svg-fixed-size.svg)
     }
     #test1 .child {
         background-color: green;
@@ -16,7 +16,7 @@
         position: relative;
         height: 100px;
         width: 100px;
-        background-image: url(../resources/animated.gif);
+        background-image: url(../svg/resources/animated-svg-fixed-size.svg);
         background-repeat: no-repeat;
         background-position: center;
     }
@@ -30,7 +30,7 @@
         width: 50px;
     }
     #test3 img {
-        background-image: url(../resources/animated.gif)
+        background-image: url(../svg/resources/animated-svg-fixed-size.svg)
     }
     #test4 .parent {
         position: relative;
@@ -39,7 +39,7 @@
         background-color: red;
         background-repeat: no-repeat;
         background-position: center;
-        background-image: url(../resources/animated.gif)
+        background-image: url(../svg/resources/animated-svg-fixed-size.svg)
     }
 </style>
 <script>
@@ -49,29 +49,18 @@
         testRunner.dumpAsText();
     }
 
-    if (window.internals)
-        internals.runtimeFlags.paintUnderInvalidationCheckingEnabled = true;
-
     function finish() {
-        var layerTree = window.internals.layerTreeAsText(document, internals.LAYER_TREE_INCLUDES_PAINT_INVALIDATIONS);
-        var invalidations = JSON.parse(layerTree)["objectPaintInvalidations"];
-        // Passes if there is no invalidations other than imgForAdvanceImageAnimation,
-        // or only invalidations because of background obscuration change.
-        // This is because before the delayed image decoder finishes decoding the image,
-        // we first assume the image is not opaque. If the image is found actually opaque
-        // after decoding, the background obscuration status of covered elements will
-        // change and cause paint invalidation.
+        var layerTree = internals.layerTreeAsText(document, internals.LAYER_TREE_INCLUDES_PAINT_INVALIDATIONS);
         var invalidatedObjects = {};
-        if (invalidations) {
-            for (var i = 0; i < invalidations.length; ++i) {
-                var object = invalidations[i].object;
-                if (object.indexOf('imgForAdvanceImageAnimation') != -1)
-                    continue;
-                invalidatedObjects[object] = true;
+        for (var layer of JSON.parse(layerTree).layers) {
+            if (layer.paintInvalidations) {
+                for (var invalidation of layer.paintInvalidations)
+                    invalidatedObjects[invalidation.object] = true;
             }
         }
-
-        if (Object.keys(invalidatedObjects).length)
+        // Passes if there is no invalidations other than imgForAdvanceImageAnimation.
+        if (Object.keys(invalidatedObjects).length != 1 ||
+            !Object.keys(invalidatedObjects)[0].includes('imgForAdvanceImageAnimation'))
             output.textContent = 'FAIL: Unexpected paint invalidations: ' + JSON.stringify(invalidatedObjects) + '\n' + layerTree;
         else
             output.textContent = 'PASS';
@@ -124,7 +113,7 @@
         </a>
     </div>
 </div>
-<img id="imgForAdvanceImageAnimation" src="../resources/animated.gif">
+<img id="imgForAdvanceImageAnimation" src="../svg/resources/animated-svg-fixed-size.svg">
 <pre id="output"></pre>
 </body>
 </html>

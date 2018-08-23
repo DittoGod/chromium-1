@@ -11,8 +11,6 @@
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -27,7 +25,7 @@
 #include "chrome/utility/importer/favicon_reencode.h"
 #include "chrome/utility/importer/nss_decryptor.h"
 #include "components/autofill/core/common/password_form.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/statement.h"
 #include "url/gurl.h"
 
@@ -176,7 +174,7 @@ void FirefoxImporter::ImportHistory() {
   if (!base::PathExists(file))
     return;
 
-  sql::Connection db;
+  sql::Database db;
   if (!db.Open(file))
     return;
 
@@ -221,7 +219,7 @@ void FirefoxImporter::ImportBookmarks() {
   if (!base::PathExists(file))
     return;
 
-  sql::Connection db;
+  sql::Database db;
   if (!db.Open(file))
     return;
 
@@ -440,7 +438,7 @@ void FirefoxImporter::ImportAutofillFormData() {
   if (!base::PathExists(file))
     return;
 
-  sql::Connection db;
+  sql::Database db;
   if (!db.Open(file))
     return;
 
@@ -480,7 +478,7 @@ void FirefoxImporter::GetSearchEnginesXMLData(
     return;
   }
 
-  sql::Connection db;
+  sql::Database db;
   if (!db.Open(file))
     return;
 
@@ -679,7 +677,7 @@ void FirefoxImporter::GetSearchEnginesXMLDataFromJSON(
   }
 }
 
-int FirefoxImporter::LoadNodeIDByGUID(sql::Connection* db,
+int FirefoxImporter::LoadNodeIDByGUID(sql::Database* db,
                                       const std::string& GUID) {
   const char query[] =
       "SELECT id "
@@ -693,7 +691,7 @@ int FirefoxImporter::LoadNodeIDByGUID(sql::Connection* db,
   return s.ColumnInt(0);
 }
 
-void FirefoxImporter::LoadLivemarkIDs(sql::Connection* db,
+void FirefoxImporter::LoadLivemarkIDs(sql::Database* db,
                                       std::set<int>* livemark) {
   static const char kFeedAnnotation[] = "livemark/feedURI";
   livemark->clear();
@@ -710,7 +708,7 @@ void FirefoxImporter::LoadLivemarkIDs(sql::Connection* db,
     livemark->insert(s.ColumnInt(0));
 }
 
-void FirefoxImporter::GetTopBookmarkFolder(sql::Connection* db,
+void FirefoxImporter::GetTopBookmarkFolder(sql::Database* db,
                                            int folder_id,
                                            BookmarkList* list) {
   const char query[] =
@@ -722,7 +720,7 @@ void FirefoxImporter::GetTopBookmarkFolder(sql::Connection* db,
   s.BindInt(0, folder_id);
 
   if (s.Step()) {
-    std::unique_ptr<BookmarkItem> item = base::MakeUnique<BookmarkItem>();
+    std::unique_ptr<BookmarkItem> item = std::make_unique<BookmarkItem>();
     item->parent = -1;  // The top level folder has no parent.
     item->id = folder_id;
     item->title = s.ColumnString16(0);
@@ -733,7 +731,7 @@ void FirefoxImporter::GetTopBookmarkFolder(sql::Connection* db,
   }
 }
 
-void FirefoxImporter::GetWholeBookmarkFolder(sql::Connection* db,
+void FirefoxImporter::GetWholeBookmarkFolder(sql::Database* db,
                                              BookmarkList* list,
                                              size_t position,
                                              FaviconsLocation favicons_location,
@@ -759,7 +757,7 @@ void FirefoxImporter::GetWholeBookmarkFolder(sql::Connection* db,
 
   BookmarkList temp_list;
   while (s.Step()) {
-    std::unique_ptr<BookmarkItem> item = base::MakeUnique<BookmarkItem>();
+    std::unique_ptr<BookmarkItem> item = std::make_unique<BookmarkItem>();
     item->parent = static_cast<int>(position);
     item->id = s.ColumnInt(0);
     item->url = GURL(s.ColumnString(1));
@@ -789,7 +787,7 @@ void FirefoxImporter::GetWholeBookmarkFolder(sql::Connection* db,
 }
 
 void FirefoxImporter::LoadFavicons(
-    sql::Connection* db,
+    sql::Database* db,
     const FaviconMap& favicon_map,
     favicon_base::FaviconUsageDataList* favicons) {
   const char query[] = "SELECT url, data FROM moz_favicons WHERE id=?";
@@ -824,7 +822,7 @@ void FirefoxImporter::LoadFavicons(
   if (!base::PathExists(file))
     return;
 
-  sql::Connection db;
+  sql::Database db;
   if (!db.Open(file))
     return;
 
@@ -843,6 +841,9 @@ void FirefoxImporter::LoadFavicons(
   std::map<uint64_t, size_t> icon_cache;
 
   for (const auto& entry : bookmarks) {
+    // Reset the SQL statement at the start of the loop rather than at the end
+    // to simplify early-continue logic.
+    s.Reset(true);
     s.BindString(0, entry.url.spec());
     if (s.Step()) {
       uint64_t icon_id = s.ColumnInt64(0);
@@ -865,6 +866,5 @@ void FirefoxImporter::LoadFavicons(
       favicons->push_back(usage_data);
       icon_cache[icon_id] = favicons->size() - 1;
     }
-    s.Reset(true);
   }
 }

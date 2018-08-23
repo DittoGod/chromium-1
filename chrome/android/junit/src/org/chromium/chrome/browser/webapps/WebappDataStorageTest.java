@@ -23,10 +23,10 @@ import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.asynctask.BackgroundShadowAsyncTask;
 import org.chromium.base.test.util.Feature;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.ShortcutHelper;
-import org.chromium.testing.local.BackgroundShadowAsyncTask;
 
 import java.util.concurrent.TimeUnit;
 
@@ -99,7 +99,7 @@ public class WebappDataStorageTest {
     public void testLastUsedRetrieval() throws Exception {
         long lastUsed = 100;
         mSharedPreferences.edit().putLong(WebappDataStorage.KEY_LAST_USED, lastUsed).apply();
-        assertEquals(lastUsed, new WebappDataStorage("test").getLastUsedTime());
+        assertEquals(lastUsed, new WebappDataStorage("test").getLastUsedTimeMs());
     }
 
     @Test

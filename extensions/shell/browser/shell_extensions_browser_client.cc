@@ -14,22 +14,21 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_request_info.h"
 #include "extensions/browser/api/extensions_api_client.h"
-#include "extensions/browser/api/generated_api_registration.h"
+#include "extensions/browser/core_extensions_browser_api_provider.h"
 #include "extensions/browser/event_router.h"
-#include "extensions/browser/extension_function_registry.h"
 #include "extensions/browser/mojo/interface_registration.h"
 #include "extensions/browser/null_app_sorting.h"
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/common/features/feature_channel.h"
-#include "extensions/shell/browser/api/generated_api_registration.h"
+#include "extensions/shell/browser/api/runtime/shell_runtime_api_delegate.h"
 #include "extensions/shell/browser/delegates/shell_kiosk_delegate.h"
 #include "extensions/shell/browser/shell_extension_host_delegate.h"
 #include "extensions/shell/browser/shell_extension_system_factory.h"
 #include "extensions/shell/browser/shell_extension_web_contents_observer.h"
 #include "extensions/shell/browser/shell_extensions_api_client.h"
+#include "extensions/shell/browser/shell_extensions_browser_api_provider.h"
 #include "extensions/shell/browser/shell_navigation_ui_data.h"
-#include "extensions/shell/browser/shell_runtime_api_delegate.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/login/login_state.h"
@@ -46,6 +45,9 @@ ShellExtensionsBrowserClient::ShellExtensionsBrowserClient()
   // app_shell does not have a concept of channel yet, so leave UNKNOWN to
   // enable all channel-dependent extension APIs.
   SetCurrentChannel(version_info::Channel::UNKNOWN);
+
+  AddAPIProvider(std::make_unique<CoreExtensionsBrowserAPIProvider>());
+  AddAPIProvider(std::make_unique<ShellExtensionsBrowserAPIProvider>());
 }
 
 ShellExtensionsBrowserClient::~ShellExtensionsBrowserClient() {
@@ -123,6 +125,25 @@ ShellExtensionsBrowserClient::MaybeCreateResourceBundleRequestJob(
   return NULL;
 }
 
+base::FilePath ShellExtensionsBrowserClient::GetBundleResourcePath(
+    const network::ResourceRequest& request,
+    const base::FilePath& extension_resources_path,
+    int* resource_id) const {
+  *resource_id = 0;
+  return base::FilePath();
+}
+
+void ShellExtensionsBrowserClient::LoadResourceFromResourceBundle(
+    const network::ResourceRequest& request,
+    network::mojom::URLLoaderRequest loader,
+    const base::FilePath& resource_relative_path,
+    int resource_id,
+    const std::string& content_security_policy,
+    network::mojom::URLLoaderClientPtr client,
+    bool send_cors_header) {
+  NOTREACHED() << "Load resources from bundles not supported.";
+}
+
 bool ShellExtensionsBrowserClient::AllowCrossRendererResourceLoad(
     const GURL& url,
     content::ResourceType resource_type,
@@ -172,6 +193,10 @@ bool ShellExtensionsBrowserClient::DidVersionUpdate(BrowserContext* context) {
 void ShellExtensionsBrowserClient::PermitExternalProtocolHandler() {
 }
 
+bool ShellExtensionsBrowserClient::IsInDemoMode() {
+  return false;
+}
+
 bool ShellExtensionsBrowserClient::IsRunningInForcedAppMode() {
   return false;
 }
@@ -190,15 +215,6 @@ ShellExtensionsBrowserClient::GetExtensionSystemFactory() {
   return ShellExtensionSystemFactory::GetInstance();
 }
 
-void ShellExtensionsBrowserClient::RegisterExtensionFunctions(
-    ExtensionFunctionRegistry* registry) const {
-  // Register core extension-system APIs.
-  api::GeneratedFunctionRegistry::RegisterAll(registry);
-
-  // app_shell-only APIs.
-  shell::api::ShellGeneratedFunctionRegistry::RegisterAll(registry);
-}
-
 void ShellExtensionsBrowserClient::RegisterExtensionInterfaces(
     service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
         registry,
@@ -210,7 +226,7 @@ void ShellExtensionsBrowserClient::RegisterExtensionInterfaces(
 std::unique_ptr<RuntimeAPIDelegate>
 ShellExtensionsBrowserClient::CreateRuntimeAPIDelegate(
     content::BrowserContext* context) const {
-  return std::make_unique<ShellRuntimeAPIDelegate>();
+  return std::make_unique<ShellRuntimeAPIDelegate>(context);
 }
 
 const ComponentExtensionResourceManager*

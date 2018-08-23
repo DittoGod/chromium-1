@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -23,24 +24,10 @@
         },
         {
           "object": "LayoutBlockFlow DIV",
-          "rect": [11, 11, 201, 13],
-          "reason": "subtree"
+          "rect": [210, 11, 2, 13],
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTextControl INPUT id='target'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "subtree"
-    },
-    {
-      "object": "Caret",
-      "reason": "caret"
     }
   ]
 }

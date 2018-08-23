@@ -8,7 +8,7 @@
 #include "base/compiler_specific.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "gin/features.h"
+#include "base/partition_alloc_buildflags.h"
 #include "gin/gin_export.h"
 #include "v8/include/v8-platform.h"
 
@@ -27,12 +27,11 @@ class GIN_EXPORT V8Platform : public v8::Platform {
 #endif
   std::shared_ptr<v8::TaskRunner> GetForegroundTaskRunner(
       v8::Isolate*) override;
-  std::shared_ptr<v8::TaskRunner> GetBackgroundTaskRunner(
-      v8::Isolate*) override;
-  size_t NumberOfAvailableBackgroundThreads() override;
-  void CallOnBackgroundThread(
-      v8::Task* task,
-      v8::Platform::ExpectedRuntime expected_runtime) override;
+  int NumberOfWorkerThreads() override;
+  void CallOnWorkerThread(std::unique_ptr<v8::Task> task) override;
+  void CallBlockingTaskOnWorkerThread(std::unique_ptr<v8::Task> task) override;
+  void CallDelayedOnWorkerThread(std::unique_ptr<v8::Task> task,
+                                 double delay_in_seconds) override;
   void CallOnForegroundThread(v8::Isolate* isolate, v8::Task* task) override;
   void CallDelayedOnForegroundThread(v8::Isolate* isolate,
                                      v8::Task* task,

@@ -24,8 +24,9 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/recently_audible_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_thread.h"
@@ -78,7 +79,7 @@ void GetAudioDeviceDescriptions(bool for_input,
             *result = std::move(received);
             finished_callback.Run();
           },
-          base::Passed(run_loop.QuitClosure()), device_descriptions));
+          run_loop.QuitClosure(), device_descriptions));
   run_loop.Run();
 }
 
@@ -90,7 +91,8 @@ class AudioWaitingExtensionTest : public ExtensionApiTest {
     // Wait for audio to start playing.
     bool audio_playing = false;
     for (size_t remaining_tries = 50; remaining_tries > 0; --remaining_tries) {
-      audio_playing = tab->WasRecentlyAudible();
+      auto* audible_helper = RecentlyAudibleHelper::FromWebContents(tab);
+      audio_playing = audible_helper->WasRecentlyAudible();
       base::RunLoop().RunUntilIdle();
       if (audio_playing)
         break;

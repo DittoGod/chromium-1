@@ -7,9 +7,9 @@
 #include "chrome/browser/safe_browsing/settings_reset_prompt/settings_reset_prompt_controller.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/geometry/insets.h"
@@ -44,8 +44,9 @@ SettingsResetPromptDialog::SettingsResetPromptDialog(
   views::StyledLabel* dialog_label =
       new views::StyledLabel(controller_->GetMainText(), /*listener=*/nullptr);
   dialog_label->SetTextContext(CONTEXT_BODY_TEXT_LARGE);
+  dialog_label->SetDefaultTextStyle(STYLE_SECONDARY);
   views::StyledLabel::RangeStyleInfo url_style;
-  url_style.text_style = STYLE_EMPHASIZED;
+  url_style.text_style = STYLE_EMPHASIZED_SECONDARY;
   dialog_label->AddStyleRange(controller_->GetMainTextUrlRange(), url_style);
   AddChildView(dialog_label);
 }

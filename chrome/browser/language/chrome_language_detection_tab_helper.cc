@@ -13,8 +13,6 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(ChromeLanguageDetectionTabHelper);
-
 ChromeLanguageDetectionTabHelper::ChromeLanguageDetectionTabHelper(
     content::WebContents* const web_contents)
     : content::WebContentsObserver(web_contents),
@@ -63,6 +61,6 @@ void ChromeLanguageDetectionTabHelper::RegisterPage(
   if (!translate_client)
     return;
 
-  translate_client->translate_driver().RegisterPage(std::move(page), details,
-                                                    page_needs_translation);
+  translate_client->translate_driver().OnPageReady(std::move(page), details,
+                                                   page_needs_translation);
 }

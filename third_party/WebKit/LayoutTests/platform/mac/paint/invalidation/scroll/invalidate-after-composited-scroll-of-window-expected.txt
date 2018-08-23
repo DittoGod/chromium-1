@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -16,6 +17,11 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
+        {
+          "object": "InlineTextBox 'Tests that invalidation of a div after scrolling invalidates just the div and no other area.'",
+          "rect": [8, 4908, 555, 18],
+          "reason": "appeared"
+        },
         {
           "object": "LayoutBlockFlow DIV id='target'",
           "rect": [8, 2408, 100, 100],
@@ -35,12 +41,6 @@
         [0, -2350, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "style change"
     }
   ]
 }

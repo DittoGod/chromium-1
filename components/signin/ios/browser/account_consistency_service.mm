@@ -10,7 +10,7 @@
 #import "base/mac/foundation_util.h"
 #include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/signin/core/browser/account_reconcilor.h"
@@ -475,7 +475,7 @@ void AccountConsistencyService::OnBrowsingDataRemoved() {
   signin_client_->GetPrefs()->Set(kDomainsWithCookiePref, dict);
 
   // APISID cookie has been removed, notify the GCMS.
-  gaia_cookie_manager_service_->ForceOnCookieChangedProcessing();
+  gaia_cookie_manager_service_->ForceOnCookieChangeProcessing();
 }
 
 void AccountConsistencyService::OnAddAccountToCookieCompleted(

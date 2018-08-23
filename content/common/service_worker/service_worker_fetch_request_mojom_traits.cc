@@ -11,7 +11,6 @@
 namespace mojo {
 
 using blink::mojom::RequestContextType;
-using blink::mojom::ServiceWorkerFetchType;
 using network::mojom::FetchRequestMode;
 
 RequestContextType
@@ -203,61 +202,35 @@ bool EnumTraits<RequestContextType, content::RequestContextType>::FromMojom(
   return false;
 }
 
-ServiceWorkerFetchType
-EnumTraits<ServiceWorkerFetchType, content::ServiceWorkerFetchType>::ToMojom(
-    content::ServiceWorkerFetchType input) {
-  switch (input) {
-    case content::ServiceWorkerFetchType::FETCH:
-      return ServiceWorkerFetchType::FETCH;
-  }
-
-  NOTREACHED();
-  return ServiceWorkerFetchType::FETCH;
-}
-
-bool EnumTraits<ServiceWorkerFetchType, content::ServiceWorkerFetchType>::
-    FromMojom(ServiceWorkerFetchType input,
-              content::ServiceWorkerFetchType* out) {
-  switch (input) {
-    case ServiceWorkerFetchType::FETCH:
-      *out = content::ServiceWorkerFetchType::FETCH;
-      return true;
-  }
-
-  return false;
-}
-
 bool StructTraits<blink::mojom::FetchAPIRequestDataView,
                   content::ServiceWorkerFetchRequest>::
     Read(blink::mojom::FetchAPIRequestDataView data,
          content::ServiceWorkerFetchRequest* out) {
   std::unordered_map<std::string, std::string> headers;
-  base::Optional<std::string> blob_uuid;
+  blink::mojom::SerializedBlobPtr serialized_blob_ptr;
   if (!data.ReadMode(&out->mode) ||
       !data.ReadRequestContextType(&out->request_context_type) ||
       !data.ReadFrameType(&out->frame_type) || !data.ReadUrl(&out->url) ||
       !data.ReadMethod(&out->method) || !data.ReadHeaders(&headers) ||
-      !data.ReadBlobUuid(&blob_uuid) || !data.ReadReferrer(&out->referrer) ||
+      !data.ReadBlob(&serialized_blob_ptr) ||
+      !data.ReadReferrer(&out->referrer) ||
       !data.ReadCredentialsMode(&out->credentials_mode) ||
       !data.ReadRedirectMode(&out->redirect_mode) ||
       !data.ReadIntegrity(&out->integrity) ||
-      !data.ReadClientId(&out->client_id) ||
-      !data.ReadFetchType(&out->fetch_type)) {
+      !data.ReadClientId(&out->client_id)) {
     return false;
   }
 
+  // content::ServiceWorkerFetchRequest doesn't support request body.
+  if (serialized_blob_ptr)
+    return false;
+
   out->is_main_resource_load = data.is_main_resource_load();
   out->headers.insert(headers.begin(), headers.end());
-  if (blob_uuid) {
-    out->blob_uuid = blob_uuid.value();
-    out->blob_size = data.blob_size();
-  }
-  blink::mojom::BlobPtr blob = data.TakeBlob<blink::mojom::BlobPtr>();
-  if (blob)
-    out->blob = base::MakeRefCounted<storage::BlobHandle>(std::move(blob));
   out->cache_mode = data.cache_mode();
   out->keepalive = data.keepalive();
   out->is_reload = data.is_reload();
+  out->is_history_navigation = data.is_history_navigation();
   return true;
 }
 

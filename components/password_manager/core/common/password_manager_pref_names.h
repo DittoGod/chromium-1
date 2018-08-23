@@ -27,6 +27,9 @@ extern const char kCredentialsEnableService[];
 #if !defined(OS_MACOSX) && !defined(OS_CHROMEOS) && defined(OS_POSIX)
 // The local profile id for this profile.
 extern const char kLocalProfileId[];
+
+// The current state of the migration to LoginDB from Keyring/Kwallet on Linux.
+extern const char kMigrationToLoginDBStep[];
 #endif
 
 #if defined(OS_WIN)
@@ -42,14 +45,16 @@ extern const char kOsPasswordLastChanged[];
 // The current status of migrating the passwords from the Keychain to the
 // database. Stores a value from MigrationStatus.
 extern const char kKeychainMigrationStatus[];
+
+// The date of when passwords were recovered for MacOS Sync users who
+// previously lost access to their password because of encryption key
+// modification in Keychain.
+extern const char kSyncUsersPasswordRecovery[];
 #endif
 
 // Boolean that indicated whether first run experience for the auto sign-in
 // prompt was shown or not.
 extern const char kWasAutoSignInFirstRunExperienceShown[];
-
-// Boolean that indicated if obsolete HTTP data has been cleaned in the past.
-extern const char kWasObsoleteHttpDataCleaned[];
 
 // Boolean that indicated if user interacted with the Chrome Sign in promo.
 extern const char kWasSignInPasswordPromoClicked[];
@@ -64,6 +69,12 @@ extern const char kSyncPasswordHash[];
 // encrypted and converted to base64 string "<password length, as ascii
 // int>.<16 char salt>".
 extern const char kSyncPasswordLengthAndHashSalt[];
+
+// Whether Chrome deleted blacklisted credentials that were duplicated.
+extern const char kDuplicatedBlacklistedCredentialsRemoved[];
+
+// List that contains captured password hashes.
+extern const char kPasswordHashDataList[];
 
 }  // namespace prefs
 }  // namespace password_manager

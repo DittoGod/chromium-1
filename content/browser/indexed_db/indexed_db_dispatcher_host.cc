@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/process/process.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
@@ -143,7 +142,7 @@ IndexedDBDispatcherHost::~IndexedDBDispatcherHost() {
 }
 
 void IndexedDBDispatcherHost::AddBinding(
-    ::indexed_db::mojom::FactoryAssociatedRequest request) {
+    ::indexed_db::mojom::FactoryRequest request) {
   bindings_.AddBinding(this, std::move(request));
 }
 
@@ -161,8 +160,7 @@ void IndexedDBDispatcherHost::AddCursorBinding(
 
 void IndexedDBDispatcherHost::RenderProcessExited(
     RenderProcessHost* host,
-    base::TerminationStatus status,
-    int exit_code) {
+    const ChildProcessTerminationInfo& info) {
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::BindOnce(
@@ -185,7 +183,7 @@ void IndexedDBDispatcherHost::GetDatabaseNames(
   IDBTaskRunner()->PostTask(
       FROM_HERE, base::BindOnce(&IDBSequenceHelper::GetDatabaseNamesOnIDBThread,
                                 base::Unretained(idb_helper_),
-                                base::Passed(&callbacks), origin));
+                                std::move(callbacks), origin));
 }
 
 void IndexedDBDispatcherHost::Open(
@@ -211,8 +209,8 @@ void IndexedDBDispatcherHost::Open(
   IDBTaskRunner()->PostTask(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::OpenOnIDBThread,
-                     base::Unretained(idb_helper_), base::Passed(&callbacks),
-                     base::Passed(&database_callbacks), origin, name, version,
+                     base::Unretained(idb_helper_), std::move(callbacks),
+                     std::move(database_callbacks), origin, name, version,
                      transaction_id));
 }
 
@@ -233,7 +231,7 @@ void IndexedDBDispatcherHost::DeleteDatabase(
   IDBTaskRunner()->PostTask(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::DeleteDatabaseOnIDBThread,
-                     base::Unretained(idb_helper_), base::Passed(&callbacks),
+                     base::Unretained(idb_helper_), std::move(callbacks),
                      origin, name, force_close));
 }
 
@@ -254,8 +252,7 @@ void IndexedDBDispatcherHost::AbortTransactionsAndCompactDatabase(
       FROM_HERE,
       base::BindOnce(
           &IDBSequenceHelper::AbortTransactionsAndCompactDatabaseOnIDBThread,
-          base::Unretained(idb_helper_), base::Passed(&callback_on_io),
-          origin));
+          base::Unretained(idb_helper_), std::move(callback_on_io), origin));
 }
 
 void IndexedDBDispatcherHost::AbortTransactionsForDatabase(
@@ -275,8 +272,7 @@ void IndexedDBDispatcherHost::AbortTransactionsForDatabase(
       FROM_HERE,
       base::BindOnce(
           &IDBSequenceHelper::AbortTransactionsForDatabaseOnIDBThread,
-          base::Unretained(idb_helper_), base::Passed(&callback_on_io),
-          origin));
+          base::Unretained(idb_helper_), std::move(callback_on_io), origin));
 }
 
 void IndexedDBDispatcherHost::InvalidateWeakPtrsAndClearBindings() {

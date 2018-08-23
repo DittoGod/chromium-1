@@ -89,12 +89,12 @@ const char kPacResourceName[] = "proxy-pac-script.js";
 const char kPacUtilityResourceName[] = "proxy-pac-utility-script.js";
 
 // External string wrapper so V8 can access the UTF16 string wrapped by
-// ProxyResolverScriptData.
+// PacFileData.
 class V8ExternalStringFromScriptData
     : public v8::String::ExternalStringResource {
  public:
   explicit V8ExternalStringFromScriptData(
-      const scoped_refptr<ProxyResolverScriptData>& script_data)
+      const scoped_refptr<PacFileData>& script_data)
       : script_data_(script_data) {}
 
   const uint16_t* data() const override {
@@ -104,7 +104,7 @@ class V8ExternalStringFromScriptData
   size_t length() const override { return script_data_->utf16().size(); }
 
  private:
-  const scoped_refptr<ProxyResolverScriptData> script_data_;
+  const scoped_refptr<PacFileData> script_data_;
   DISALLOW_COPY_AND_ASSIGN(V8ExternalStringFromScriptData);
 };
 
@@ -137,22 +137,23 @@ class V8ExternalASCIILiteral
 const size_t kMaxStringBytesForCopy = 256;
 
 // Converts a V8 String to a UTF8 std::string.
-std::string V8StringToUTF8(v8::Local<v8::String> s) {
+std::string V8StringToUTF8(v8::Isolate* isolate, v8::Local<v8::String> s) {
   int len = s->Length();
   std::string result;
   if (len > 0)
-    s->WriteUtf8(base::WriteInto(&result, len + 1));
+    s->WriteUtf8(isolate, base::WriteInto(&result, len + 1));
   return result;
 }
 
 // Converts a V8 String to a UTF16 base::string16.
-base::string16 V8StringToUTF16(v8::Local<v8::String> s) {
+base::string16 V8StringToUTF16(v8::Isolate* isolate, v8::Local<v8::String> s) {
   int len = s->Length();
   base::string16 result;
   // Note that the reinterpret cast is because on Windows string16 is an alias
   // to wstring, and hence has character type wchar_t not uint16_t.
   if (len > 0) {
-    s->Write(reinterpret_cast<uint16_t*>(base::WriteInto(&result, len + 1)), 0,
+    s->Write(isolate,
+             reinterpret_cast<uint16_t*>(base::WriteInto(&result, len + 1)), 0,
              len);
   }
   return result;
@@ -166,10 +167,11 @@ v8::Local<v8::String> ASCIIStringToV8String(v8::Isolate* isolate,
                                  s.size()).ToLocalChecked();
 }
 
-// Converts a UTF16 base::string16 (warpped by a ProxyResolverScriptData) to a
+// Converts a UTF16 base::string16 (wrapped by a PacFileData) to a
 // V8 string.
 v8::Local<v8::String> ScriptDataToV8String(
-    v8::Isolate* isolate, const scoped_refptr<ProxyResolverScriptData>& s) {
+    v8::Isolate* isolate,
+    const scoped_refptr<PacFileData>& s) {
   if (s->utf16().size() * 2 <= kMaxStringBytesForCopy) {
     return v8::String::NewFromTwoByte(
                isolate, reinterpret_cast<const uint16_t*>(s->utf16().data()),
@@ -204,7 +206,7 @@ bool V8ObjectToUTF16String(v8::Local<v8::Value> object,
   v8::Local<v8::String> str_object;
   if (!object->ToString(isolate->GetCurrentContext()).ToLocal(&str_object))
     return false;
-  *utf16_result = V8StringToUTF16(str_object);
+  *utf16_result = V8StringToUTF16(isolate, str_object);
   return true;
 }
 
@@ -217,7 +219,7 @@ bool GetHostnameArgument(const v8::FunctionCallbackInfo<v8::Value>& args,
     return false;
 
   const base::string16 hostname_utf16 =
-      V8StringToUTF16(v8::Local<v8::String>::Cast(args[0]));
+      V8StringToUTF16(args.GetIsolate(), v8::Local<v8::String>::Cast(args[0]));
 
   // If the hostname is already in ASCII, simply return it as is.
   if (base::IsStringASCII(hostname_utf16)) {
@@ -442,6 +444,7 @@ class ProxyResolverV8::Context {
     base::AutoReset<JSBindings*> bindings_reset(&js_bindings_, bindings);
     v8::Locker locked(isolate_);
     v8::Isolate::Scope isolate_scope(isolate_);
+    v8::Isolate::SafeForTerminationScope safe_for_termination(isolate_);
     v8::HandleScope scope(isolate_);
 
     v8::Local<v8::Context> context =
@@ -474,7 +477,8 @@ class ProxyResolverV8::Context {
       return ERR_PAC_SCRIPT_FAILED;
     }
 
-    base::string16 ret_str = V8StringToUTF16(v8::Local<v8::String>::Cast(ret));
+    base::string16 ret_str =
+        V8StringToUTF16(isolate_, v8::Local<v8::String>::Cast(ret));
 
     if (!base::IsStringASCII(ret_str)) {
       // TODO(eroman): Rather than failing when a wide string is returned, we
@@ -492,7 +496,7 @@ class ProxyResolverV8::Context {
     return OK;
   }
 
-  int InitV8(const scoped_refptr<ProxyResolverScriptData>& pac_script,
+  int InitV8(const scoped_refptr<PacFileData>& pac_script,
              JSBindings* bindings) {
     base::AutoReset<JSBindings*> bindings_reset(&js_bindings_, bindings);
     v8::Locker locked(isolate_);
@@ -781,7 +785,7 @@ class ProxyResolverV8::Context {
     }
 
     std::string ip_address_list =
-        V8StringToUTF8(v8::Local<v8::String>::Cast(args[0]));
+        V8StringToUTF8(args.GetIsolate(), v8::Local<v8::String>::Cast(args[0]));
     if (!base::IsStringASCII(ip_address_list)) {
       args.GetReturnValue().SetNull();
       return;
@@ -807,13 +811,13 @@ class ProxyResolverV8::Context {
     }
 
     std::string ip_address =
-        V8StringToUTF8(v8::Local<v8::String>::Cast(args[0]));
+        V8StringToUTF8(args.GetIsolate(), v8::Local<v8::String>::Cast(args[0]));
     if (!base::IsStringASCII(ip_address)) {
       args.GetReturnValue().Set(false);
       return;
     }
     std::string ip_prefix =
-        V8StringToUTF8(v8::Local<v8::String>::Cast(args[1]));
+        V8StringToUTF8(args.GetIsolate(), v8::Local<v8::String>::Cast(args[1]));
     if (!base::IsStringASCII(ip_prefix)) {
       args.GetReturnValue().Set(false);
       return;
@@ -833,7 +837,7 @@ class ProxyResolverV8::Context {
     }
 
     std::string hostname_utf8 =
-        V8StringToUTF8(v8::Local<v8::String>::Cast(args[0]));
+        V8StringToUTF8(args.GetIsolate(), v8::Local<v8::String>::Cast(args[0]));
     args.GetReturnValue().Set(IsPlainHostName(hostname_utf8));
   }
 
@@ -860,10 +864,9 @@ int ProxyResolverV8::GetProxyForURL(const GURL& query_url,
 }
 
 // static
-int ProxyResolverV8::Create(
-    const scoped_refptr<ProxyResolverScriptData>& script_data,
-    ProxyResolverV8::JSBindings* js_bindings,
-    std::unique_ptr<ProxyResolverV8>* resolver) {
+int ProxyResolverV8::Create(const scoped_refptr<PacFileData>& script_data,
+                            ProxyResolverV8::JSBindings* js_bindings,
+                            std::unique_ptr<ProxyResolverV8>* resolver) {
   DCHECK(script_data.get());
   DCHECK(js_bindings);
 

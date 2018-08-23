@@ -5,9 +5,15 @@
 #import "ios/chrome/browser/ui/download/download_manager_view_controller.h"
 
 #include "base/logging.h"
+#include "base/strings/sys_string_conversions.h"
 #include "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/ui/util/named_guide.h"
+#include "ios/chrome/browser/ui/download/download_manager_animation_constants.h"
+#import "ios/chrome/browser/ui/download/download_manager_state_view.h"
+#import "ios/chrome/browser/ui/download/radial_progress_view.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
+#include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+#import "ios/public/provider/chrome/browser/images/branded_image_provider.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
 #import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -17,12 +23,16 @@
 #endif
 
 namespace {
-// Layout Guide name for action button UILayoutGuide.
-GuideName* const kActionButtonGuide = @"kDownloadManagerActionButtonGuide";
 
-// A margin for every control element (status label, action button, close
-// button). Defines the minimal distance between elements.
-const CGFloat kElementMargin = 16;
+// Additional left margin for close button.
+const CGFloat kCloseButtonLeftMargin = 17;
+
+// The size of the shadow used for background resizable image.
+const CGFloat kTopShadowHeight = 8;
+const CGFloat kLeftRightShadowHeight = 16;
+
+// Height of download or install drive controls row.
+const CGFloat kRowHeight = 48;
 
 // Returns formatted size string.
 NSString* GetSizeString(long long size_in_bytes) {
@@ -34,69 +44,129 @@ NSString* GetSizeString(long long size_in_bytes) {
 
 @interface DownloadManagerViewController () {
   UIButton* _closeButton;
+  DownloadManagerStateView* _stateIcon;
   UILabel* _statusLabel;
   UIButton* _actionButton;
+  UIButton* _installDriveButton;
+  UIImageView* _installDriveIcon;
+  UILabel* _installDriveLabel;
+  RadialProgressView* _progressView;
 
   NSString* _fileName;
   int64_t _countOfBytesReceived;
   int64_t _countOfBytesExpectedToReceive;
+  float _progress;
   DownloadManagerState _state;
+  BOOL _installDriveButtonVisible;
+  BOOL _addedConstraints;  // YES if NSLayoutConstraits were added.
 }
-// Shadow view sits on top of background view. Union of shadow and background
-// views fills self.view area. The shadow is dropped to web page, not to white
-// Download Manager background.
-@property(nonatomic, readonly) UIImageView* shadow;
-@property(nonatomic, readonly) UIView* background;
+// Background is a resizable image with edge shadows.
+@property(nonatomic, readonly) UIImageView* background;
+
+// Download Manager UI has 2 rows. First row is always visible and contains
+// essential download controls: close button, action button and status label.
+// Second row is hidden by default and constains Install Google Drive button.
+// The second row is visible if |_installDriveButtonVisible| is set to YES.
+// Each row is a UIView with controls as subviews, which allows to:
+//   - vertically align all controls in the row
+//   - hide all controls in a row altogether
+//   - set proper constraits to size self.view
+@property(nonatomic, readonly) UIView* downloadControlsRow;
+@property(nonatomic, readonly) UIView* installDriveControlsRow;
+
+// Grey line which separates downloadControlsRow and installDriveControlsRow.
+@property(nonatomic, readonly) UIView* horizontalLine;
+
+// Represents constraint for kBottomMarginGuide's topAnchor, which can either be
+// constrained to installDriveControlsRow's bottomAnchor or to
+// downloadControlsRow's bottomAnchor. Stored in a property to allow
+// deactivating the old constraint.
+@property(nonatomic) NSLayoutConstraint* bottomMarginGuideTopConstraint;
+
+// Represents constraint for self.view.widthAnchor, which is anchored to
+// superview with different multipliers depending on size class. Stored in a
+// property to allow deactivating the old constraint.
+@property(nonatomic) NSLayoutConstraint* viewWidthConstraint;
+
+// Leading and trailing constraints for download and install drive controls.
+@property(nonatomic) NSLayoutConstraint* downloadControlsRowLeadingConstraint;
+@property(nonatomic) NSLayoutConstraint* downloadControlsRowTrailingConstraint;
+@property(nonatomic)
+    NSLayoutConstraint* installDriveControlsRowLeadingConstraint;
+@property(nonatomic)
+    NSLayoutConstraint* installDriveControlsRowTrailingConstraint;
+
+// Represents constraint for self.view.statusLabel, which is either anchored to
+// self.closeButton or to self.actionButton (when visible).
+@property(nonatomic) NSLayoutConstraint* statusLabelTrailingConstraint;
+
+// UILayoutGuide for action button. Used in delegate callbacks.
+@property(nonatomic) UILayoutGuide* actionButtonGuide;
+
+// UILayoutGuide for adding bottom margin to Download Manager view.
+@property(nonatomic) UILayoutGuide* bottomMarginGuide;
+
 @end
 
 @implementation DownloadManagerViewController
 
 @synthesize delegate = _delegate;
-@synthesize shadow = _shadow;
+@synthesize bottomMarginHeightAnchor = _bottomMarginHeightAnchor;
 @synthesize background = _background;
+@synthesize downloadControlsRow = _downloadControlsRow;
+@synthesize installDriveControlsRow = _installDriveControlsRow;
+@synthesize horizontalLine = _horizontalLine;
+@synthesize bottomMarginGuideTopConstraint = _bottomMarginGuideTopConstraint;
+@synthesize viewWidthConstraint = _viewWidthConstraint;
+@synthesize downloadControlsRowLeadingConstraint =
+    _downloadControlsRowLeadingConstraint;
+@synthesize downloadControlsRowTrailingConstraint =
+    _downloadControlsRowTrailingConstraint;
+@synthesize installDriveControlsRowLeadingConstraint =
+    _installDriveControlsRowLeadingConstraint;
+@synthesize installDriveControlsRowTrailingConstraint =
+    _installDriveControlsRowTrailingConstraint;
+@synthesize statusLabelTrailingConstraint = _statusLabelTrailingConstraint;
+@synthesize actionButtonGuide = _actionButtonGuide;
+@synthesize bottomMarginGuide = _bottomMarginGuide;
 
 #pragma mark - UIViewController overrides
 
 - (void)viewDidLoad {
   [super viewDidLoad];
 
-  [self.view addSubview:self.shadow];
   [self.view addSubview:self.background];
-  [self.view addSubview:self.closeButton];
-  [self.view addSubview:self.statusLabel];
-  [self.view addSubview:self.actionButton];
+  [self.view addSubview:self.downloadControlsRow];
+  [self.view addSubview:self.installDriveControlsRow];
+  [self.downloadControlsRow addSubview:self.closeButton];
+  [self.downloadControlsRow addSubview:self.stateIcon];
+  [self.downloadControlsRow addSubview:self.statusLabel];
+  [self.downloadControlsRow addSubview:self.progressView];
+  [self.downloadControlsRow addSubview:self.actionButton];
+  [self.installDriveControlsRow addSubview:self.installDriveButton];
+  [self.installDriveControlsRow addSubview:self.installDriveIcon];
+  [self.installDriveControlsRow addSubview:self.installDriveLabel];
+  [self.installDriveControlsRow addSubview:self.horizontalLine];
 
-  AddNamedGuide(kActionButtonGuide, self.view);
-  ConstrainNamedGuideToView(kActionButtonGuide, self.actionButton);
-
-  if (@available(iOS 11, *)) {
-    self.view.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(
-        kElementMargin, kElementMargin, kElementMargin, kElementMargin);
-  } else {
-    self.view.layoutMargins = UIEdgeInsetsMake(kElementMargin, kElementMargin,
-                                               kElementMargin, kElementMargin);
-  }
+  self.actionButtonGuide = [[UILayoutGuide alloc] init];
+  [self.view addLayoutGuide:self.actionButtonGuide];
+  self.bottomMarginGuide = [[UILayoutGuide alloc] init];
+  [self.view addLayoutGuide:self.bottomMarginGuide];
 }
 
 - (void)updateViewConstraints {
-  [super updateViewConstraints];
+  if (_addedConstraints) {
+    [super updateViewConstraints];
+    return;
+  }
 
   // self.view constraints.
   UIView* view = self.view;
-  view.translatesAutoresizingMaskIntoConstraints = NO;
-  UILabel* statusLabel = self.statusLabel;
+  UILayoutGuide* bottomMarginGuide = self.bottomMarginGuide;
   [NSLayoutConstraint activateConstraints:@[
-    [view.layoutMarginsGuide.heightAnchor
-        constraintEqualToAnchor:statusLabel.heightAnchor],
+    [view.bottomAnchor constraintEqualToAnchor:bottomMarginGuide.bottomAnchor],
   ]];
-
-  // shadow constraints.
-  UIImageView* shadow = self.shadow;
-  [NSLayoutConstraint activateConstraints:@[
-    [shadow.leadingAnchor constraintEqualToAnchor:view.leadingAnchor],
-    [shadow.trailingAnchor constraintEqualToAnchor:view.trailingAnchor],
-    [shadow.topAnchor constraintEqualToAnchor:view.topAnchor],
-  ]];
+  [self updateBottomMarginGuideTopConstraint];
 
   // background constraints.
   UIView* background = self.background;
@@ -104,35 +174,158 @@ NSString* GetSizeString(long long size_in_bytes) {
     [background.leadingAnchor constraintEqualToAnchor:view.leadingAnchor],
     [background.trailingAnchor constraintEqualToAnchor:view.trailingAnchor],
     [background.bottomAnchor constraintEqualToAnchor:view.bottomAnchor],
-    [background.topAnchor constraintEqualToAnchor:shadow.bottomAnchor],
+    [background.topAnchor constraintEqualToAnchor:view.topAnchor],
   ]];
 
-  // close button constraints.
+  // download controls row constraints.
+  UIView* downloadRow = self.downloadControlsRow;
   UIButton* closeButton = self.closeButton;
+  self.downloadControlsRowLeadingConstraint =
+      [downloadRow.leadingAnchor constraintEqualToAnchor:view.leadingAnchor],
+  self.downloadControlsRowTrailingConstraint =
+      [downloadRow.trailingAnchor constraintEqualToAnchor:view.trailingAnchor],
   [NSLayoutConstraint activateConstraints:@[
-    [closeButton.centerYAnchor constraintEqualToAnchor:view.centerYAnchor],
+    self.downloadControlsRowLeadingConstraint,
+    self.downloadControlsRowTrailingConstraint,
+    [downloadRow.topAnchor constraintEqualToAnchor:view.topAnchor
+                                          constant:kTopShadowHeight],
+    [downloadRow.heightAnchor constraintEqualToConstant:kRowHeight],
+  ]];
+
+  // install drive controls row constraints.
+  UIView* horizontalLine = self.horizontalLine;
+  UIView* installDriveRow = self.installDriveControlsRow;
+  UIButton* installDriveButton = self.installDriveButton;
+  self.installDriveControlsRowLeadingConstraint = [installDriveRow.leadingAnchor
+      constraintEqualToAnchor:view.leadingAnchor],
+  self.installDriveControlsRowTrailingConstraint =
+      [installDriveRow.trailingAnchor
+          constraintEqualToAnchor:view.trailingAnchor],
+  [NSLayoutConstraint activateConstraints:@[
+    self.installDriveControlsRowLeadingConstraint,
+    self.installDriveControlsRowTrailingConstraint,
+    [installDriveRow.topAnchor
+        constraintEqualToAnchor:horizontalLine.bottomAnchor],
+    [installDriveRow.heightAnchor constraintEqualToConstant:kRowHeight],
+  ]];
+
+  // bottom margin row constraints.
+  if (_bottomMarginHeightAnchor) {
+    [NSLayoutConstraint activateConstraints:@[
+      [bottomMarginGuide.heightAnchor
+          constraintEqualToAnchor:_bottomMarginHeightAnchor],
+    ]];
+  } else {
+    [NSLayoutConstraint activateConstraints:@[
+      [bottomMarginGuide.heightAnchor constraintEqualToConstant:0],
+    ]];
+  }
+
+  // close button constraints.
+  [NSLayoutConstraint activateConstraints:@[
+    [closeButton.centerYAnchor
+        constraintEqualToAnchor:downloadRow.centerYAnchor],
     [closeButton.trailingAnchor
-        constraintEqualToAnchor:view.layoutMarginsGuide.trailingAnchor],
+        constraintEqualToAnchor:downloadRow.layoutMarginsGuide.trailingAnchor
+                       constant:-4],
+  ]];
+
+  // status icon constraints.
+  DownloadManagerStateView* stateIcon = self.stateIcon;
+  [NSLayoutConstraint activateConstraints:@[
+    [stateIcon.centerYAnchor constraintEqualToAnchor:downloadRow.centerYAnchor],
+    [stateIcon.leadingAnchor
+        constraintEqualToAnchor:downloadRow.layoutMarginsGuide.leadingAnchor
+                       constant:3],
+  ]];
+
+  // progress view constraints.
+  RadialProgressView* progressView = self.progressView;
+  [NSLayoutConstraint activateConstraints:@[
+    [progressView.leadingAnchor
+        constraintEqualToAnchor:stateIcon.leadingAnchor],
+    [progressView.trailingAnchor
+        constraintEqualToAnchor:stateIcon.trailingAnchor],
+    [progressView.topAnchor constraintEqualToAnchor:stateIcon.topAnchor],
+    [progressView.bottomAnchor constraintEqualToAnchor:stateIcon.bottomAnchor],
   ]];
 
   // status label constraints.
+  UILabel* statusLabel = self.statusLabel;
   UIButton* actionButton = self.actionButton;
   [NSLayoutConstraint activateConstraints:@[
-    [statusLabel.centerYAnchor constraintEqualToAnchor:view.centerYAnchor],
-    [statusLabel.leadingAnchor
-        constraintEqualToAnchor:view.layoutMarginsGuide.leadingAnchor],
-    [statusLabel.trailingAnchor
-        constraintLessThanOrEqualToAnchor:actionButton.leadingAnchor
-                                 constant:-kElementMargin],
+    [statusLabel.centerYAnchor
+        constraintEqualToAnchor:downloadRow.centerYAnchor],
+    [statusLabel.leadingAnchor constraintEqualToAnchor:stateIcon.trailingAnchor
+                                              constant:11],
   ]];
+  [self updateStatusLabelTrailingConstraint];
 
   // action button constraints.
   [NSLayoutConstraint activateConstraints:@[
-    [actionButton.centerYAnchor constraintEqualToAnchor:view.centerYAnchor],
+    [actionButton.centerYAnchor
+        constraintEqualToAnchor:downloadRow.centerYAnchor],
     [actionButton.trailingAnchor
         constraintEqualToAnchor:closeButton.leadingAnchor
-                       constant:-kElementMargin],
+                       constant:-kCloseButtonLeftMargin],
   ]];
+
+  // install google drive button constraints.
+  [NSLayoutConstraint activateConstraints:@[
+    [installDriveButton.centerYAnchor
+        constraintEqualToAnchor:installDriveRow.centerYAnchor],
+    [installDriveButton.trailingAnchor
+        constraintEqualToAnchor:actionButton.trailingAnchor],
+  ]];
+
+  // install google drive icon constraints.
+  UIImageView* installDriveIcon = self.installDriveIcon;
+  [NSLayoutConstraint activateConstraints:@[
+    [installDriveIcon.centerYAnchor
+        constraintEqualToAnchor:installDriveRow.centerYAnchor],
+    [installDriveIcon.centerXAnchor
+        constraintEqualToAnchor:stateIcon.centerXAnchor],
+  ]];
+
+  // install google drive label constraints.
+  UILabel* installDriveLabel = self.installDriveLabel;
+  [NSLayoutConstraint activateConstraints:@[
+    [installDriveLabel.centerYAnchor
+        constraintEqualToAnchor:installDriveRow.centerYAnchor],
+    [installDriveLabel.leadingAnchor
+        constraintEqualToAnchor:statusLabel.leadingAnchor],
+    [installDriveLabel.trailingAnchor
+        constraintLessThanOrEqualToAnchor:installDriveButton.leadingAnchor
+                                 constant:-kCloseButtonLeftMargin],
+  ]];
+
+  // constraint line which separates download controls and install drive rows.
+  [NSLayoutConstraint activateConstraints:@[
+    [horizontalLine.heightAnchor constraintEqualToConstant:1],
+    [horizontalLine.topAnchor constraintEqualToAnchor:downloadRow.bottomAnchor],
+    [horizontalLine.leadingAnchor
+        constraintEqualToAnchor:installDriveRow.leadingAnchor],
+    [horizontalLine.trailingAnchor
+        constraintEqualToAnchor:installDriveRow.trailingAnchor],
+  ]];
+
+  // constraint actionButtonGuide to action button.
+  AddSameConstraints(self.actionButtonGuide, actionButton);
+
+  [self updateConstraintsForTraitCollection:self.traitCollection];
+
+  _addedConstraints = YES;
+  [super updateViewConstraints];
+}
+
+- (void)willTransitionToTraitCollection:(UITraitCollection*)newCollection
+              withTransitionCoordinator:
+                  (id<UIViewControllerTransitionCoordinator>)coordinator {
+  auto block = ^(id<UIViewControllerTransitionCoordinatorContext> context) {
+    [self updateConstraintsForTraitCollection:newCollection];
+    [self updateBackgroundForTraitCollection:newCollection];
+  };
+  [coordinator animateAlongsideTransition:block completion:nil];
 }
 
 #pragma mark - Public
@@ -158,32 +351,65 @@ NSString* GetSizeString(long long size_in_bytes) {
   }
 }
 
+- (void)setProgress:(float)value {
+  if (_progress != value) {
+    _progress = value;
+    [self updateProgressView];
+  }
+}
+
 - (void)setState:(DownloadManagerState)state {
   if (_state != state) {
     _state = state;
+    [self updateStateIcon];
     [self updateStatusLabel];
     [self updateActionButton];
+    [self updateProgressView];
+    [self updateStatusLabelTrailingConstraint];
   }
+}
+
+- (void)setInstallDriveButtonVisible:(BOOL)visible animated:(BOOL)animated {
+  if (visible == _installDriveButtonVisible)
+    return;
+
+  _installDriveButtonVisible = visible;
+  __weak DownloadManagerViewController* weakSelf = self;
+  [UIView animateWithDuration:animated ? kDownloadManagerAnimationDuration : 0.0
+                   animations:^{
+                     DownloadManagerViewController* strongSelf = weakSelf;
+                     [strongSelf updateInstallDriveControlsRow];
+                     [strongSelf updateBottomMarginGuideTopConstraint];
+                     [strongSelf.view.superview layoutIfNeeded];
+                   }];
 }
 
 #pragma mark - UI elements
 
-- (UIImageView*)shadow {
-  if (!_shadow) {
-    UIImage* shadowImage = [UIImage imageNamed:@"infobar_shadow"];
-    _shadow = [[UIImageView alloc] initWithImage:shadowImage];
-    _shadow.translatesAutoresizingMaskIntoConstraints = NO;
-  }
-  return _shadow;
-}
-
-- (UIView*)background {
+- (UIImageView*)background {
   if (!_background) {
-    _background = [[UIView alloc] initWithFrame:CGRectZero];
+    _background = [[UIImageView alloc] initWithImage:nil];
     _background.translatesAutoresizingMaskIntoConstraints = NO;
-    _background.backgroundColor = [UIColor whiteColor];
+    [self updateBackgroundForTraitCollection:self.traitCollection];
   }
   return _background;
+}
+
+- (UIView*)downloadControlsRow {
+  if (!_downloadControlsRow) {
+    _downloadControlsRow = [[UIView alloc] initWithFrame:CGRectZero];
+    _downloadControlsRow.translatesAutoresizingMaskIntoConstraints = NO;
+  }
+  return _downloadControlsRow;
+}
+
+- (UIView*)installDriveControlsRow {
+  if (!_installDriveControlsRow) {
+    _installDriveControlsRow = [[UIView alloc] initWithFrame:CGRectZero];
+    _installDriveControlsRow.translatesAutoresizingMaskIntoConstraints = NO;
+    [self updateInstallDriveControlsRow];
+  }
+  return _installDriveControlsRow;
 }
 
 - (UIButton*)closeButton {
@@ -204,11 +430,27 @@ NSString* GetSizeString(long long size_in_bytes) {
   return _closeButton;
 }
 
+- (DownloadManagerStateView*)stateIcon {
+  if (!_stateIcon) {
+    _stateIcon = [[DownloadManagerStateView alloc] initWithFrame:CGRectZero];
+    _stateIcon.translatesAutoresizingMaskIntoConstraints = NO;
+    _stateIcon.downloadColor = [MDCPalette bluePalette].tint600;
+    _stateIcon.documentColor = [MDCPalette greyPalette].tint700;
+    [self updateStateIcon];
+  }
+  return _stateIcon;
+}
+
 - (UILabel*)statusLabel {
   if (!_statusLabel) {
     _statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    _statusLabel.font = [MDCTypography subheadFont];
+    _statusLabel.font = [MDCTypography body1Font];
+    _statusLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [_statusLabel
+        setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
+                                        forAxis:
+                                            UILayoutConstraintAxisHorizontal];
     [self updateStatusLabel];
   }
   return _statusLabel;
@@ -219,7 +461,8 @@ NSString* GetSizeString(long long size_in_bytes) {
     _actionButton = [UIButton buttonWithType:UIButtonTypeCustom];
     _actionButton.translatesAutoresizingMaskIntoConstraints = NO;
     _actionButton.exclusiveTouch = YES;
-    [_actionButton setTitleColor:[MDCPalette bluePalette].tint500
+    _actionButton.titleLabel.font = [MDCTypography buttonFont];
+    [_actionButton setTitleColor:[MDCPalette bluePalette].tint600
                         forState:UIControlStateNormal];
 
     [_actionButton addTarget:self
@@ -228,6 +471,69 @@ NSString* GetSizeString(long long size_in_bytes) {
     [self updateActionButton];
   }
   return _actionButton;
+}
+
+- (UIButton*)installDriveButton {
+  if (!_installDriveButton) {
+    _installDriveButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _installDriveButton.translatesAutoresizingMaskIntoConstraints = NO;
+    _installDriveButton.exclusiveTouch = YES;
+    _installDriveButton.titleLabel.font = [MDCTypography buttonFont];
+    [_installDriveButton setTitleColor:[MDCPalette bluePalette].tint600
+                              forState:UIControlStateNormal];
+
+    [_installDriveButton addTarget:self
+                            action:@selector(didTapInstallDriveButton)
+                  forControlEvents:UIControlEventTouchUpInside];
+    [_installDriveButton
+        setTitle:l10n_util::GetNSString(IDS_IOS_DOWNLOAD_MANAGER_INSTALL)
+        forState:UIControlStateNormal];
+  }
+  return _installDriveButton;
+}
+
+- (UIImageView*)installDriveIcon {
+  if (!_installDriveIcon) {
+    _installDriveIcon = [[UIImageView alloc] initWithFrame:CGRectZero];
+    _installDriveIcon.translatesAutoresizingMaskIntoConstraints = NO;
+    _installDriveIcon.image = ios::GetChromeBrowserProvider()
+                                  ->GetBrandedImageProvider()
+                                  ->GetDownloadGoogleDriveImage();
+  }
+  return _installDriveIcon;
+}
+
+- (UILabel*)installDriveLabel {
+  if (!_installDriveLabel) {
+    _installDriveLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _installDriveLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _installDriveLabel.font = [MDCTypography body1Font];
+    _installDriveLabel.text =
+        l10n_util::GetNSString(IDS_IOS_DOWNLOAD_MANAGER_GOOGLE_DRIVE);
+    [_installDriveLabel sizeToFit];
+  }
+  return _installDriveLabel;
+}
+
+- (RadialProgressView*)progressView {
+  if (!_progressView) {
+    _progressView = [[RadialProgressView alloc] initWithFrame:CGRectZero];
+    _progressView.translatesAutoresizingMaskIntoConstraints = NO;
+    _progressView.lineWidth = 2;
+    _progressView.progressTintColor = [MDCPalette bluePalette].tint600;
+    _progressView.trackTintColor = [MDCPalette greyPalette].tint300;
+    [self updateProgressView];
+  }
+  return _progressView;
+}
+
+- (UIView*)horizontalLine {
+  if (!_horizontalLine) {
+    _horizontalLine = [[UIView alloc] init];
+    _horizontalLine.translatesAutoresizingMaskIntoConstraints = NO;
+    _horizontalLine.backgroundColor = [MDCPalette greyPalette].tint300;
+  }
+  return _horizontalLine;
 }
 
 #pragma mark - Actions
@@ -253,13 +559,12 @@ NSString* GetSizeString(long long size_in_bytes) {
       NOTREACHED();
       break;
     }
-    case kDownloadManagerStateSuceeded: {
+    case kDownloadManagerStateSucceeded: {
       SEL selector = @selector
           (downloadManagerViewController:presentOpenInMenuWithLayoutGuide:);
       if ([_delegate respondsToSelector:selector]) {
-        UILayoutGuide* guide = FindNamedGuide(kActionButtonGuide, self.view);
         [_delegate downloadManagerViewController:self
-                presentOpenInMenuWithLayoutGuide:guide];
+                presentOpenInMenuWithLayoutGuide:self.actionButtonGuide];
       }
       break;
     }
@@ -273,7 +578,99 @@ NSString* GetSizeString(long long size_in_bytes) {
   }
 }
 
+- (void)didTapInstallDriveButton {
+  SEL selector = @selector(installDriveForDownloadManagerViewController:);
+  if ([_delegate respondsToSelector:selector]) {
+    [_delegate installDriveForDownloadManagerViewController:self];
+  }
+}
+
 #pragma mark - UI Updates
+
+// Updates and activates self.bottomMarginGuideTopConstraint.
+// self.bottomMarginGuideTopConstraint constraints kBottomMarginGuide's
+// topAnchor to installDriveControlsRow's bottom if |_installDriveButtonVisible|
+// is set to YES, otherwise self.view.bottomAnchor is constrained to
+// downloadControlsRow's bottom. This resizes self.view to show or hide
+// installDriveControlsRow view.
+- (void)updateBottomMarginGuideTopConstraint {
+  if (!self.viewLoaded) {
+    // This method will be called again when the view is loaded.
+    return;
+  }
+  self.bottomMarginGuideTopConstraint.active = NO;
+  NSLayoutYAxisAnchor* secondAnchor =
+      _installDriveButtonVisible ? self.installDriveControlsRow.bottomAnchor
+                                 : self.downloadControlsRow.bottomAnchor;
+
+  self.bottomMarginGuideTopConstraint =
+      [self.bottomMarginGuide.topAnchor constraintEqualToAnchor:secondAnchor];
+
+  self.bottomMarginGuideTopConstraint.active = YES;
+}
+
+// Updates background image for the given UITraitCollection.
+- (void)updateBackgroundForTraitCollection:(UITraitCollection*)traitCollection {
+  NSString* imageName =
+      traitCollection.horizontalSizeClass == UIUserInterfaceSizeClassRegular
+          ? @"background_regular"
+          : @"background_compact";
+
+  UIImage* image = [UIImage imageNamed:imageName];
+  UIEdgeInsets insets = UIEdgeInsetsMake(
+      kTopShadowHeight, kLeftRightShadowHeight, 0, kLeftRightShadowHeight);
+
+  self.background.image = [image resizableImageWithCapInsets:insets];
+}
+
+// Updates and activates constraints which depend on ui size class.
+- (void)updateConstraintsForTraitCollection:
+    (UITraitCollection*)traitCollection {
+  self.viewWidthConstraint.active = NO;
+
+  // With regular horizontal size class, UI is too wide to take the full width,
+  // because there will be a lot of blank space.
+  BOOL regularSizeClass =
+      traitCollection.horizontalSizeClass == UIUserInterfaceSizeClassRegular;
+  self.viewWidthConstraint = [self.view.widthAnchor
+      constraintEqualToAnchor:self.view.superview.widthAnchor
+                   multiplier:regularSizeClass ? 0.6 : 1.0];
+
+  self.viewWidthConstraint.active = YES;
+
+  CGFloat constant = regularSizeClass ? kLeftRightShadowHeight / 2 : 0;
+  self.downloadControlsRowLeadingConstraint.constant = constant;
+  self.downloadControlsRowTrailingConstraint.constant = -constant;
+  self.installDriveControlsRowLeadingConstraint.constant = constant;
+  self.installDriveControlsRowTrailingConstraint.constant = -constant;
+}
+
+// Anchors self.view.statusLabel to self.closeButton or to self.actionButton
+// (when download is not in progress and action button is visible).
+- (void)updateStatusLabelTrailingConstraint {
+  if (!self.viewLoaded || !self.view.superview) {
+    // Constraints can not be set if UI elements do not have a common view.
+    // This method will be called again when self.view is added to superview.
+    return;
+  }
+
+  self.statusLabelTrailingConstraint.active = NO;
+
+  UIView* secondAnchorElement = _state == kDownloadManagerStateInProgress
+                                    ? self.closeButton
+                                    : self.actionButton;
+
+  self.statusLabelTrailingConstraint = [self.statusLabel.trailingAnchor
+      constraintLessThanOrEqualToAnchor:secondAnchorElement.leadingAnchor
+                               constant:-kCloseButtonLeftMargin];
+
+  self.statusLabelTrailingConstraint.active = YES;
+}
+
+// Updates state icon depending.
+- (void)updateStateIcon {
+  [self.stateIcon setState:_state animated:YES];
+}
 
 // Updates status label text depending on |state|.
 - (void)updateStatusLabel {
@@ -288,11 +685,11 @@ NSString* GetSizeString(long long size_in_bytes) {
                                         _countOfBytesExpectedToReceive)];
       }
       break;
-    case kDownloadManagerStateInProgress:
-      // TODO(crbug.com/805533): Localize this string.
-      statusText =
-          [NSString stringWithFormat:@"Downloading... %@",
-                                     GetSizeString(_countOfBytesReceived)];
+    case kDownloadManagerStateInProgress: {
+      base::string16 size =
+          base::SysNSStringToUTF16(GetSizeString(_countOfBytesReceived));
+      statusText = l10n_util::GetNSStringF(
+          IDS_IOS_DOWNLOAD_MANAGER_DOWNLOADING_ELIPSIS, size);
       if (_countOfBytesExpectedToReceive != -1) {
         statusText = [statusText
             stringByAppendingFormat:@"/%@",
@@ -300,17 +697,17 @@ NSString* GetSizeString(long long size_in_bytes) {
                                         _countOfBytesExpectedToReceive)];
       }
       break;
-    case kDownloadManagerStateSuceeded:
+    }
+    case kDownloadManagerStateSucceeded:
       statusText = _fileName;
       break;
     case kDownloadManagerStateFailed:
-      // TODO(crbug.com/805533): Localize this string.
-      statusText = @"Couldn't Download";
+      statusText =
+          l10n_util::GetNSString(IDS_IOS_DOWNLOAD_MANAGER_COULDNT_DOWNLOAD);
       break;
   }
 
   self.statusLabel.text = statusText;
-  [self.statusLabel sizeToFit];
 }
 
 // Updates title and hidden state for action button depending on |state|.
@@ -318,23 +715,33 @@ NSString* GetSizeString(long long size_in_bytes) {
   NSString* title = nil;
   switch (_state) {
     case kDownloadManagerStateNotStarted:
-      // TODO(crbug.com/805533): Localize this string.
-      title = @"Download";
+      title = l10n_util::GetNSString(IDS_IOS_DOWNLOAD_MANAGER_DOWNLOAD);
       break;
     case kDownloadManagerStateInProgress:
       break;
-    case kDownloadManagerStateSuceeded:
-      // TODO(crbug.com/805533): Localize this string.
-      title = @"Open In...";
+    case kDownloadManagerStateSucceeded:
+      title = l10n_util::GetNSString(IDS_IOS_OPEN_IN);
       break;
     case kDownloadManagerStateFailed:
-      // TODO(crbug.com/805533): Localize this string.
-      title = @"Try Again";
+      title = l10n_util::GetNSString(IDS_IOS_DOWNLOAD_MANAGER_TRY_AGAIN);
       break;
   }
 
   [self.actionButton setTitle:title forState:UIControlStateNormal];
   self.actionButton.hidden = _state == kDownloadManagerStateInProgress;
+}
+
+- (void)updateProgressView {
+  self.progressView.hidden = _state != kDownloadManagerStateInProgress;
+  self.progressView.progress = _progress;
+}
+
+// Updates alpha value for install google drive controls row.
+// Makes whole installDriveControlsRow opaque if
+// _installDriveButtonVisible is set to YES, otherwise makes the row
+// fully transparent.
+- (void)updateInstallDriveControlsRow {
+  self.installDriveControlsRow.alpha = _installDriveButtonVisible ? 1.0f : 0.0f;
 }
 
 @end

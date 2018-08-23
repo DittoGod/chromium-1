@@ -14,12 +14,12 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/renderer/script_context.h"
-#include "third_party/WebKit/public/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebNode.h"
-#include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_node.h"
+#include "third_party/blink/public/web/web_user_gesture_indicator.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
 
@@ -123,10 +123,10 @@ void WebstoreBindings::Install(
   // or download progress listeners.
   int listener_mask = 0;
   CHECK(args[0]->IsBoolean());
-  if (args[0]->BooleanValue())
+  if (args[0].As<v8::Boolean>()->Value())
     listener_mask |= api::webstore::INSTALL_STAGE_LISTENER;
   CHECK(args[1]->IsBoolean());
-  if (args[1]->BooleanValue())
+  if (args[1].As<v8::Boolean>()->Value())
     listener_mask |= api::webstore::DOWNLOAD_PROGRESS_LISTENER;
 
   std::string preferred_store_link_url;

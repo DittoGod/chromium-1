@@ -10,7 +10,6 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
@@ -36,13 +35,6 @@ class TranslateBubbleViewBrowserTest : public InProcessBrowserTest {
   ~TranslateBubbleViewBrowserTest() override {}
 
   void SetUp() override {
-#if defined(OS_MACOSX)
-    // Enable the bubble on Mac (otherwise infobars are used).
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        ::switches::kEnableTranslateNewUX);
-    // Enable toolkit-views bubbles on Mac (otherwise Cocoa bubbles are used).
-    feature_list_.InitAndEnableFeature(features::kSecondaryUiMd);
-#endif
     set_open_about_blank_on_browser_launch(true);
     translate::TranslateManager::SetIgnoreMissingKeyForTesting(true);
     InProcessBrowserTest::SetUp();
@@ -63,7 +55,6 @@ class TranslateBubbleViewBrowserTest : public InProcessBrowserTest {
 
  private:
   std::string expected_lang_;
-  base::test::ScopedFeatureList feature_list_;
 
   bool OnLanguageDetermined(const content::NotificationSource& source,
                             const content::NotificationDetails& details) {
@@ -86,8 +77,10 @@ IN_PROC_BROWSER_TEST_F(TranslateBubbleViewBrowserTest,
   NavigateAndWaitForLanguageDetection(french_url, "fr");
   EXPECT_TRUE(TranslateBubbleView::GetCurrentBubble());
 
-  // Close the window without translating.
+  // Close the window without translating. Spin the runloop to allow
+  // asynchronous window closure to happen.
   chrome::CloseWindow(browser());
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(TranslateBubbleView::GetCurrentBubble());
 }
 
@@ -103,9 +96,11 @@ IN_PROC_BROWSER_TEST_F(TranslateBubbleViewBrowserTest,
   NavigateAndWaitForLanguageDetection(french_url, "fr");
   EXPECT_TRUE(TranslateBubbleView::GetCurrentBubble());
 
-  // Close the tab without translating.
+  // Close the tab without translating. Spin the runloop to allow asynchronous
+  // window closure to happen.
   EXPECT_EQ(1, browser()->tab_strip_model()->count());
   chrome::CloseWebContents(browser(), current_web_contents, false);
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(TranslateBubbleView::GetCurrentBubble());
 }
 

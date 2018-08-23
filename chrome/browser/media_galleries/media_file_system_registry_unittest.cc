@@ -18,7 +18,6 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
@@ -52,8 +51,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #endif
 
 namespace content {
@@ -209,6 +207,21 @@ class MockProfileSharedRenderProcessHostFactory
       content::SiteInstance* site_instance) const override;
 
  private:
+  class SharedMockRenderProcessHost : public content::MockRenderProcessHost {
+   public:
+    explicit SharedMockRenderProcessHost(
+        content::BrowserContext* browser_context)
+        : content::MockRenderProcessHost(browser_context) {}
+
+    // This test class lies that the process has not been used to allow
+    // testing of process sharing/reuse inherent in the unit tests that depend
+    // on the MockProfileSharedRenderProcessHostFactory.
+    bool HostHasNotBeenUsed() override { return true; }
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(SharedMockRenderProcessHost);
+  };
+
   mutable std::map<content::BrowserContext*,
                    std::unique_ptr<content::MockRenderProcessHost>>
       rph_map_;
@@ -379,8 +392,7 @@ class MediaFileSystemRegistryTest : public ChromeRenderViewHostTestHarness {
   // Needed for extension service & friends to work.
 
 #if defined(OS_CHROMEOS)
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
 #endif
 
   MockProfileSharedRenderProcessHostFactory rph_factory_;
@@ -426,7 +438,7 @@ MockProfileSharedRenderProcessHostFactory::CreateRenderProcessHost(
   if (existing != rph_map_.end())
     return existing->second.get();
   rph_map_[browser_context] =
-      base::MakeUnique<content::MockRenderProcessHost>(browser_context);
+      std::make_unique<SharedMockRenderProcessHost>(browser_context);
   return rph_map_[browser_context].get();
 }
 
@@ -456,14 +468,14 @@ ProfileState::ProfileState(
   no_permissions_extension_ =
       AddMediaGalleriesApp("no", read_permissions, profile_.get());
 
-  single_web_contents_.reset(
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL));
+  single_web_contents_ =
+      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
   single_rph_ = rph_factory->ReleaseRPH(profile_.get());
 
-  shared_web_contents1_.reset(
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL));
-  shared_web_contents2_.reset(
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL));
+  shared_web_contents1_ =
+      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
+  shared_web_contents2_ =
+      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
   shared_rph_ = rph_factory->ReleaseRPH(profile_.get());
 }
 
@@ -610,7 +622,7 @@ int ProfileState::GetAndClearComparisonCount() {
 
 void MediaFileSystemRegistryTest::CreateProfileState(size_t profile_count) {
   for (size_t i = 0; i < profile_count; ++i) {
-    profile_states_.push_back(base::MakeUnique<ProfileState>(&rph_factory_));
+    profile_states_.push_back(std::make_unique<ProfileState>(&rph_factory_));
   }
 }
 
@@ -1043,11 +1055,11 @@ TEST_F(MediaFileSystemRegistryTest, TestNameConstruction) {
   // on the test platform. In ChromeOS, these directories do not exist.
   base::FilePath path;
   if (num_auto_galleries() > 0) {
-    ASSERT_TRUE(PathService::Get(chrome::DIR_USER_MUSIC, &path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_USER_MUSIC, &path));
     profile_state->AddNameForAllCompare(GetExpectedFolderName(path));
-    ASSERT_TRUE(PathService::Get(chrome::DIR_USER_PICTURES, &path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_USER_PICTURES, &path));
     profile_state->AddNameForAllCompare(GetExpectedFolderName(path));
-    ASSERT_TRUE(PathService::Get(chrome::DIR_USER_VIDEOS, &path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_USER_VIDEOS, &path));
     profile_state->AddNameForAllCompare(GetExpectedFolderName(path));
 
     profile_state->CheckGalleries("names-dir", one_expectation, auto_galleries);

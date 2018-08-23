@@ -9,7 +9,6 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mojo/public/cpp/bindings/type_converter.h"
 #include "services/ui/public/cpp/property_type_converters.h"
@@ -44,7 +43,6 @@ class CandidateWindowBorder : public views::BubbleBorder {
                             gfx::kPlaceholderColor),
         parent_(parent),
         offset_(0) {
-    set_paint_arrow(views::BubbleBorder::PAINT_NONE);
     set_use_theme_background_color(true);
   }
   ~CandidateWindowBorder() override {}
@@ -199,9 +197,8 @@ CandidateWindowView::~CandidateWindowView() {
 views::Widget* CandidateWindowView::InitWidget() {
   views::Widget* widget = BubbleDialogDelegateView::CreateBubble(this);
 
-  wm::SetWindowVisibilityAnimationType(
-      widget->GetNativeView(),
-      wm::WINDOW_VISIBILITY_ANIMATION_TYPE_FADE);
+  wm::SetWindowVisibilityAnimationTransition(widget->GetNativeView(),
+                                             wm::ANIMATE_NONE);
 
   GetBubbleFrameView()->SetBubbleBorder(std::unique_ptr<views::BubbleBorder>(
       new CandidateWindowBorder(parent_window())));

@@ -31,13 +31,13 @@ import org.chromium.base.Callback;
 import org.chromium.base.CommandLine;
 import org.chromium.base.PathUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.asynctask.CustomShadowAsyncTask;
 import org.chromium.blink_public.platform.WebDisplayMode;
-import org.chromium.chrome.browser.DisableHistogramsRule;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.util.test.ShadowUrlUtilities;
+import org.chromium.chrome.test.support.DisableHistogramsRule;
 import org.chromium.content_public.common.ScreenOrientationValues;
-import org.chromium.testing.local.CustomShadowAsyncTask;
 import org.chromium.webapk.lib.common.WebApkConstants;
 import org.chromium.webapk.lib.common.WebApkMetaDataKeys;
 import org.chromium.webapk.test.WebApkTestHelper;
@@ -253,7 +253,7 @@ public class WebApkUpdateManagerUnitTest {
         final String kPackageName = "org.random.webapk";
         return WebApkInfo.create(getWebApkId(kPackageName), "", manifestData.scopeUrl,
                 new WebApkInfo.Icon(manifestData.primaryIcon),
-                new WebApkInfo.Icon(manifestData.badgeIcon), manifestData.name,
+                new WebApkInfo.Icon(manifestData.badgeIcon), null, manifestData.name,
                 manifestData.shortName, manifestData.displayMode, manifestData.orientation, -1,
                 manifestData.themeColor, manifestData.backgroundColor, kPackageName, -1,
                 WEB_MANIFEST_URL, manifestData.startUrl, manifestData.iconUrlToMurmur2HashMap,
@@ -433,7 +433,7 @@ public class WebApkUpdateManagerUnitTest {
 
         WebappDataStorage storage = getStorage(WEBAPK_PACKAGE_NAME);
         assertTrue(storage.getDidLastWebApkUpdateRequestSucceed());
-        assertEquals(initialTime, storage.getLastWebApkUpdateRequestCompletionTime());
+        assertEquals(initialTime, storage.getLastWebApkUpdateRequestCompletionTimeMs());
     }
 
     /**
@@ -456,8 +456,8 @@ public class WebApkUpdateManagerUnitTest {
         assertFalse(updateManager.updateRequested());
 
         assertTrue(storage.getDidLastWebApkUpdateRequestSucceed());
-        assertEquals(
-                mClockRule.currentTimeMillis(), storage.getLastWebApkUpdateRequestCompletionTime());
+        assertEquals(mClockRule.currentTimeMillis(),
+                storage.getLastWebApkUpdateRequestCompletionTimeMs());
     }
 
     /**
@@ -480,8 +480,8 @@ public class WebApkUpdateManagerUnitTest {
         // Check {@link WebappDataStorage} state.
         WebappDataStorage storage = getStorage(WEBAPK_PACKAGE_NAME);
         assertFalse(storage.getDidLastWebApkUpdateRequestSucceed());
-        assertEquals(
-                mClockRule.currentTimeMillis(), storage.getLastWebApkUpdateRequestCompletionTime());
+        assertEquals(mClockRule.currentTimeMillis(),
+                storage.getLastWebApkUpdateRequestCompletionTimeMs());
     }
 
     /**

@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -54,7 +55,7 @@
         {
           "object": "Vertical Scrollbar Layer",
           "rect": [0, 0, 15, 185],
-          "reason": "full"
+          "reason": "full layer"
         }
       ]
     },

@@ -4,45 +4,53 @@
 
 #include "chromecast/browser/android/cast_content_window_android.h"
 
+#include <memory>
+
 #include "base/android/jni_android.h"
+#include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/renderer_preferences.h"
 #include "jni/CastContentWindowAndroid_jni.h"
-#include "ui/display/display.h"
-#include "ui/display/screen.h"
 #include "ui/events/keycodes/keyboard_code_conversion_android.h"
 
 namespace chromecast {
+
+using base::android::ConvertUTF8ToJavaString;
+
 namespace shell {
 
 namespace {
-base::android::ScopedJavaLocalRef<jobject>
-CreateJavaWindow(jlong nativeWindow, bool isHeadless, bool enableTouchInput) {
+
+base::android::ScopedJavaLocalRef<jobject> CreateJavaWindow(
+    jlong native_window,
+    bool is_headless,
+    bool enable_touch_input,
+    bool is_remote_control_mode,
+    bool turn_on_screen) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  return Java_CastContentWindowAndroid_create(env, nativeWindow, isHeadless,
-                                              enableTouchInput);
+  return Java_CastContentWindowAndroid_create(
+      env, native_window, is_headless, enable_touch_input,
+      is_remote_control_mode, turn_on_screen);
 }
+
 }  // namespace
 
 // static
 std::unique_ptr<CastContentWindow> CastContentWindow::Create(
-    CastContentWindow::Delegate* delegate,
-    bool isHeadless,
-    bool enable_touch_input) {
-  return base::WrapUnique(
-      new CastContentWindowAndroid(delegate, isHeadless, enable_touch_input));
+    const CastContentWindow::CreateParams& params) {
+  return base::WrapUnique(new CastContentWindowAndroid(params));
 }
 
 CastContentWindowAndroid::CastContentWindowAndroid(
-    CastContentWindow::Delegate* delegate,
-    bool isHeadless,
-    bool enable_touch_input)
-    : delegate_(delegate),
+    const CastContentWindow::CreateParams& params)
+    : delegate_(params.delegate),
       java_window_(CreateJavaWindow(reinterpret_cast<jlong>(this),
-                                    isHeadless,
-                                    enable_touch_input)) {
+                                    params.is_headless,
+                                    params.enable_touch_input,
+                                    params.is_remote_control_mode,
+                                    params.turn_on_screen)) {
   DCHECK(delegate_);
 }
 
@@ -51,16 +59,33 @@ CastContentWindowAndroid::~CastContentWindowAndroid() {
   Java_CastContentWindowAndroid_onNativeDestroyed(env, java_window_);
 }
 
-void CastContentWindowAndroid::ShowWebContents(
+void CastContentWindowAndroid::CreateWindowForWebContents(
     content::WebContents* web_contents,
-    CastWindowManager* window_manager) {
-  DCHECK(window_manager);
+    CastWindowManager* /* window_manager */,
+    CastWindowManager::WindowId /* z_order */,
+    VisibilityPriority visibility_priority) {
+  DCHECK(web_contents);
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jobject> java_web_contents =
       web_contents->GetJavaWebContents();
 
-  Java_CastContentWindowAndroid_showWebContents(env, java_window_,
-                                                java_web_contents);
+  Java_CastContentWindowAndroid_createWindowForWebContents(
+      env, java_window_, java_web_contents,
+      static_cast<int>(visibility_priority));
+}
+
+void CastContentWindowAndroid::GrantScreenAccess() {
+  NOTIMPLEMENTED();
+}
+
+void CastContentWindowAndroid::RevokeScreenAccess() {
+  NOTIMPLEMENTED();
+}
+
+void CastContentWindowAndroid::EnableTouchInput(bool enabled) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_CastContentWindowAndroid_enableTouchInput(
+      env, java_window_, static_cast<jboolean>(enabled));
 }
 
 void CastContentWindowAndroid::OnActivityStopped(
@@ -78,6 +103,45 @@ void CastContentWindowAndroid::OnKeyDown(
                          ui::EF_NONE);
   delegate_->OnKeyEvent(key_event);
 }
+
+void CastContentWindowAndroid::RequestVisibility(
+    VisibilityPriority visibility_priority) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_CastContentWindowAndroid_requestVisibilityPriority(
+      env, java_window_, static_cast<int>(visibility_priority));
+}
+
+void CastContentWindowAndroid::NotifyVisibilityChange(
+    VisibilityType visibility_type) {
+  delegate_->OnVisibilityChange(visibility_type);
+}
+
+void CastContentWindowAndroid::RequestMoveOut() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_CastContentWindowAndroid_requestMoveOut(env, java_window_);
+}
+
+bool CastContentWindowAndroid::ConsumeGesture(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& jcaller,
+    int gesture_type) {
+  return delegate_->ConsumeGesture(static_cast<GestureType>(gesture_type));
+}
+
+void CastContentWindowAndroid::OnVisibilityChange(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& jcaller,
+    int visibility_type) {
+  NotifyVisibilityChange(static_cast<VisibilityType>(visibility_type));
+}
+
+base::android::ScopedJavaLocalRef<jstring> CastContentWindowAndroid::GetId(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& jcaller) {
+  return ConvertUTF8ToJavaString(env, delegate_->GetId());
+}
+
+CastContentWindow::CreateParams::CreateParams() {}
 
 }  // namespace shell
 }  // namespace chromecast

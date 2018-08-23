@@ -14,7 +14,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "cc/base/region.h"
 #include "cc/layers/content_layer_client.h"
@@ -292,8 +292,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   const std::string& name() const { return name_; }
   void set_name(const std::string& name) { name_ = name; }
 
-  // Set new TransferableResource for this layer. Note that |resource| may hold
-  // a handle for a shared memory resource or a gpu texture.
+  // Set new TransferableResource for this layer. This method only supports
+  // a gpu-backed |resource|.
   void SetTransferableResource(
       const viz::TransferableResource& resource,
       std::unique_ptr<viz::SingleReleaseCallback> release_callback,
@@ -307,7 +307,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   void SetShowPrimarySurface(const viz::SurfaceId& surface_id,
                              const gfx::Size& frame_size_in_dip,
                              SkColor default_background_color,
-                             const cc::DeadlinePolicy& deadline_policy);
+                             const cc::DeadlinePolicy& deadline_policy,
+                             bool stretch_content_to_fill_bounds);
 
   // In the event that the primary surface is not yet available in the
   // display compositor, the fallback surface will be used.
@@ -319,7 +320,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // Returns the fallback SurfaceId set by SetFallbackSurfaceId.
   const viz::SurfaceId* GetFallbackSurfaceId() const;
 
-  bool has_external_content() {
+  bool has_external_content() const {
     return texture_layer_.get() || surface_layer_.get();
   }
 
@@ -394,16 +395,16 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   // TextureLayerClient implementation.
   bool PrepareTransferableResource(
+      cc::SharedBitmapIdRegistrar* bitmap_registar,
       viz::TransferableResource* resource,
       std::unique_ptr<viz::SingleReleaseCallback>* release_callback) override;
 
   float device_scale_factor() const { return device_scale_factor_; }
 
   // LayerClient implementation.
-  std::unique_ptr<base::trace_event::ConvertableToTraceFormat> TakeDebugInfo(
+  std::unique_ptr<base::trace_event::TracedValue> TakeDebugInfo(
       cc::Layer* layer) override;
-  void didUpdateMainThreadScrollingReasons() override;
-  void didChangeScrollbarsHidden(bool) override;
+  void DidChangeScrollbarsHiddenIfOverlay(bool) override;
 
   // Triggers a call to SwitchToLayer.
   void SwitchCCLayerForTest();
@@ -437,6 +438,15 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // We keep this reference for the case that if the mask layer gets deleted
   // while attached to the main layer before the main layer is deleted.
   const Layer* layer_mask_back_link() const { return layer_mask_back_link_; }
+
+  // If |surface_layer_| exists, return whether the contents should stretch to
+  // fill the bounds of |this|. Defaults to false.
+  bool StretchContentToFillBounds() const;
+
+  // If |surface_layer_| exists, update the size. The updated size is necessary
+  // for proper scaling if the embedder is resized and the |surface_layer_| is
+  // set to stretch to fill bounds.
+  void SetSurfaceSize(gfx::Size surface_size_in_dip);
 
  private:
   friend class LayerOwner;
@@ -568,7 +578,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   LayerDelegate* delegate_;
 
-  base::ObserverList<LayerObserver> observer_list_;
+  base::ObserverList<LayerObserver>::Unchecked observer_list_;
 
   LayerOwner* owner_;
 
@@ -576,7 +586,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   // Ownership of the layer is held through one of the strongly typed layer
   // pointers, depending on which sort of layer this is.
-  scoped_refptr<cc::Layer> content_layer_;
+  scoped_refptr<cc::PictureLayer> content_layer_;
   scoped_refptr<cc::NinePatchLayer> nine_patch_layer_;
   scoped_refptr<cc::TextureLayer> texture_layer_;
   scoped_refptr<cc::SolidColorLayer> solid_color_layer_;
@@ -617,6 +627,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // If the value == 0, means we should not perform trilinear filtering on the
   // layer.
   unsigned trilinear_filtering_request_;
+
+  base::WeakPtrFactory<Layer> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(Layer);
 };

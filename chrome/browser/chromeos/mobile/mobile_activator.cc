@@ -15,13 +15,12 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list_threadsafe.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
@@ -37,7 +36,6 @@
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "components/prefs/pref_service.h"
-#include "components/ssl_config/ssl_config_prefs.h"
 #include "content/public/browser/browser_thread.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -275,7 +273,7 @@ void MobileActivator::InitiateActivation(const std::string& service_path) {
   ChangeState(network, PLAN_ACTIVATION_PAGE_LOADING, "");
 
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::TaskPriority::BACKGROUND, base::MayBlock()},
+      FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
       base::BindOnce(&CellularConfigDocument::LoadCellularConfigFile,
                      cellular_config_.get()),
       base::BindOnce(&MobileActivator::ContinueActivation, AsWeakPtr()));
@@ -319,10 +317,8 @@ void MobileActivator::GetPropertiesAndContinueActivation(
   base::DictionaryValue auto_connect_property;
   auto_connect_property.SetBoolean(shill::kAutoConnectProperty, true);
   NetworkHandler::Get()->network_configuration_handler()->SetShillProperties(
-      service_path_, auto_connect_property,
-      // Activation is triggered by the UI.
-      NetworkConfigurationObserver::SOURCE_USER_ACTION,
-      base::Bind(&base::DoNothing), network_handler::ErrorCallback());
+      service_path_, auto_connect_property, base::DoNothing(),
+      network_handler::ErrorCallback());
   StartActivation();
 }
 
@@ -348,10 +344,8 @@ void MobileActivator::HandleSetTransactionStatus(bool success) {
     const NetworkState* network = GetNetworkState(service_path_);
     if (network && IsSimpleActivationFlow(network)) {
       state_ = PLAN_ACTIVATION_DONE;
-      NetworkHandler::Get()->network_activation_handler()->
-          CompleteActivation(network->path(),
-                             base::Bind(&base::DoNothing),
-                             network_handler::ErrorCallback());
+      NetworkHandler::Get()->network_activation_handler()->CompleteActivation(
+          network->path(), base::DoNothing(), network_handler::ErrorCallback());
     } else {
       StartOTASP();
     }
@@ -560,9 +554,8 @@ void MobileActivator::HandleOTASPTimeout() {
 
 void MobileActivator::ConnectNetwork(const NetworkState* network) {
   NetworkHandler::Get()->network_connection_handler()->ConnectToNetwork(
-      network->path(), base::Bind(&base::DoNothing),
-      network_handler::ErrorCallback(), false /* check_error_state */,
-      ConnectCallbackMode::ON_STARTED);
+      network->path(), base::DoNothing(), network_handler::ErrorCallback(),
+      false /* check_error_state */, ConnectCallbackMode::ON_STARTED);
 }
 
 void MobileActivator::ForceReconnect(const NetworkState* network,
@@ -577,9 +570,7 @@ void MobileActivator::ForceReconnect(const NetworkState* network,
   // Connect() is called on the service again.  Hence this dance to explicitly
   // call Connect().
   NetworkHandler::Get()->network_connection_handler()->DisconnectNetwork(
-      network->path(),
-      base::Bind(&base::DoNothing),
-      network_handler::ErrorCallback());
+      network->path(), base::DoNothing(), network_handler::ErrorCallback());
   // Keep trying to connect until told otherwise.
   continue_reconnect_timer_.Stop();
   continue_reconnect_timer_.Start(
@@ -616,9 +607,7 @@ void MobileActivator::ContinueConnecting() {
       // then we're not getting traffic through at all.  Just disconnect and
       // try again.
       NetworkHandler::Get()->network_connection_handler()->DisconnectNetwork(
-          network->path(),
-          base::Bind(&base::DoNothing),
-          network_handler::ErrorCallback());
+          network->path(), base::DoNothing(), network_handler::ErrorCallback());
       return;
     }
     // Stop this callback
@@ -1101,7 +1090,7 @@ void MobileActivator::ReEnableCertRevocationChecking() {
   if (!prefs)
     return;
   if (reenable_cert_check_) {
-    prefs->SetBoolean(ssl_config::prefs::kCertRevocationCheckingEnabled, true);
+    prefs->SetBoolean(prefs::kCertRevocationCheckingEnabled, true);
     reenable_cert_check_ = false;
   }
 }
@@ -1112,9 +1101,9 @@ void MobileActivator::DisableCertRevocationChecking() {
   // TODO(rkc): We want to do this only if on Cellular.
   PrefService* prefs = g_browser_process->local_state();
   if (!reenable_cert_check_ &&
-      prefs->GetBoolean(ssl_config::prefs::kCertRevocationCheckingEnabled)) {
+      prefs->GetBoolean(prefs::kCertRevocationCheckingEnabled)) {
     reenable_cert_check_ = true;
-    prefs->SetBoolean(ssl_config::prefs::kCertRevocationCheckingEnabled, false);
+    prefs->SetBoolean(prefs::kCertRevocationCheckingEnabled, false);
   }
 }
 

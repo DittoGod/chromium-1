@@ -17,7 +17,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/renderer_host/media/fake_video_capture_provider.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/media_stream_ui_proxy.h"
@@ -62,7 +61,7 @@ void VideoInputDevicesEnumerated(base::Closure quit_closure,
         salt, security_origin, info.device_id);
     out->push_back(MediaDeviceInfo(device_id, info.label, std::string()));
   }
-  quit_closure.Run();
+  std::move(quit_closure).Run();
 }
 
 }  // namespace
@@ -143,9 +142,9 @@ class VideoCaptureTest : public testing::Test,
       devices_to_enumerate[MEDIA_DEVICE_TYPE_VIDEO_INPUT] = true;
       media_stream_manager_->media_devices_manager()->EnumerateDevices(
           devices_to_enumerate,
-          base::Bind(&VideoInputDevicesEnumerated, run_loop.QuitClosure(),
-                     browser_context_.GetMediaDeviceIDSalt(), security_origin,
-                     &video_devices));
+          base::BindOnce(&VideoInputDevicesEnumerated, run_loop.QuitClosure(),
+                         browser_context_.GetMediaDeviceIDSalt(),
+                         security_origin, &video_devices));
       run_loop.Run();
     }
     ASSERT_FALSE(video_devices.empty());
@@ -154,10 +153,11 @@ class VideoCaptureTest : public testing::Test,
     {
       base::RunLoop run_loop;
       media_stream_manager_->OpenDevice(
-          render_process_id, render_frame_id,
-          browser_context_.GetMediaDeviceIDSalt(), page_request_id,
+          render_process_id, render_frame_id, page_request_id,
           video_devices[0].device_id, MEDIA_DEVICE_VIDEO_CAPTURE,
-          security_origin,
+          MediaDeviceSaltAndOrigin{browser_context_.GetMediaDeviceIDSalt(),
+                                   browser_context_.GetMediaDeviceIDSalt(),
+                                   security_origin},
           base::BindOnce(&VideoCaptureTest::OnDeviceOpened,
                          base::Unretained(this), run_loop.QuitClosure()),
           MediaStreamManager::DeviceStoppedCallback());
@@ -177,11 +177,11 @@ class VideoCaptureTest : public testing::Test,
  protected:
   // media::mojom::VideoCaptureObserver implementation.
   MOCK_METHOD1(OnStateChanged, void(media::mojom::VideoCaptureState));
-  void OnBufferCreated(int32_t buffer_id,
-                       mojo::ScopedSharedBufferHandle handle) override {
-    DoOnBufferCreated(buffer_id);
+  void OnNewBuffer(int32_t buffer_id,
+                   media::mojom::VideoBufferHandlePtr buffer_handle) override {
+    DoOnNewBuffer(buffer_id);
   }
-  MOCK_METHOD1(DoOnBufferCreated, void(int32_t));
+  MOCK_METHOD1(DoOnNewBuffer, void(int32_t));
   void OnBufferReady(int32_t buffer_id,
                      media::mojom::VideoFrameInfoPtr info) override {
     DoOnBufferReady(buffer_id);
@@ -197,7 +197,7 @@ class VideoCaptureTest : public testing::Test,
 
     EXPECT_CALL(*this,
                 OnStateChanged(media::mojom::VideoCaptureState::STARTED));
-    EXPECT_CALL(*this, DoOnBufferCreated(_))
+    EXPECT_CALL(*this, DoOnNewBuffer(_))
         .Times(AnyNumber())
         .WillRepeatedly(Return());
     EXPECT_CALL(*this, DoOnBufferReady(_))
@@ -277,7 +277,8 @@ class VideoCaptureTest : public testing::Test,
   void SimulateError() {
     EXPECT_CALL(*this, OnStateChanged(media::mojom::VideoCaptureState::FAILED));
     VideoCaptureControllerID id(kDeviceId);
-    host_->OnError(id);
+    host_->OnError(id,
+                   media::VideoCaptureError::kIntentionalErrorRaisedByUnitTest);
     base::RunLoop().RunUntilIdle();
   }
 
@@ -295,11 +296,11 @@ class VideoCaptureTest : public testing::Test,
       opened_device_label_ = label;
       opened_session_id_ = opened_device.session_id;
     }
-    quit_closure.Run();
+    std::move(quit_closure).Run();
   }
 
   // |media_stream_manager_| needs to outlive |thread_bundle_| because it is a
-  // MessageLoop::DestructionObserver.
+  // MessageLoopCurrent::DestructionObserver.
   std::unique_ptr<MediaStreamManager> media_stream_manager_;
   const content::TestBrowserThreadBundle thread_bundle_;
   std::unique_ptr<media::AudioManager> audio_manager_;

@@ -11,7 +11,6 @@
 #include "base/files/file_path.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/platform_thread.h"
@@ -41,17 +40,26 @@ namespace {
 
 const int kWaitForNavigationStopSeconds = 10;
 
-Status GetContextIdForFrame(FrameTracker* tracker,
+Status GetContextIdForFrame(WebViewImpl* web_view,
                             const std::string& frame,
                             int* context_id) {
-  if (frame.empty()) {
+  if (frame.empty() || frame == web_view->GetId()) {
     *context_id = 0;
     return Status(kOk);
   }
-  Status status = tracker->GetContextIdForFrame(frame, context_id);
+  Status status =
+      web_view->GetFrameTracker()->GetContextIdForFrame(frame, context_id);
   if (status.IsError())
     return status;
   return Status(kOk);
+}
+
+WebViewImpl* GetTargetForFrame(WebViewImpl* web_view,
+                               const std::string& frame) {
+  return frame.empty()
+             ? web_view
+             : static_cast<WebViewImpl*>(
+                   web_view->GetFrameTracker()->GetTargetForFrame(frame));
 }
 
 const char* GetAsString(MouseEventType type) {
@@ -121,24 +129,44 @@ WebViewImpl::WebViewImpl(const std::string& id,
     : id_(id),
       w3c_compliant_(w3c_compliant),
       browser_info_(browser_info),
-      dom_tracker_(new DomTracker(client.get())),
-      frame_tracker_(new FrameTracker(client.get())),
-      dialog_manager_(new JavaScriptDialogManager(client.get(), browser_info)),
+      is_locked_(false),
+      is_detached_(false),
+      parent_(nullptr),
+      client_(std::move(client)),
+      dom_tracker_(new DomTracker(client_.get())),
+      frame_tracker_(new FrameTracker(client_.get(), this, browser_info)),
+      dialog_manager_(new JavaScriptDialogManager(client_.get(), browser_info)),
       navigation_tracker_(PageLoadStrategy::Create(page_load_strategy,
-                                                   client.get(),
+                                                   client_.get(),
                                                    browser_info,
                                                    dialog_manager_.get())),
       mobile_emulation_override_manager_(
-          new MobileEmulationOverrideManager(client.get(), device_metrics)),
+          new MobileEmulationOverrideManager(client_.get(), device_metrics)),
       geolocation_override_manager_(
-          new GeolocationOverrideManager(client.get())),
+          new GeolocationOverrideManager(client_.get())),
       network_conditions_override_manager_(
-          new NetworkConditionsOverrideManager(client.get())),
-      heap_snapshot_taker_(new HeapSnapshotTaker(client.get())),
-      debugger_(new DebuggerTracker(client.get())),
-      client_(client.release()) {}
+          new NetworkConditionsOverrideManager(client_.get())),
+      heap_snapshot_taker_(new HeapSnapshotTaker(client_.get())),
+      debugger_(new DebuggerTracker(client_.get())) {
+  client_->SetOwner(this);
+}
 
 WebViewImpl::~WebViewImpl() {}
+
+WebViewImpl* WebViewImpl::CreateChild(const std::string& session_id,
+                                      const std::string& target_id) const {
+  DevToolsClientImpl* parent_client =
+      static_cast<DevToolsClientImpl*>(client_.get());
+  std::unique_ptr<DevToolsClient> child_client(
+      std::make_unique<DevToolsClientImpl>(parent_client, session_id));
+  WebViewImpl* child = new WebViewImpl(target_id, w3c_compliant_, browser_info_,
+                                       std::move(child_client), nullptr,
+                                       navigation_tracker_->IsNonBlocking()
+                                           ? PageLoadStrategy::kNone
+                                           : PageLoadStrategy::kNormal);
+  child->parent_ = this;
+  return child;
+}
 
 std::string WebViewImpl::GetId() {
   return id_;
@@ -185,8 +213,7 @@ Status WebViewImpl::Load(const std::string& url, const Timeout* timeout) {
     return Status(kUnknownError, "unsupported protocol");
   base::DictionaryValue params;
   params.SetString("url", url);
-  if (browser_info_->major_version >= 63 &&
-      navigation_tracker_->IsNonBlocking()) {
+  if (navigation_tracker_->IsNonBlocking()) {
     // With non-bloakcing navigation tracker, the previous navigation might
     // still be in progress, and this can cause the new navigate command to be
     // ignored on Chrome v63 and above. Stop previous navigation first.
@@ -201,6 +228,20 @@ Status WebViewImpl::Reload(const Timeout* timeout) {
   base::DictionaryValue params;
   params.SetBoolean("ignoreCache", false);
   return client_->SendCommandWithTimeout("Page.reload", params, timeout);
+}
+
+Status WebViewImpl::Freeze(const Timeout* timeout) {
+  base::DictionaryValue params;
+  params.SetString("state", "frozen");
+  return client_->SendCommandWithTimeout("Page.setWebLifecycleState", params,
+                                         timeout);
+}
+
+Status WebViewImpl::Resume(const Timeout* timeout) {
+  base::DictionaryValue params;
+  params.SetString("state", "active");
+  return client_->SendCommandWithTimeout("Page.setWebLifecycleState", params,
+                                         timeout);
 }
 
 Status WebViewImpl::SendCommand(const std::string& cmd,
@@ -276,9 +317,16 @@ Status WebViewImpl::TraverseHistoryWithJavaScript(int delta) {
 Status WebViewImpl::EvaluateScript(const std::string& frame,
                                    const std::string& expression,
                                    std::unique_ptr<base::Value>* result) {
+  WebViewImpl* target = GetTargetForFrame(this, frame);
+  if (target != nullptr && target != this) {
+    if (target->IsDetached())
+      return Status(kTargetDetached);
+    WebViewImplHolder target_holder(target);
+    return target->EvaluateScript(frame, expression, result);
+  }
+
   int context_id;
-  Status status = GetContextIdForFrame(frame_tracker_.get(), frame,
-                                       &context_id);
+  Status status = GetContextIdForFrame(this, frame, &context_id);
   if (status.IsError())
     return status;
   return internal::EvaluateScriptAndGetValue(
@@ -329,9 +377,16 @@ Status WebViewImpl::GetFrameByFunction(const std::string& frame,
                                        const std::string& function,
                                        const base::ListValue& args,
                                        std::string* out_frame) {
+  WebViewImpl* target = GetTargetForFrame(this, frame);
+  if (target != nullptr && target != this) {
+    if (target->IsDetached())
+      return Status(kTargetDetached);
+    WebViewImplHolder target_holder(target);
+    return target->GetFrameByFunction(frame, function, args, out_frame);
+  }
+
   int context_id;
-  Status status = GetContextIdForFrame(frame_tracker_.get(), frame,
-                                       &context_id);
+  Status status = GetContextIdForFrame(this, frame, &context_id);
   if (status.IsError())
     return status;
   bool found_node;
@@ -346,26 +401,58 @@ Status WebViewImpl::GetFrameByFunction(const std::string& frame,
   return dom_tracker_->GetFrameIdForNode(node_id, out_frame);
 }
 
-Status WebViewImpl::DispatchMouseEvents(const std::list<MouseEvent>& events,
-                                        const std::string& frame) {
-  double page_scale_factor = 1.0;
-  if (browser_info_->build_no >= 2358 && browser_info_->build_no <= 2430 &&
-      (browser_info_->is_android ||
-       mobile_emulation_override_manager_->IsEmulatingTouch())) {
-    // As of crrev.com/323900, on Android and under mobile emulation,
-    // Input.dispatchMouseEvent fails to apply the page scale factor to the
-    // mouse event coordinates. This leads to the MouseEvent being triggered on
-    // the wrong location on the page. This was fixed on the browser side in
-    // crrev.com/333979.
-    // TODO(samuong): remove once we stop supporting M45.
-    std::unique_ptr<base::Value> value;
-    Status status = EvaluateScript(
-        std::string(), "window.screen.width / window.innerWidth;", &value);
+Status WebViewImpl::DispatchTouchEventsForMouseEvents(
+    const std::list<MouseEvent>& events,
+    const std::string& frame) {
+  // Touch events are filtered by the compositor if there are no touch listeners
+  // on the page. Wait two frames for the compositor to sync with the main
+  // thread to get consistent behavior.
+  base::DictionaryValue params;
+  params.SetString("expression",
+                   "new Promise(x => setTimeout(() => setTimeout(x, 20), 20)");
+  params.SetBoolean("awaitPromise", true);
+  client_->SendCommand("Runtime.evaluate", params);
+  for (std::list<MouseEvent>::const_iterator it = events.begin();
+       it != events.end(); ++it) {
+    base::DictionaryValue params;
+
+    switch (it->type) {
+      case kPressedMouseEventType:
+        params.SetString("type", "touchStart");
+        break;
+      case kReleasedMouseEventType:
+        params.SetString("type", "touchEnd");
+        break;
+      case kMovedMouseEventType:
+        if (it->button == kNoneMouseButton)
+          continue;
+        params.SetString("type", "touchMove");
+        break;
+    }
+
+    std::unique_ptr<base::ListValue> touchPoints(new base::ListValue);
+    if (it->type != kReleasedMouseEventType) {
+      std::unique_ptr<base::DictionaryValue> touchPoint(
+          new base::DictionaryValue);
+      touchPoint->SetInteger("x", it->x);
+      touchPoint->SetInteger("y", it->y);
+      touchPoints->Append(std::move(touchPoint));
+    }
+    params.SetList("touchPoints", std::move(touchPoints));
+    params.SetInteger("modifiers", it->modifiers);
+    Status status = client_->SendCommand("Input.dispatchTouchEvent", params);
     if (status.IsError())
       return status;
-    if (!value->GetAsDouble(&page_scale_factor))
-      return Status(kUnknownError, "unable to determine page scale factor");
   }
+  return Status(kOk);
+}
+
+Status WebViewImpl::DispatchMouseEvents(const std::list<MouseEvent>& events,
+                                        const std::string& frame) {
+  if (mobile_emulation_override_manager_->IsEmulatingTouch())
+    return DispatchTouchEventsForMouseEvents(events, frame);
+
+  double page_scale_factor = 1.0;
   for (std::list<MouseEvent>::const_iterator it = events.begin();
        it != events.end(); ++it) {
     base::DictionaryValue params;
@@ -384,9 +471,9 @@ Status WebViewImpl::DispatchMouseEvents(const std::list<MouseEvent>& events,
 
 Status WebViewImpl::DispatchTouchEvent(const TouchEvent& event) {
   base::ListValue args;
-  args.Append(base::MakeUnique<base::Value>(event.x));
-  args.Append(base::MakeUnique<base::Value>(event.y));
-  args.Append(base::MakeUnique<base::Value>(GetAsString(event.type)));
+  args.Append(std::make_unique<base::Value>(event.x));
+  args.Append(std::make_unique<base::Value>(event.y));
+  args.Append(std::make_unique<base::Value>(GetAsString(event.type)));
   std::unique_ptr<base::Value> unused;
   return CallFunction(std::string(), kDispatchTouchEventScript, args, &unused);
 }
@@ -434,8 +521,7 @@ Status WebViewImpl::GetCookies(std::unique_ptr<base::ListValue>* cookies,
   base::DictionaryValue params;
   std::unique_ptr<base::DictionaryValue> result;
 
-  if (browser_info_->build_no >= 3029 &&
-      browser_info_->browser_name != "webview") {
+  if (browser_info_->browser_name != "webview") {
     base::ListValue url_list;
     url_list.AppendString(current_page_url);
     params.SetKey("urls", url_list.Clone());
@@ -464,16 +550,10 @@ Status WebViewImpl::DeleteCookie(const std::string& name,
   base::DictionaryValue params;
   params.SetString("url", url);
   std::string command;
-  if (browser_info_->build_no >= 3189) {
-    params.SetString("name", name);
-    params.SetString("domain", domain);
-    params.SetString("path", path);
-    command = "Network.deleteCookies";
-  } else {
-    params.SetString("cookieName", name);
-    command = "Page.deleteCookie";
-  }
-
+  params.SetString("name", name);
+  params.SetString("domain", domain);
+  params.SetString("path", path);
+  command = "Network.deleteCookies";
   return client_->SendCommand(command, params);
 }
 
@@ -516,12 +596,7 @@ Status WebViewImpl::WaitForPendingNavigations(const std::string& frame_id,
   if (status.code() == kTimeout && stop_load_on_timeout) {
     VLOG(0) << "Timed out. Stopping navigation...";
     navigation_tracker_->set_timed_out(true);
-    if (browser_info_->major_version >= 63) {
-      client_->SendCommand("Page.stopLoading", base::DictionaryValue());
-    } else {
-      std::unique_ptr<base::Value> unused_value;
-      EvaluateScript(std::string(), "window.stop();", &unused_value);
-    }
+    client_->SendCommand("Page.stopLoading", base::DictionaryValue());
     // We don't consider |timeout| here to make sure the navigation actually
     // stops and we cleanup properly after a command that caused a navigation
     // that timed out.  Otherwise we might have to wait for that before
@@ -575,6 +650,14 @@ Status WebViewImpl::SetFileInputFiles(
     const std::string& frame,
     const base::DictionaryValue& element,
     const std::vector<base::FilePath>& files) {
+  WebViewImpl* target = GetTargetForFrame(this, frame);
+  if (target != nullptr && target != this) {
+    if (target->IsDetached())
+      return Status(kTargetDetached);
+    WebViewImplHolder target_holder(target);
+    return target->SetFileInputFiles(frame, element, files);
+  }
+
   base::ListValue file_list;
   for (size_t i = 0; i < files.size(); ++i) {
     if (!files[i].IsAbsolute()) {
@@ -589,8 +672,7 @@ Status WebViewImpl::SetFileInputFiles(
   }
 
   int context_id;
-  Status status = GetContextIdForFrame(frame_tracker_.get(), frame,
-                                       &context_id);
+  Status status = GetContextIdForFrame(this, frame, &context_id);
   if (status.IsError())
     return status;
   base::ListValue args;
@@ -828,6 +910,55 @@ Status WebViewImpl::IsNotPendingNavigation(const std::string& frame_id,
   return Status(kOk);
 }
 
+bool WebViewImpl::IsOOPIF(const std::string& frame_id) {
+  WebView* target = GetTargetForFrame(this, frame_id);
+  return target != nullptr && frame_id == target->GetId();
+}
+
+FrameTracker* WebViewImpl::GetFrameTracker() const {
+  return frame_tracker_.get();
+}
+
+const WebViewImpl* WebViewImpl::GetParent() const {
+  return parent_;
+}
+
+bool WebViewImpl::Lock() {
+  bool was_locked = is_locked_;
+  is_locked_ = true;
+  return was_locked;
+}
+
+void WebViewImpl::Unlock() {
+  is_locked_ = false;
+}
+
+bool WebViewImpl::IsLocked() const {
+  return is_locked_;
+}
+
+void WebViewImpl::SetDetached() {
+  is_detached_ = true;
+  client_->SetDetached();
+}
+
+bool WebViewImpl::IsDetached() const {
+  return is_detached_;
+}
+
+WebViewImplHolder::WebViewImplHolder(WebViewImpl* web_view)
+    : web_view_(web_view), was_locked_(web_view->Lock()) {}
+
+WebViewImplHolder::~WebViewImplHolder() {
+  if (web_view_ != nullptr && !was_locked_) {
+    if (!web_view_->IsDetached())
+      web_view_->Unlock();
+    else if (web_view_->GetParent() != nullptr)
+      web_view_->GetParent()->GetFrameTracker()->DeleteTargetForFrame(
+          web_view_->GetId());
+  }
+}
+
 namespace internal {
 
 Status EvaluateScript(DevToolsClient* client,
@@ -902,7 +1033,7 @@ Status EvaluateScriptAndGetValue(DevToolsClient* client,
     return Status(kUnknownError, "Runtime.evaluate missing string 'type'");
 
   if (type == "undefined") {
-    *result = base::MakeUnique<base::Value>();
+    *result = std::make_unique<base::Value>();
   } else {
     base::Value* value;
     if (!temp_result->Get("value", &value))

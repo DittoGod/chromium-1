@@ -12,12 +12,12 @@
 #include "components/autofill/content/renderer/form_autofill_util.h"
 #include "components/autofill/content/renderer/page_form_analyser_logger.h"
 #include "components/autofill/content/renderer/password_form_conversion_utils.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebElementCollection.h"
-#include "third_party/WebKit/public/web/WebFormControlElement.h"
-#include "third_party/WebKit/public/web/WebLabelElement.h"
-#include "third_party/WebKit/public/web/WebNode.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_element_collection.h"
+#include "third_party/blink/public/web/web_form_control_element.h"
+#include "third_party/blink/public/web/web_label_element.h"
+#include "third_party/blink/public/web/web_node.h"
 #include "third_party/re2/src/re2/re2.h"
 
 namespace autofill {
@@ -197,9 +197,8 @@ std::vector<FormInputCollection> ExtractFormsForAnalysis(
       // to be username or password fields.
       if (input.TagName() == "INPUT" &&
           (!input.HasAttribute("type") ||
-           std::find(std::begin(kTypeAttributes), std::end(kTypeAttributes),
-                     input.GetAttribute("type").Utf8()) !=
-               std::end(kTypeAttributes))) {
+           base::ContainsValue(kTypeAttributes,
+                               input.GetAttribute("type").Utf8()))) {
         form_input_collections.back().AddInput(input);
         inputs_with_forms.insert(input);
       }

@@ -8,8 +8,10 @@
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "chrome/installer/setup/buildflags.h"
 #include "chrome/installer/util/lzma_util.h"
-#include "chrome/installer/zucchini/zucchini_integration.h"
+#include "components/zucchini/zucchini.h"
+#include "components/zucchini/zucchini_integration.h"
 #include "courgette/courgette.h"
 #include "third_party/bspatch/mbspatch.h"
 
@@ -37,8 +39,7 @@ bool ArchivePatchHelper::UncompressAndPatch(
     UnPackConsumer consumer) {
   ArchivePatchHelper instance(working_directory, compressed_archive,
                               patch_source, target, consumer);
-  return (instance.Uncompress(NULL) &&
-          (instance.CourgetteEnsemblePatch() || instance.BinaryPatch()));
+  return (instance.Uncompress(NULL) && instance.ApplyPatch());
 }
 
 bool ArchivePatchHelper::Uncompress(base::FilePath* last_uncompressed_file) {
@@ -59,6 +60,18 @@ bool ArchivePatchHelper::Uncompress(base::FilePath* last_uncompressed_file) {
   if (last_uncompressed_file)
     *last_uncompressed_file = last_uncompressed_file_;
   return true;
+}
+
+bool ArchivePatchHelper::ApplyPatch() {
+  // TODO(ckitagawa): Swap ordering back to Zucchini first once we ship
+  // Zucchini based patches by default.
+  if (CourgetteEnsemblePatch() || BinaryPatch())
+    return true;
+#if BUILDFLAG(ZUCCHINI)
+  if (ZucchiniEnsemblePatch())
+    return true;
+#endif  // BUILDFLAG(ZUCCHINI)
+  return false;
 }
 
 bool ArchivePatchHelper::CourgetteEnsemblePatch() {
@@ -100,6 +113,9 @@ bool ArchivePatchHelper::ZucchiniEnsemblePatch() {
              << " to file " << patch_source_.value() << " and generating file "
              << target_.value()
              << " using Zucchini. err=" << static_cast<uint32_t>(result);
+
+  // Ensure a partial output is not left behind.
+  base::DeleteFile(target_, false);
 
   return false;
 }

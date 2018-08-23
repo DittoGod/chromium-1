@@ -6,7 +6,6 @@
 
 #include <windows.h>
 #include <objbase.h>
-#include <shlwapi.h>
 #include <shobjidl.h>
 #include <propkey.h>  // Needs to come after shobjidl.h.
 #include <stddef.h>
@@ -23,9 +22,7 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
@@ -33,16 +30,17 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_propvariant.h"
+#include "base/win/shlwapi.h"
 #include "base/win/shortcut.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/policy/policy_path_parser.h"
 #include "chrome/browser/shell_integration.h"
-#include "chrome/browser/web_applications/web_app.h"
+#include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "chrome/browser/win/settings_app_monitor.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths_internal.h"
@@ -134,9 +132,8 @@ base::string16 GetExpectedAppId(const base::CommandLine& command_line,
     app_name = base::UTF8ToUTF16(web_app::GenerateApplicationNameFromURL(
         GURL(command_line.GetSwitchValueASCII(switches::kApp))));
   } else if (command_line.HasSwitch(switches::kAppId)) {
-    app_name = base::UTF8ToUTF16(
-        web_app::GenerateApplicationNameFromExtensionId(
-            command_line.GetSwitchValueASCII(switches::kAppId)));
+    app_name = base::UTF8ToUTF16(web_app::GenerateApplicationNameFromAppId(
+        command_line.GetSwitchValueASCII(switches::kAppId)));
   } else if (command_line.HasSwitch(switches::kShowAppList)) {
     app_name = GetAppListAppName();
   } else {
@@ -152,11 +149,11 @@ void MigrateTaskbarPinsCallback() {
 
   // Get full path of chrome.
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe))
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe))
     return;
 
   base::FilePath pins_path;
-  if (!PathService::Get(base::DIR_TASKBAR_PINS, &pins_path)) {
+  if (!base::PathService::Get(base::DIR_TASKBAR_PINS, &pins_path)) {
     NOTREACHED();
     return;
   }
@@ -235,7 +232,7 @@ DefaultWebClientState GetDefaultWebClientStateFromShellUtilDefaultState(
 }
 
 // A recorder of user actions in the Windows Settings app.
-class DefaultBrowserActionRecorder : public win::SettingsAppMonitor::Delegate {
+class DefaultBrowserActionRecorder : public SettingsAppMonitor::Delegate {
  public:
   // Creates the recorder and the monitor that drives it. |continuation| will be
   // run once the monitor's initialization completes (regardless of success or
@@ -297,7 +294,7 @@ class DefaultBrowserActionRecorder : public win::SettingsAppMonitor::Delegate {
 
   // Monitors user interaction with the Windows Settings app for the sake of
   // reporting user actions.
-  win::SettingsAppMonitor settings_app_monitor_;
+  SettingsAppMonitor settings_app_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(DefaultBrowserActionRecorder);
 };
@@ -403,7 +400,7 @@ class OpenSystemSettingsHelper {
   void AddRegistryKeyWatcher(const wchar_t* key_path) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-    auto reg_key = base::MakeUnique<base::win::RegKey>(HKEY_CURRENT_USER,
+    auto reg_key = std::make_unique<base::win::RegKey>(HKEY_CURRENT_USER,
                                                        key_path, KEY_NOTIFY);
 
     if (reg_key->Valid() &&
@@ -535,7 +532,7 @@ bool SetAsDefaultBrowser() {
   base::AssertBlockingAllowed();
 
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
     LOG(ERROR) << "Error getting app exe path";
     return false;
   }
@@ -559,7 +556,7 @@ bool SetAsDefaultProtocolClient(const std::string& protocol) {
     return false;
 
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
     LOG(ERROR) << "Error getting app exe path";
     return false;
   }
@@ -639,7 +636,7 @@ bool SetAsDefaultBrowserUsingIntentPicker() {
   base::AssertBlockingAllowed();
 
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED() << "Error getting app exe path";
     return false;
   }
@@ -659,7 +656,7 @@ void SetAsDefaultBrowserUsingSystemSettings(
   base::AssertBlockingAllowed();
 
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED() << "Error getting app exe path";
     on_finished_callback.Run();
     return;
@@ -686,7 +683,7 @@ bool SetAsDefaultProtocolClientUsingIntentPicker(const std::string& protocol) {
   base::AssertBlockingAllowed();
 
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED() << "Error getting app exe path";
     return false;
   }
@@ -709,7 +706,7 @@ void SetAsDefaultProtocolClientUsingSystemSettings(
   base::AssertBlockingAllowed();
 
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED() << "Error getting app exe path";
     on_finished_callback.Run();
     return;
@@ -747,7 +744,7 @@ void MigrateTaskbarPins() {
   // run-time Chrome icon is merged with the taskbar shortcut), but it is not an
   // urgent task.
   base::CreateCOMSTATaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND})
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT})
       ->PostTask(FROM_HERE, base::Bind(&MigrateTaskbarPinsCallback));
 }
 

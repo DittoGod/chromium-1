@@ -4,68 +4,112 @@
 
 #include "content/browser/loader/prefetch_url_loader.h"
 
+#include "base/feature_list.h"
+#include "content/browser/web_package/signed_exchange_prefetch_handler.h"
+#include "content/browser/web_package/signed_exchange_utils.h"
+#include "content/public/common/content_features.h"
+#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+
 namespace content {
 
 PrefetchURLLoader::PrefetchURLLoader(
     int32_t routing_id,
     int32_t request_id,
     uint32_t options,
+    base::RepeatingCallback<int(void)> frame_tree_node_id_getter,
     const network::ResourceRequest& resource_request,
     network::mojom::URLLoaderClientPtr client,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
-    network::mojom::URLLoaderFactory* network_loader_factory)
-    : network_client_binding_(this), forwarding_client_(std::move(client)) {
-  DCHECK(network_loader_factory);
+    scoped_refptr<network::SharedURLLoaderFactory> network_loader_factory,
+    URLLoaderThrottlesGetter url_loader_throttles_getter,
+    ResourceContext* resource_context,
+    scoped_refptr<net::URLRequestContextGetter> request_context_getter)
+    : frame_tree_node_id_getter_(frame_tree_node_id_getter),
+      url_(resource_request.url),
+      report_raw_headers_(resource_request.report_raw_headers),
+      load_flags_(resource_request.load_flags),
+      throttling_profile_id_(resource_request.throttling_profile_id),
+      network_loader_factory_(std::move(network_loader_factory)),
+      client_binding_(this),
+      forwarding_client_(std::move(client)),
+      url_loader_throttles_getter_(url_loader_throttles_getter),
+      resource_context_(resource_context),
+      request_context_getter_(std::move(request_context_getter)) {
+  DCHECK(network_loader_factory_);
+
+  if (resource_request.request_initiator)
+    request_initiator_ = *resource_request.request_initiator;
 
   network::mojom::URLLoaderClientPtr network_client;
-  network_client_binding_.Bind(mojo::MakeRequest(&network_client));
-  network_client_binding_.set_connection_error_handler(base::BindOnce(
+  client_binding_.Bind(mojo::MakeRequest(&network_client));
+  client_binding_.set_connection_error_handler(base::BindOnce(
       &PrefetchURLLoader::OnNetworkConnectionError, base::Unretained(this)));
-  network_loader_factory->CreateLoaderAndStart(
-      mojo::MakeRequest(&network_loader_), routing_id, request_id, options,
+  network_loader_factory_->CreateLoaderAndStart(
+      mojo::MakeRequest(&loader_), routing_id, request_id, options,
       resource_request, std::move(network_client), traffic_annotation);
 }
 
 PrefetchURLLoader::~PrefetchURLLoader() = default;
 
-void PrefetchURLLoader::FollowRedirect() {
-  network_loader_->FollowRedirect();
+void PrefetchURLLoader::FollowRedirect(
+    const base::Optional<std::vector<std::string>>&
+        to_be_removed_request_headers,
+    const base::Optional<net::HttpRequestHeaders>& modified_request_headers) {
+  DCHECK(!modified_request_headers.has_value()) << "Redirect with modified "
+                                                   "headers was not supported "
+                                                   "yet. crbug.com/845683";
+  if (signed_exchange_prefetch_handler_) {
+    // Rebind |client_binding_| and |loader_|.
+    client_binding_.Bind(signed_exchange_prefetch_handler_->FollowRedirect(
+        mojo::MakeRequest(&loader_)));
+    return;
+  }
+
+  loader_->FollowRedirect(base::nullopt, base::nullopt);
 }
 
 void PrefetchURLLoader::ProceedWithResponse() {
-  network_loader_->ProceedWithResponse();
+  loader_->ProceedWithResponse();
 }
 
 void PrefetchURLLoader::SetPriority(net::RequestPriority priority,
                                     int intra_priority_value) {
-  network_loader_->SetPriority(priority, intra_priority_value);
+  loader_->SetPriority(priority, intra_priority_value);
 }
 
 void PrefetchURLLoader::PauseReadingBodyFromNet() {
-  network_loader_->PauseReadingBodyFromNet();
+  loader_->PauseReadingBodyFromNet();
 }
 
 void PrefetchURLLoader::ResumeReadingBodyFromNet() {
-  network_loader_->ResumeReadingBodyFromNet();
+  loader_->ResumeReadingBodyFromNet();
 }
 
 void PrefetchURLLoader::OnReceiveResponse(
-    const network::ResourceResponseHead& head,
-    const base::Optional<net::SSLInfo>& ssl_info,
-    network::mojom::DownloadedTempFilePtr downloaded_file) {
-  forwarding_client_->OnReceiveResponse(head, ssl_info,
-                                        std::move(downloaded_file));
+    const network::ResourceResponseHead& response) {
+  if (signed_exchange_utils::ShouldHandleAsSignedHTTPExchange(url_, response)) {
+    DCHECK(!signed_exchange_prefetch_handler_);
+
+    // Note that after this point this doesn't directly get upcalls from the
+    // network. (Until |this| calls the handler's FollowRedirect.)
+    signed_exchange_prefetch_handler_ =
+        std::make_unique<SignedExchangePrefetchHandler>(
+            frame_tree_node_id_getter_, report_raw_headers_, load_flags_,
+            throttling_profile_id_, response, std::move(loader_),
+            client_binding_.Unbind(), network_loader_factory_,
+            request_initiator_, url_, url_loader_throttles_getter_,
+            resource_context_, request_context_getter_, this);
+    return;
+  }
+  forwarding_client_->OnReceiveResponse(response);
 }
 
 void PrefetchURLLoader::OnReceiveRedirect(
     const net::RedirectInfo& redirect_info,
     const network::ResourceResponseHead& head) {
   forwarding_client_->OnReceiveRedirect(redirect_info, head);
-}
-
-void PrefetchURLLoader::OnDataDownloaded(int64_t data_length,
-                                         int64_t encoded_length) {
-  forwarding_client_->OnDataDownloaded(data_length, encoded_length);
 }
 
 void PrefetchURLLoader::OnUploadProgress(int64_t current_position,
@@ -91,7 +135,7 @@ void PrefetchURLLoader::OnStartLoadingResponseBody(
   // the renderer for prefetch.
   DCHECK(!pipe_drainer_);
   pipe_drainer_ =
-      std::make_unique<mojo::common::DataPipeDrainer>(this, std::move(body));
+      std::make_unique<mojo::DataPipeDrainer>(this, std::move(body));
 }
 
 void PrefetchURLLoader::OnComplete(

@@ -113,7 +113,7 @@ class ExtensionHost : public DeferredStartRenderHost,
   content::JavaScriptDialogManager* GetJavaScriptDialogManager(
       content::WebContents* source) override;
   void AddNewContents(content::WebContents* source,
-                      content::WebContents* new_contents,
+                      std::unique_ptr<content::WebContents> new_contents,
                       WindowOpenDisposition disposition,
                       const gfx::Rect& initial_rect,
                       bool user_gesture,
@@ -122,8 +122,8 @@ class ExtensionHost : public DeferredStartRenderHost,
   void RequestMediaAccessPermission(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback) override;
-  bool CheckMediaAccessPermission(content::WebContents* web_contents,
+      content::MediaResponseCallback callback) override;
+  bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
                                   content::MediaStreamType type) override;
   bool IsNeverVisible(content::WebContents* web_contents) override;
@@ -213,8 +213,8 @@ class ExtensionHost : public DeferredStartRenderHost,
   // started only once the ExtensionHost has exited the ExtensionHostQueue.
   std::unique_ptr<base::ElapsedTimer> load_start_;
 
-  base::ObserverList<ExtensionHostObserver> observer_list_;
-  base::ObserverList<DeferredStartRenderHostObserver>
+  base::ObserverList<ExtensionHostObserver>::Unchecked observer_list_;
+  base::ObserverList<DeferredStartRenderHostObserver>::Unchecked
       deferred_start_render_host_observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionHost);

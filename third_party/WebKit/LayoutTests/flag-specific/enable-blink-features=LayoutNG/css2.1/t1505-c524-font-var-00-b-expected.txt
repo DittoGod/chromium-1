@@ -7,9 +7,9 @@ layer at (0,0) size 800x88
         LayoutText {#text} at (0,0) size 268x19
           text run at (0,0) width 268: "This Paragraph should be in Small Caps."
       LayoutNGBlockFlow {P} at (0,36) size 784x20 [color=#000080]
-        LayoutText {#text} at (0,0) size 460x19
-          text run at (0,0) width 460: "This Sentence should be in Small Caps. "
+        LayoutText {#text} at (0,0) size 263x19
+          text run at (0,0) width 263: "This Sentence should be in Small Caps. "
         LayoutInline {SPAN} at (0,0) size 210x19
-          LayoutText {#text} at (460,0) size 210x19
-            text run at (460,0) width 210: "This Sentence should be Normal."
+          LayoutText {#text} at (263,0) size 210x19
+            text run at (263,0) width 210: "This Sentence should be Normal."
         LayoutText {#text} at (0,0) size 0x0

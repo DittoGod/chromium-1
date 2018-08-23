@@ -5,18 +5,28 @@
 #ifndef CHROME_BROWSER_VR_MODEL_TEXT_INPUT_INFO_H_
 #define CHROME_BROWSER_VR_MODEL_TEXT_INPUT_INFO_H_
 
+#include <vector>
+
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/vr/text_edit_action.h"
+#include "chrome/browser/vr/vr_export.h"
 
 namespace vr {
 
 // Represents the state of an editable text field.
-struct TextInputInfo {
+struct VR_EXPORT TextInputInfo {
  public:
   TextInputInfo();
-  TextInputInfo(const TextInputInfo& other);
   explicit TextInputInfo(base::string16 t);
+  TextInputInfo(base::string16 t, int selection_start, int selection_end);
+  TextInputInfo(base::string16 t,
+                int selection_start,
+                int selection_end,
+                int composition_start,
+                int compositon_end);
+  TextInputInfo(const TextInputInfo& other);
 
   static const int kDefaultCompositionIndex = -1;
 
@@ -24,6 +34,10 @@ struct TextInputInfo {
   bool operator!=(const TextInputInfo& other) const;
 
   size_t SelectionSize() const;
+  size_t CompositionSize() const;
+
+  base::string16 CommittedTextBeforeCursor() const;
+  base::string16 ComposingText() const;
 
   // The value of the input field.
   base::string16 text;
@@ -42,20 +56,20 @@ struct TextInputInfo {
   // The end position of the current composition, or -1 if there is none.
   int composition_end;
 
-  std::string ToString() const {
-    return base::StringPrintf(
-        "t(%s) s(%d, %d) c(%d, %d)", base::UTF16ToUTF8(text).c_str(),
-        selection_start, selection_end, composition_start, composition_end);
-  }
+  std::string ToString() const;
+
+ private:
+  void ClampIndices();
 };
 
 // A superset of TextInputInfo, consisting of a current and previous text field
 // state.  A keyboard can return this structure, allowing clients to derive
 // deltas in keyboard state.
-struct EditedText {
+struct VR_EXPORT EditedText {
  public:
   EditedText();
   EditedText(const EditedText& other);
+  explicit EditedText(const TextInputInfo& current);
   EditedText(const TextInputInfo& current, const TextInputInfo& previous);
   explicit EditedText(base::string16 t);
 
@@ -63,6 +77,8 @@ struct EditedText {
   bool operator!=(const EditedText& other) const { return !(*this == other); }
 
   void Update(const TextInputInfo& info);
+
+  TextEdits GetDiff() const;
 
   std::string ToString() const;
 

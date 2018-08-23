@@ -4,10 +4,10 @@
 
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 
-#include "base/ios/ios_util.h"
 #include "base/mac/foundation_util.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
@@ -15,7 +15,7 @@
 #import "ios/chrome/browser/ui/material_components/app_bar_presenting.h"
 #import "ios/chrome/browser/ui/material_components/utils.h"
 #import "ios/chrome/browser/ui/settings/accounts_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/autofill_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/autofill_profile_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/clear_browsing_data_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/import_data_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/save_passwords_collection_view_controller.h"
@@ -25,7 +25,7 @@
 #import "ios/chrome/browser/ui/settings/sync_settings_collection_view_controller.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/user_feedback/user_feedback_provider.h"
@@ -158,16 +158,14 @@ newUserFeedbackController:(ios::ChromeBrowserState*)browserState
   DCHECK(ios::GetChromeBrowserProvider()
              ->GetUserFeedbackProvider()
              ->IsUserFeedbackEnabled());
-  UIViewController* controller =
-      ios::GetChromeBrowserProvider()
-          ->GetUserFeedbackProvider()
-          ->CreateViewController(dataSource, [delegate dispatcherForSettings]);
+  UIViewController* controller = ios::GetChromeBrowserProvider()
+                                     ->GetUserFeedbackProvider()
+                                     ->CreateViewController(dataSource);
   DCHECK(controller);
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
                     browserState:browserState
                         delegate:delegate];
-  [controller navigationItem].rightBarButtonItem = [nc cancelButton];
   return nc;
 }
 
@@ -250,8 +248,8 @@ newImportDataController:(ios::ChromeBrowserState*)browserState
 + (SettingsNavigationController*)
 newAutofillController:(ios::ChromeBrowserState*)browserState
              delegate:(id<SettingsNavigationControllerDelegate>)delegate {
-  AutofillCollectionViewController* controller =
-      [[AutofillCollectionViewController alloc]
+  AutofillProfileCollectionViewController* controller =
+      [[AutofillProfileCollectionViewController alloc]
           initWithBrowserState:browserState];
   controller.dispatcher = [delegate dispatcherForSettings];
 
@@ -284,13 +282,6 @@ initWithRootViewController:(UIViewController*)rootViewController
     [self configureUI];
   }
   return self;
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-  [super viewWillDisappear:animated];
-  if (self.isBeingDismissed) {
-    [self settingsWillBeDismissed];
-  }
 }
 
 - (void)settingsWillBeDismissed {
@@ -364,11 +355,13 @@ initWithRootViewController:(UIViewController*)rootViewController
 - (UIBarButtonItem*)doneButton {
   // Create a custom Done bar button item, as Material Navigation Bar does not
   // handle a system UIBarButtonSystemItemDone item.
-  return [[UIBarButtonItem alloc]
+  UIBarButtonItem* item = [[UIBarButtonItem alloc]
       initWithTitle:l10n_util::GetNSString(IDS_IOS_NAVIGATION_BAR_DONE_BUTTON)
               style:UIBarButtonItemStyleDone
              target:self
              action:@selector(closeSettings)];
+  item.accessibilityIdentifier = kSettingsDoneButtonId;
+  return item;
 }
 
 - (UIBarButtonItem*)closeButton {
@@ -424,9 +417,15 @@ initWithRootViewController:(UIViewController*)rootViewController
       viewController.navigationItem.leftBarButtonItems.count == 0) {
     viewController.navigationItem.leftBarButtonItem = [self backButton];
   }
-  // Wrap the view controller in an MDCAppBarContainerViewController if needed.
-  [super pushViewController:[self wrappedControllerIfNeeded:viewController]
-                   animated:animated];
+  // TODO(crbug.com/875528): This is a workaround for iOS 10.x.
+  if (@available(iOS 11, *)) {
+    // Wrap the view controller in an MDCAppBarContainerViewController if
+    // needed.
+    [super pushViewController:[self wrappedControllerIfNeeded:viewController]
+                     animated:animated];
+  } else {
+    [super pushViewController:viewController animated:animated];
+  }
 }
 
 - (UIViewController*)popViewControllerAnimated:(BOOL)animated {
@@ -512,31 +511,20 @@ initWithRootViewController:(UIViewController*)rootViewController
   [self pushViewController:controller animated:YES];
 }
 
+// TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
+- (void)showSavedPasswordsSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  SavePasswordsCollectionViewController* controller =
+      [[SavePasswordsCollectionViewController alloc]
+          initWithBrowserState:mainBrowserState_];
+  controller.dispatcher = [delegate_ dispatcherForSettings];
+  [self pushViewController:controller animated:YES];
+}
+
 #pragma mark - Profile
 
 - (ios::ChromeBrowserState*)mainBrowserState {
   return mainBrowserState_;
-}
-
-#pragma mark - Status bar
-
-- (BOOL)modalPresentationCapturesStatusBarAppearance {
-  if (!base::ios::IsRunningOnIOS10OrLater()) {
-    // TODO(crbug.com/620361): Remove the entire method override when iOS 9 is
-    // dropped.
-    return YES;
-  } else {
-    return [super modalPresentationCapturesStatusBarAppearance];
-  }
-}
-
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (!base::ios::IsRunningOnIOS10OrLater()) {
-    // TODO(crbug.com/620361): Remove the entire method override when iOS 9 is
-    // dropped.
-    [self setNeedsStatusBarAppearanceUpdate];
-  }
 }
 
 #pragma mark - AppBar Containment
@@ -555,6 +543,13 @@ initWithRootViewController:(UIViewController*)rootViewController
     // Configure the style.
     appBarContainer.view.backgroundColor = [UIColor whiteColor];
     ConfigureAppBarWithCardStyle(appBarContainer.appBar);
+
+    // Override the header view's background color if the UIRefresh experiment
+    // is enabled.
+    if (experimental_flags::IsSettingsUIRebootEnabled()) {
+      appBarContainer.appBar.headerViewController.headerView.backgroundColor =
+          [UIColor groupTableViewBackgroundColor];
+    }
 
     // Register the app bar container and return it.
     [self registerAppBarContainer:appBarContainer];

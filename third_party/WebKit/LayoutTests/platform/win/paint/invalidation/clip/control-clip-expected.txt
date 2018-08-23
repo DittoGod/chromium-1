@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -19,7 +20,7 @@
         {
           "object": "InlineTextBox 'SUCCESS'",
           "rect": [76, 116, 64, 18],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "InlineTextBox 'SUCCESS'",
@@ -29,48 +30,14 @@
         {
           "object": "InlineTextBox 'FAILURE'",
           "rect": [81, 116, 54, 18],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "InlineTextBox 'FAILURE'",
-          "rect": [9, 87, 54, 16],
+          "rect": [9, 87, 53, 16],
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText (anonymous)",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'SUCCESS'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'SUCCESS'",
-      "reason": "full"
     }
   ]
 }

@@ -14,17 +14,20 @@ URLLoaderFactoryBundleInfo::URLLoaderFactoryBundleInfo() = default;
 URLLoaderFactoryBundleInfo::URLLoaderFactoryBundleInfo(
     network::mojom::URLLoaderFactoryPtrInfo default_factory_info,
     std::map<std::string, network::mojom::URLLoaderFactoryPtrInfo>
-        factories_info)
+        factories_info,
+    bool bypass_redirect_checks)
     : default_factory_info_(std::move(default_factory_info)),
-      factories_info_(std::move(factories_info)) {}
+      factories_info_(std::move(factories_info)),
+      bypass_redirect_checks_(bypass_redirect_checks) {}
 
 URLLoaderFactoryBundleInfo::~URLLoaderFactoryBundleInfo() = default;
 
-scoped_refptr<SharedURLLoaderFactory>
+scoped_refptr<network::SharedURLLoaderFactory>
 URLLoaderFactoryBundleInfo::CreateFactory() {
   auto other = std::make_unique<URLLoaderFactoryBundleInfo>();
   other->default_factory_info_ = std::move(default_factory_info_);
   other->factories_info_ = std::move(factories_info_);
+  other->bypass_redirect_checks_ = bypass_redirect_checks_;
 
   return base::MakeRefCounted<URLLoaderFactoryBundle>(std::move(other));
 }
@@ -78,7 +81,13 @@ void URLLoaderFactoryBundle::CreateLoaderAndStart(
                                     traffic_annotation);
 }
 
-std::unique_ptr<SharedURLLoaderFactoryInfo> URLLoaderFactoryBundle::Clone() {
+void URLLoaderFactoryBundle::Clone(
+    network::mojom::URLLoaderFactoryRequest request) {
+  NOTREACHED();
+}
+
+std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+URLLoaderFactoryBundle::Clone() {
   network::mojom::URLLoaderFactoryPtrInfo default_factory_info;
   if (default_factory_)
     default_factory_->Clone(mojo::MakeRequest(&default_factory_info));
@@ -91,7 +100,12 @@ std::unique_ptr<SharedURLLoaderFactoryInfo> URLLoaderFactoryBundle::Clone() {
   }
 
   return std::make_unique<URLLoaderFactoryBundleInfo>(
-      std::move(default_factory_info), std::move(factories_info));
+      std::move(default_factory_info), std::move(factories_info),
+      bypass_redirect_checks_);
+}
+
+bool URLLoaderFactoryBundle::BypassRedirectChecks() const {
+  return bypass_redirect_checks_;
 }
 
 void URLLoaderFactoryBundle::Update(
@@ -100,6 +114,7 @@ void URLLoaderFactoryBundle::Update(
     default_factory_.Bind(std::move(info->default_factory_info()));
   for (auto& factory_info : info->factories_info())
     factories_[factory_info.first].Bind(std::move(factory_info.second));
+  bypass_redirect_checks_ = info->bypass_redirect_checks();
 }
 
 }  // namespace content

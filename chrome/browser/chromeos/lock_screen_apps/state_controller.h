@@ -100,7 +100,7 @@ class StateController : public ash::mojom::TrayActionClient,
   // initialized and ready for action.
   void SetReadyCallbackForTesting(const base::Closure& ready_callback);
   // Sets the tick clock to be used in tests.
-  void SetTickClockForTesting(std::unique_ptr<base::TickClock> clock);
+  void SetTickClockForTesting(const base::TickClock* clock);
   // Sets test AppManager implementation. Should be called before
   // |SetPrimaryProfile|
   void SetAppManagerForTesting(std::unique_ptr<AppManager> app_manager);
@@ -233,7 +233,7 @@ class StateController : public ash::mojom::TrayActionClient,
   ash::mojom::TrayActionState lock_screen_note_state_ =
       ash::mojom::TrayActionState::kNotAvailable;
 
-  base::ObserverList<StateObserver> observers_;
+  base::ObserverList<StateObserver>::Unchecked observers_;
 
   mojo::Binding<ash::mojom::TrayActionClient> binding_;
   ash::mojom::TrayActionPtr tray_action_ptr_;
@@ -294,7 +294,7 @@ class StateController : public ash::mojom::TrayActionClient,
 
   // The clock used to keep track of time, for example to report app window
   // lifetime metrics.
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_ = nullptr;
 
   base::WeakPtrFactory<StateController> weak_ptr_factory_;
 

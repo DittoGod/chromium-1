@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -23,7 +24,7 @@
         },
         {
           "object": "InlineTextBox 'Findme on a path! Did you findme?'",
-          "rect": [20, 224, 206, 72],
+          "rect": [20, 224, 182, 72],
           "reason": "DocumentMarker change"
         },
         {
@@ -57,72 +58,6 @@
           "reason": "DocumentMarker change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "InlineTextBox 'findme'",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "InlineTextBox 'findme'",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "InlineTextBox 'findme'",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "InlineTextBox 'findme'",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "InlineTextBox 'findme'",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "InlineTextBox 'Can you findme in this boring text?'",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "InlineTextBox 'Findme in a typewriter!'",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "DocumentMarker change"
-    },
-    {
-      "object": "InlineTextBox 'Findme on a path! Did you findme?'",
-      "reason": "DocumentMarker change"
     }
   ]
 }

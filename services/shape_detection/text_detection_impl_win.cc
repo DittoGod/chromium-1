@@ -15,6 +15,7 @@
 #include "base/win/windows_version.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/shape_detection/text_detection_impl.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace shape_detection {
 
@@ -23,6 +24,8 @@ using ABI::Windows::Globalization::ILanguageFactory;
 using ABI::Windows::Media::Ocr::IOcrEngineStatics;
 using ABI::Windows::Media::Ocr::IOcrLine;
 using ABI::Windows::Media::Ocr::OcrLine;
+using ABI::Windows::Media::Ocr::IOcrWord;
+using ABI::Windows::Media::Ocr::OcrWord;
 using base::win::GetActivationFactory;
 using base::win::ScopedHString;
 
@@ -115,7 +118,8 @@ TextDetectionImplWin::TextDetectionImplWin(
     Microsoft::WRL::ComPtr<IOcrEngine> ocr_engine,
     Microsoft::WRL::ComPtr<ISoftwareBitmapStatics> bitmap_factory)
     : ocr_engine_(std::move(ocr_engine)),
-      bitmap_factory_(std::move(bitmap_factory)) {
+      bitmap_factory_(std::move(bitmap_factory)),
+      weak_factory_(this) {
   DCHECK(ocr_engine_);
   DCHECK(bitmap_factory_);
 }
@@ -124,24 +128,23 @@ TextDetectionImplWin::~TextDetectionImplWin() = default;
 
 void TextDetectionImplWin::Detect(const SkBitmap& bitmap,
                                   DetectCallback callback) {
-  if ((async_recognize_ops_ = BeginDetect(bitmap))) {
-    // Hold on the callback until AsyncOperation completes.
-    recognize_text_callback_ = std::move(callback);
-    // This prevents the Detect function from being called before the
-    // AsyncOperation completes.
-    binding_->PauseIncomingMethodCallProcessing();
-  } else {
+  if (FAILED(BeginDetect(bitmap))) {
     // No detection taking place; run |callback| with an empty array of results.
     std::move(callback).Run(std::vector<mojom::TextDetectionResultPtr>());
+    return;
   }
+  // Hold on the callback until AsyncOperation completes.
+  recognize_text_callback_ = std::move(callback);
+  // This prevents the Detect function from being called before the
+  // AsyncOperation completes.
+  binding_->PauseIncomingMethodCallProcessing();
 }
 
-std::unique_ptr<AsyncOperation<OcrResult>> TextDetectionImplWin::BeginDetect(
-    const SkBitmap& bitmap) {
+HRESULT TextDetectionImplWin::BeginDetect(const SkBitmap& bitmap) {
   Microsoft::WRL::ComPtr<ISoftwareBitmap> win_bitmap =
       CreateWinBitmapFromSkBitmap(bitmap, bitmap_factory_.Get());
   if (!win_bitmap)
-    return nullptr;
+    return E_FAIL;
 
   // Recognize text asynchronously.
   AsyncOperation<OcrResult>::IAsyncOperationPtr async_op;
@@ -149,15 +152,15 @@ std::unique_ptr<AsyncOperation<OcrResult>> TextDetectionImplWin::BeginDetect(
   if (FAILED(hr)) {
     DLOG(ERROR) << "Recognize text asynchronously failed: "
                 << logging::SystemErrorCodeToString(hr);
-    return nullptr;
+    return hr;
   }
 
-  // The once callback will not be called if this object is deleted, so it's
-  // fine to use Unretained to bind the callback.
-  // |win_bitmap| needs to be kept alive until OnTextDetected().
-  return AsyncOperation<OcrResult>::Create(
+  // Use WeakPtr to bind the callback so that the once callback will not be run
+  // if this object has been already destroyed. |win_bitmap| needs to be kept
+  // alive until OnTextDetected().
+  return AsyncOperation<OcrResult>::BeginAsyncOperation(
       base::BindOnce(&TextDetectionImplWin::OnTextDetected,
-                     base::Unretained(this), std::move(win_bitmap)),
+                     weak_factory_.GetWeakPtr(), std::move(win_bitmap)),
       std::move(async_op));
 }
 
@@ -200,7 +203,34 @@ TextDetectionImplWin::BuildTextDetectionResult(
     if (FAILED(hr))
       break;
 
+    // Gets bounding box with the words detected in the current line of Text.
+    Microsoft::WRL::ComPtr<IVectorView<OcrWord*>> ocr_words;
+    hr = line->get_Words(ocr_words.GetAddressOf());
+    if (FAILED(hr))
+      break;
+
+    uint32_t words_count;
+    hr = ocr_words->get_Size(&words_count);
+    if (FAILED(hr))
+      break;
+
     auto result = shape_detection::mojom::TextDetectionResult::New();
+    for (uint32_t i = 0; i < words_count; ++i) {
+      Microsoft::WRL::ComPtr<IOcrWord> word;
+      hr = ocr_words->GetAt(i, &word);
+      if (FAILED(hr))
+        break;
+
+      ABI::Windows::Foundation::Rect bounds;
+      hr = word->get_BoundingRect(&bounds);
+      if (FAILED(hr))
+        break;
+
+      result->bounding_box = gfx::UnionRects(
+          result->bounding_box,
+          gfx::RectF(bounds.X, bounds.Y, bounds.Width, bounds.Height));
+    }
+
     result->raw_value = ScopedHString(text).GetAsUTF8();
     results.push_back(std::move(result));
   }
@@ -214,7 +244,6 @@ void TextDetectionImplWin::OnTextDetected(
     AsyncOperation<OcrResult>::IAsyncOperationPtr async_op) {
   std::move(recognize_text_callback_)
       .Run(BuildTextDetectionResult(std::move(async_op)));
-  async_recognize_ops_.reset();
   binding_->ResumeIncomingMethodCallProcessing();
 }
 

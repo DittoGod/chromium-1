@@ -113,11 +113,6 @@ namespace safe_browsing {
 
 BaseUIManager::BaseUIManager() {}
 
-void BaseUIManager::StopOnIOThread(bool shutdown) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return;
-}
-
 BaseUIManager::~BaseUIManager() {}
 
 bool BaseUIManager::IsWhitelisted(const UnsafeResource& resource) {
@@ -169,7 +164,7 @@ void BaseUIManager::OnBlockingPageDone(
     if (!resource.callback.is_null()) {
       DCHECK(resource.callback_thread);
       resource.callback_thread->PostTask(
-          FROM_HERE, base::Bind(resource.callback, proceed));
+          FROM_HERE, base::BindOnce(resource.callback, proceed));
     }
 
     GURL whitelist_url = GetWhitelistUrl(
@@ -202,8 +197,8 @@ void BaseUIManager::DisplayBlockingPage(
              ThreatPatternType::MALWARE_LANDING)) {
       if (!resource.callback.is_null()) {
         DCHECK(resource.callback_thread);
-        resource.callback_thread->PostTask(FROM_HERE,
-                                           base::Bind(resource.callback, true));
+        resource.callback_thread->PostTask(
+            FROM_HERE, base::BindOnce(resource.callback, true));
       }
 
       return;
@@ -226,8 +221,8 @@ void BaseUIManager::DisplayBlockingPage(
   if (IsWhitelisted(resource)) {
     if (!resource.callback.is_null()) {
       DCHECK(resource.callback_thread);
-      resource.callback_thread->PostTask(FROM_HERE,
-                                         base::Bind(resource.callback, true));
+      resource.callback_thread->PostTask(
+          FROM_HERE, base::BindOnce(resource.callback, true));
     }
     return;
   }
@@ -265,17 +260,11 @@ void BaseUIManager::MaybeReportSafeBrowsingHit(
   return;
 }
 
-void BaseUIManager::ReportSafeBrowsingHitOnIOThread(
-    const HitReport& hit_report) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return;
-}
-
 // If the user had opted-in to send ThreatDetails, this gets called
 // when the report is ready.
 void BaseUIManager::SendSerializedThreatDetails(
     const std::string& serialized) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   return;
 }
 

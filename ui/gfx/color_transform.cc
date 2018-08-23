@@ -11,7 +11,6 @@
 #include <sstream>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkColorSpaceXform.h"
@@ -102,7 +101,8 @@ float FromLinear(ColorSpace::TransferID id, float v) {
       float c1 = 3424.0f / 4096.0f;
       float c2 = (2413.0f / 4096.0f) * 32.0f;
       float c3 = (2392.0f / 4096.0f) * 32.0f;
-      return pow((c1 + c2 * pow(v, m1)) / (1.0f + c3 * pow(v, m1)), m2);
+      float p = powf(v, m1);
+      return powf((c1 + c2 * p) / (1.0f + c3 * p), m2);
     }
 
     // Spec: http://www.arib.or.jp/english/html/overview/doc/2-STD-B67v1_0.pdf
@@ -169,8 +169,8 @@ float ToLinear(ColorSpace::TransferID id, float v) {
       float c1 = 3424.0f / 4096.0f;
       float c2 = (2413.0f / 4096.0f) * 32.0f;
       float c3 = (2392.0f / 4096.0f) * 32.0f;
-      v = pow(max(pow(v, 1.0f / m2) - c1, 0.0f) / (c2 - c3 * pow(v, 1.0f / m2)),
-              1.0f / m1);
+      float p = pow(v, 1.0f / m2);
+      v = powf(max(p - c1, 0.0f) / (c2 - c3 * p), 1.0f / m1);
       // This matches the scRGB definition that 1.0 means 80 nits.
       // TODO(hubbe): It would be *nice* if 1.0 meant more than that, but
       // that might be difficult to do right now.
@@ -275,8 +275,9 @@ class ColorTransformInternal : public ColorTransform {
   gfx::ColorSpace GetDstColorSpace() const override { return dst_; };
 
   void Transform(TriStim* colors, size_t num) const override {
-    for (const auto& step : steps_)
+    for (const auto& step : steps_) {
       step->Transform(colors, num);
+    }
   }
   bool CanGetShaderSource() const override;
   std::string GetShaderSource() const override;
@@ -443,8 +444,6 @@ class ColorTransformSkTransferFn : public ColorTransformPerChannelTransferFn {
   // ColorTransformPerChannelTransferFn implementation:
   float Evaluate(float v) const override {
     // Note that the sign-extension is performed by the caller.
-    if (v < 0.f)
-      return 0.f;
     return SkTransferFnEvalUnclamped(fn_, v);
   }
   void AppendTransferShaderSource(std::stringstream* result) const override {
@@ -473,14 +472,9 @@ class ColorTransformSkTransferFn : public ColorTransformPerChannelTransferFn {
     if (std::abs(fn_.fE) > kEpsilon)
       nonlinear = nonlinear + " + " + Str(fn_.fE);
 
-    // Add both parts, skipping the if clause if possible.
-    if (fn_.fD > kEpsilon) {
-      *result << "  if (v < " << Str(fn_.fD) << ")" << endl;
-      *result << "    return " << linear << ";" << endl;
-      *result << "  return " << nonlinear << ";" << endl;
-    } else {
-      *result << "  return " << nonlinear << ";" << endl;
-    }
+    *result << "  if (v < " << Str(fn_.fD) << ")" << endl;
+    *result << "    return " << linear << ";" << endl;
+    *result << "  return " << nonlinear << ";" << endl;
   }
 
  private:
@@ -733,7 +727,7 @@ class ColorTransformToBT2020CL : public ColorTransformStep {
       } else {
         V = R_Y / (2.0 * 0.4969);
       }
-      RYB[i] = ColorTransform::TriStim(RYB[i].y(), U, V);
+      RYB[i] = ColorTransform::TriStim(RYB[i].y(), U + 0.5, V + 0.5);
     }
   }
 
@@ -761,11 +755,11 @@ class ColorTransformFromBT2020CL : public ColorTransformStep {
       return;
     for (size_t i = 0; i < num; i++) {
       float Y = YUV[i].x();
-      float U = YUV[i].y();
-      float V = YUV[i].z();
+      float U = YUV[i].y() - 0.5;
+      float V = YUV[i].z() - 0.5;
       float B_Y, R_Y;
       if (U <= 0) {
-        B_Y = Y * (-2.0 * -0.9702);
+        B_Y = U * (-2.0 * -0.9702);
       } else {
         B_Y = U * (2.0 * 0.7910);
       }
@@ -775,7 +769,7 @@ class ColorTransformFromBT2020CL : public ColorTransformStep {
         R_Y = V * (2.0 * 0.4969);
       }
       // Return an RYB value, later steps will fix it.
-      YUV[i] = ColorTransform::TriStim(R_Y + Y, YUV[i].x(), B_Y + Y);
+      YUV[i] = ColorTransform::TriStim(R_Y + Y, Y, B_Y + Y);
     }
   }
   bool CanAppendShaderSource() override { return true; }
@@ -785,12 +779,12 @@ class ColorTransformFromBT2020CL : public ColorTransformStep {
     *hdr << "vec3 BT2020_YUV_to_RYB_Step" << step_index << "(vec3 color) {"
          << endl;
     *hdr << "  float Y = color.x;" << endl;
-    *hdr << "  float U = color.y;" << endl;
-    *hdr << "  float V = color.z;" << endl;
+    *hdr << "  float U = color.y - 0.5;" << endl;
+    *hdr << "  float V = color.z - 0.5;" << endl;
     *hdr << "  float B_Y = 0.0;" << endl;
     *hdr << "  float R_Y = 0.0;" << endl;
     *hdr << "  if (U <= 0.0) {" << endl;
-    *hdr << "    B_Y = Y * (-2.0 * -0.9702);" << endl;
+    *hdr << "    B_Y = U * (-2.0 * -0.9702);" << endl;
     *hdr << "  } else {" << endl;
     *hdr << "    B_Y = U * (2.0 * 0.7910);" << endl;
     *hdr << "  }" << endl;
@@ -843,8 +837,13 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
   steps_.push_back(
       std::make_unique<ColorTransformMatrix>(GetRangeAdjustMatrix(src)));
 
-  steps_.push_back(
-      std::make_unique<ColorTransformMatrix>(Invert(GetTransferMatrix(src))));
+  if (src.matrix_ == ColorSpace::MatrixID::BT2020_CL) {
+    // BT2020 CL is a special case.
+    steps_.push_back(std::make_unique<ColorTransformFromBT2020CL>());
+  } else {
+    steps_.push_back(
+        std::make_unique<ColorTransformMatrix>(Invert(GetTransferMatrix(src))));
+  }
 
   // If the target color space is not defined, just apply the adjust and
   // tranfer matrices. This path is used by YUV to RGB color conversion
@@ -865,7 +864,8 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
 
   if (src.matrix_ == ColorSpace::MatrixID::BT2020_CL) {
     // BT2020 CL is a special case.
-    steps_.push_back(std::make_unique<ColorTransformFromBT2020CL>());
+    steps_.push_back(
+        std::make_unique<ColorTransformMatrix>(Invert(GetTransferMatrix(src))));
   }
   steps_.push_back(
       std::make_unique<ColorTransformMatrix>(GetPrimaryTransform(src)));
@@ -874,7 +874,8 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
       std::make_unique<ColorTransformMatrix>(Invert(GetPrimaryTransform(dst))));
   if (dst.matrix_ == ColorSpace::MatrixID::BT2020_CL) {
     // BT2020 CL is a special case.
-    steps_.push_back(std::make_unique<ColorTransformToBT2020CL>());
+    steps_.push_back(
+        std::make_unique<ColorTransformMatrix>(GetTransferMatrix(dst)));
   }
 
   SkColorSpaceTransferFn dst_from_linear_fn;
@@ -885,8 +886,12 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
     steps_.push_back(std::make_unique<ColorTransformFromLinear>(dst.transfer_));
   }
 
-  steps_.push_back(
-      std::make_unique<ColorTransformMatrix>(GetTransferMatrix(dst)));
+  if (dst.matrix_ == ColorSpace::MatrixID::BT2020_CL) {
+    steps_.push_back(std::make_unique<ColorTransformToBT2020CL>());
+  } else {
+    steps_.push_back(
+        std::make_unique<ColorTransformMatrix>(GetTransferMatrix(dst)));
+  }
 
   steps_.push_back(std::make_unique<ColorTransformMatrix>(
       Invert(GetRangeAdjustMatrix(dst))));

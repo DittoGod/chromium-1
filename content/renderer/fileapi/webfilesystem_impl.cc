@@ -5,7 +5,9 @@
 #include "content/renderer/fileapi/webfilesystem_impl.h"
 
 #include <stddef.h>
+#include <string>
 #include <tuple>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
@@ -15,18 +17,17 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "content/common/fileapi/file_system_messages.h"
+#include "components/services/filesystem/public/interfaces/types.mojom.h"
 #include "content/renderer/file_info_util.h"
 #include "content/renderer/fileapi/file_system_dispatcher.h"
 #include "content/renderer/fileapi/webfilewriter_impl.h"
 #include "content/renderer/render_thread_impl.h"
-#include "storage/common/fileapi/directory_entry.h"
 #include "storage/common/fileapi/file_system_util.h"
-#include "third_party/WebKit/public/platform/FilePathConversion.h"
-#include "third_party/WebKit/public/platform/WebFileInfo.h"
-#include "third_party/WebKit/public/platform/WebFileSystemCallbacks.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
+#include "third_party/blink/public/platform/file_path_conversion.h"
+#include "third_party/blink/public/platform/web_file_info.h"
+#include "third_party/blink/public/platform/web_file_system_callbacks.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
 #include "url/gurl.h"
 
 using blink::WebFileInfo;
@@ -86,12 +87,6 @@ typedef WebFileSystemImpl::WaitableCallbackResults WaitableCallbackResults;
 base::LazyInstance<base::ThreadLocalPointer<WebFileSystemImpl>>::Leaky
     g_webfilesystem_tls = LAZY_INSTANCE_INITIALIZER;
 
-void DidReceiveSnapshotFile(int request_id) {
-  if (ChildThreadImpl::current())
-    ChildThreadImpl::current()->Send(
-        new FileSystemHostMsg_DidReceiveSnapshotFile(request_id));
-}
-
 template <typename Method, typename Params>
 void CallDispatcherOnMainThread(
     const scoped_refptr<base::SingleThreadTaskRunner>& main_thread_task_runner,
@@ -137,14 +132,16 @@ void DidReadMetadata(const base::File::Info& file_info,
   callbacks->DidReadMetadata(web_file_info);
 }
 
-void DidReadDirectory(const std::vector<storage::DirectoryEntry>& entries,
-                      bool has_more,
-                      WebFileSystemCallbacks* callbacks) {
+void DidReadDirectory(
+    const std::vector<filesystem::mojom::DirectoryEntry>& entries,
+    bool has_more,
+    WebFileSystemCallbacks* callbacks) {
   WebVector<WebFileSystemEntry> file_system_entries(entries.size());
   for (size_t i = 0; i < entries.size(); ++i) {
     file_system_entries[i].name =
         blink::FilePathToWebString(base::FilePath(entries[i].name));
-    file_system_entries[i].is_directory = entries[i].is_directory;
+    file_system_entries[i].is_directory =
+        entries[i].type == filesystem::mojom::FsFileType::DIRECTORY;
   }
   callbacks->DidReadDirectory(file_system_entries, has_more);
 }
@@ -279,7 +276,7 @@ void ReadDirectoryCallbackAdapter(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     int callbacks_id,
     WaitableCallbackResults* waitable_results,
-    const std::vector<storage::DirectoryEntry>& entries,
+    const std::vector<filesystem::mojom::DirectoryEntry>& entries,
     bool has_more) {
   CallbackFileSystemCallbacks(
       task_runner, callbacks_id, waitable_results,
@@ -332,6 +329,7 @@ void DidCreateSnapshotFile(
     const scoped_refptr<base::SingleThreadTaskRunner>& main_thread_task_runner,
     const base::File::Info& file_info,
     const base::FilePath& platform_path,
+    base::Optional<blink::mojom::ReceivedSnapshotListenerPtr> opt_listener,
     int request_id) {
   WebFileSystemImpl* filesystem =
       WebFileSystemImpl::ThreadSpecificInstance(nullptr);
@@ -348,8 +346,14 @@ void DidCreateSnapshotFile(
 
   // TODO(michaeln,kinuko): Use ThreadSafeSender when Blob becomes
   // non-bridge model.
-  main_thread_task_runner->PostTask(
-      FROM_HERE, base::BindOnce(&DidReceiveSnapshotFile, request_id));
+  if (opt_listener) {
+    main_thread_task_runner->PostTask(
+        FROM_HERE, base::BindOnce(
+                       [](blink::mojom::ReceivedSnapshotListenerPtr listener) {
+                         listener->DidReceiveSnapshotFile();
+                       },
+                       std::move(opt_listener.value())));
+  }
 }
 
 void CreateSnapshotFileCallbackAdapter(
@@ -359,11 +363,13 @@ void CreateSnapshotFileCallbackAdapter(
     const scoped_refptr<base::SingleThreadTaskRunner>& main_thread_task_runner,
     const base::File::Info& file_info,
     const base::FilePath& platform_path,
+    base::Optional<blink::mojom::ReceivedSnapshotListenerPtr> opt_listener,
     int request_id) {
   DispatchResultsClosure(
       task_runner, callbacks_id, waitable_results,
       base::Bind(&DidCreateSnapshotFile, callbacks_id, main_thread_task_runner,
-                 file_info, platform_path, request_id));
+                 file_info, platform_path, base::Passed(&opt_listener),
+                 request_id));
 }
 
 }  // namespace

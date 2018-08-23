@@ -9,6 +9,7 @@
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/gcm_driver/gcm_client.h"
 
@@ -52,7 +53,7 @@ void FakeGCMDriverForInstanceID::GetInstanceIDData(
     extra_data = iter->second.second;
   }
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, instance_id, extra_data));
+      FROM_HERE, base::BindOnce(callback, instance_id, extra_data));
 }
 
 void FakeGCMDriverForInstanceID::GetToken(
@@ -75,7 +76,7 @@ void FakeGCMDriverForInstanceID::GetToken(
   last_gettoken_authorized_entity_ = authorized_entity;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, token, gcm::GCMClient::SUCCESS));
+      FROM_HERE, base::BindOnce(callback, token, gcm::GCMClient::SUCCESS));
 }
 
 void FakeGCMDriverForInstanceID::ValidateToken(
@@ -85,7 +86,7 @@ void FakeGCMDriverForInstanceID::ValidateToken(
     const std::string& token,
     const ValidateTokenCallback& callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, true /* is_valid */));
+      FROM_HERE, base::BindOnce(callback, true /* is_valid */));
 }
 
 void FakeGCMDriverForInstanceID::DeleteToken(
@@ -93,13 +94,27 @@ void FakeGCMDriverForInstanceID::DeleteToken(
     const std::string& authorized_entity,
     const std::string& scope,
     const DeleteTokenCallback& callback) {
-  std::string key = app_id + authorized_entity + scope;
-  tokens_.erase(key);
+  std::string key_prefix = app_id;
+
+  // Calls to InstanceID::DeleteID() will end up deleting the token for a given
+  // |app_id| with both |authorized_entity| and |scope| set to "*", meaning that
+  // all data has to be deleted. Do a prefix search to emulate this behaviour.
+  if (authorized_entity != "*")
+    key_prefix += authorized_entity;
+  if (scope != "*")
+    key_prefix += scope;
+
+  for (auto iter = tokens_.begin(); iter != tokens_.end();) {
+    if (base::StartsWith(iter->first, key_prefix, base::CompareCase::SENSITIVE))
+      iter = tokens_.erase(iter);
+    else
+      iter++;
+  }
 
   last_deletetoken_app_id_ = app_id;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, gcm::GCMClient::SUCCESS));
+      FROM_HERE, base::BindOnce(callback, gcm::GCMClient::SUCCESS));
 }
 
 }  // namespace instance_id

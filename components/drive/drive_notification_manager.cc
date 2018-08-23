@@ -32,14 +32,13 @@ DriveNotificationManager::DriveNotificationManager(
       push_notification_registered_(false),
       push_notification_enabled_(false),
       observers_notified_(false),
-      polling_timer_(true /* retain_user_task */, false /* is_repeating */),
       weak_ptr_factory_(this) {
   DCHECK(invalidation_service_);
   RegisterDriveNotifications();
   RestartPollingTimer();
 }
 
-DriveNotificationManager::~DriveNotificationManager() {}
+DriveNotificationManager::~DriveNotificationManager() = default;
 
 void DriveNotificationManager::Shutdown() {
   // Unregister for Drive notifications.
@@ -100,11 +99,9 @@ void DriveNotificationManager::RestartPollingTimer() {
                              kFastPollingIntervalInSecs);
   polling_timer_.Stop();
   polling_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromSeconds(interval_secs),
-      base::Bind(&DriveNotificationManager::NotifyObserversToUpdate,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 NOTIFICATION_POLLING));
+      FROM_HERE, base::TimeDelta::FromSeconds(interval_secs),
+      base::BindOnce(&DriveNotificationManager::NotifyObserversToUpdate,
+                     weak_ptr_factory_.GetWeakPtr(), NOTIFICATION_POLLING));
 }
 
 void DriveNotificationManager::NotifyObserversToUpdate(

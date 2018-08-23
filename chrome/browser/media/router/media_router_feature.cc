@@ -4,33 +4,45 @@
 
 #include "chrome/browser/media/router/media_router_feature.h"
 
+#include "base/base64.h"
 #include "base/feature_list.h"
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/mirroring/service/features.h"
 #include "content/public/browser/browser_context.h"
-#include "extensions/features/features.h"
+#include "content/public/common/content_features.h"
+#include "crypto/random.h"
+#include "extensions/buildflags/buildflags.h"
+#include "services/network/public/cpp/features.h"
 #include "ui/base/ui_features.h"
 
 #if defined(OS_ANDROID) || BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
+#include "ui/base/ui_base_features.h"
 #endif  // defined(OS_ANDROID) || BUILDFLAG(ENABLE_EXTENSIONS)
+
+#if !defined(OS_ANDROID)
+#include "components/prefs/pref_registry_simple.h"
+#endif
 
 namespace media_router {
 
 #if !defined(OS_ANDROID)
-// Controls if browser side DIAL sink query is enabled.
-const base::Feature kEnableDialSinkQuery{"EnableDialSinkQuery",
-                                         base::FEATURE_DISABLED_BY_DEFAULT};
+// Controls if browser side DialMediaRouteProvider is enabled.
+const base::Feature kDialMediaRouteProvider{"DialMediaRouteProvider",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Controls if browser side Cast device discovery is enabled.
 const base::Feature kEnableCastDiscovery{"EnableCastDiscovery",
                                          base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Controls if local media casting is enabled.
-const base::Feature kEnableCastLocalMedia{"EnableCastLocalMedia",
-                                          base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kCastMediaRouteProvider{"CastMediaRouteProvider",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
+
 #endif
 
 #if defined(OS_ANDROID) || BUILDFLAG(ENABLE_EXTENSIONS)
@@ -38,7 +50,7 @@ namespace {
 const PrefService::Preference* GetMediaRouterPref(
     content::BrowserContext* context) {
   return user_prefs::UserPrefs::Get(context)->FindPreference(
-      prefs::kEnableMediaRouter);
+      ::prefs::kEnableMediaRouter);
 }
 }  // namespace
 #endif  // defined(OS_ANDROID) || BUILDFLAG(ENABLE_EXTENSIONS)
@@ -62,23 +74,59 @@ bool MediaRouterEnabled(content::BrowserContext* context) {
 }
 
 #if !defined(OS_ANDROID)
-// Returns true if browser side DIAL sink query is enabled.
-bool DialSinkQueryEnabled() {
-  return base::FeatureList::IsEnabled(kEnableDialSinkQuery);
+void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
+  registry->RegisterBooleanPref(prefs::kMediaRouterCastAllowAllIPs, false,
+                                PrefRegistry::PUBLIC);
 }
 
-// Returns true if browser side Cast discovery is enabled.
+void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+  // TODO(imcheng): Migrate existing Media Router prefs to here.
+  registry->RegisterStringPref(prefs::kMediaRouterReceiverIdHashToken, "",
+                               PrefRegistry::PUBLIC);
+}
+
+const base::Feature kCastAllowAllIPsFeature{"CastAllowAllIPs",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
+
+bool GetCastAllowAllIPsPref(PrefService* pref_service) {
+  auto* pref = pref_service->FindPreference(prefs::kMediaRouterCastAllowAllIPs);
+
+  // Only use the pref value if it is set from a mandatory policy.
+  bool allow_all_ips = false;
+  if (pref->IsManaged() && !pref->IsDefaultValue()) {
+    CHECK(pref->GetValue()->GetAsBoolean(&allow_all_ips));
+  } else {
+    allow_all_ips = base::FeatureList::IsEnabled(kCastAllowAllIPsFeature);
+  }
+
+  return allow_all_ips;
+}
+
+std::string GetReceiverIdHashToken(PrefService* pref_service) {
+  static constexpr size_t kHashTokenSize = 64;
+  std::string token =
+      pref_service->GetString(prefs::kMediaRouterReceiverIdHashToken);
+  if (token.empty()) {
+    crypto::RandBytes(base::WriteInto(&token, kHashTokenSize + 1),
+                      kHashTokenSize);
+    base::Base64Encode(token, &token);
+    pref_service->SetString(prefs::kMediaRouterReceiverIdHashToken, token);
+  }
+  return token;
+}
+
+bool DialMediaRouteProviderEnabled() {
+  return base::FeatureList::IsEnabled(kDialMediaRouteProvider);
+}
+
 bool CastDiscoveryEnabled() {
   return base::FeatureList::IsEnabled(kEnableCastDiscovery);
 }
 
-// Returns true if local media casting is enabled.
-bool CastLocalMediaEnabled() {
-  return base::FeatureList::IsEnabled(kEnableCastLocalMedia);
+bool CastMediaRouteProviderEnabled() {
+  return base::FeatureList::IsEnabled(kCastMediaRouteProvider);
 }
 
-// Returns true if the presentation receiver window for local media casting is
-// available on the current platform.
 bool PresentationReceiverWindowEnabled() {
 #if defined(OS_MACOSX) && !BUILDFLAG(MAC_VIEWS_BROWSER)
   return false;
@@ -86,6 +134,29 @@ bool PresentationReceiverWindowEnabled() {
   return true;
 #endif
 }
-#endif
+
+bool ShouldUseViewsDialog() {
+#if defined(OS_MACOSX)
+#if BUILDFLAG(MAC_VIEWS_BROWSER)
+  // Cocoa browser is disabled if kExperimentalUi is enabled.
+  return (base::FeatureList::IsEnabled(features::kViewsCastDialog) &&
+          !features::IsViewsBrowserCocoa()) ||
+         base::FeatureList::IsEnabled(features::kExperimentalUi);
+#else   // !BUILDFLAG(MAC_VIEWS_BROWSER)
+  return false;
+#endif  // BUILDFLAG(MAC_VIEWS_BROWSER)
+#else   // !defined(OS_MACOSX)
+  return base::FeatureList::IsEnabled(features::kViewsCastDialog) ||
+         base::FeatureList::IsEnabled(features::kExperimentalUi);
+#endif  // defined(OS_MACOSX)
+}
+
+bool ShouldUseMirroringService() {
+  return base::FeatureList::IsEnabled(mirroring::features::kMirroringService) &&
+         base::FeatureList::IsEnabled(features::kAudioServiceAudioStreams) &&
+         base::FeatureList::IsEnabled(network::features::kNetworkService);
+}
+
+#endif  // !defined(OS_ANDROID)
 
 }  // namespace media_router

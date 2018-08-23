@@ -7,16 +7,21 @@
 #include <stddef.h>
 #include <algorithm>
 
+#include "base/stl_util.h"
 #include "cc/paint/image_transfer_cache_entry.h"
 #include "cc/paint/paint_flags.h"
 #include "cc/paint/paint_image_builder.h"
 #include "cc/paint/paint_op_buffer.h"
 #include "cc/paint/paint_shader.h"
 #include "cc/paint/paint_typeface_transfer_cache_entry.h"
+#include "cc/paint/path_transfer_cache_entry.h"
+#include "cc/paint/shader_transfer_cache_entry.h"
 #include "cc/paint/transfer_cache_deserialize_helper.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkRRect.h"
+#include "third_party/skia/include/core/SkSerialProcs.h"
 #include "third_party/skia/include/core/SkTextBlob.h"
+#include "third_party/skia/src/core/SkRemoteGlyphCache.h"
 
 namespace cc {
 namespace {
@@ -26,26 +31,6 @@ const size_t kMaxShaderColorsSupported = 10000;
 const size_t kMaxMergeFilterCount = 10000;
 const size_t kMaxKernelSize = 1000;
 const size_t kMaxRegionByteSize = 10 * 1024;
-
-struct TypefacesCatalog {
-  TransferCacheDeserializeHelper* transfer_cache;
-  bool had_null = false;
-};
-
-sk_sp<SkTypeface> ResolveTypeface(uint32_t id, void* ctx) {
-  TypefacesCatalog* catalog = static_cast<TypefacesCatalog*>(ctx);
-  auto* entry = catalog->transfer_cache
-                    ->GetEntryAs<ServicePaintTypefaceTransferCacheEntry>(id);
-  // TODO(vmpstr): The !entry->typeface() check is here because not all
-  // typefaces are supported right now. Instead of making the reader invalid
-  // during the typeface deserialization, which results in an invalid op,
-  // instead just make the textblob be null by setting |had_null| to true.
-  if (!entry || !entry->typeface()) {
-    catalog->had_null = true;
-    return nullptr;
-  }
-  return entry->typeface().ToSkTypeface();
-}
 
 bool IsValidPaintShaderType(PaintShader::Type type) {
   return static_cast<uint8_t>(type) <
@@ -60,6 +45,24 @@ bool IsValidSkShaderTileMode(SkShader::TileMode mode) {
 bool IsValidPaintShaderScalingBehavior(PaintShader::ScalingBehavior behavior) {
   return behavior == PaintShader::ScalingBehavior::kRasterAtScale ||
          behavior == PaintShader::ScalingBehavior::kFixedScale;
+}
+
+struct TypefaceCtx {
+  explicit TypefaceCtx(SkStrikeClient* client) : client(client) {}
+  bool invalid_typeface = false;
+  SkStrikeClient* client = nullptr;
+};
+
+sk_sp<SkTypeface> DeserializeTypeface(const void* data,
+                                      size_t length,
+                                      void* ctx) {
+  auto* typeface_ctx = static_cast<TypefaceCtx*>(ctx);
+  auto tf = typeface_ctx->client->deserializeTypeface(data, length);
+  if (tf)
+    return tf;
+
+  typeface_ctx->invalid_typeface = true;
+  return nullptr;
 }
 
 }  // namespace
@@ -114,7 +117,7 @@ void PaintOpReader::ReadSimple(T* val) {
 template <typename T>
 void PaintOpReader::ReadFlattenable(sk_sp<T>* val) {
   size_t bytes = 0;
-  ReadSimple(&bytes);
+  ReadSize(&bytes);
   if (remaining_bytes_ < bytes)
     SetInvalid();
   if (!valid_)
@@ -150,25 +153,11 @@ void PaintOpReader::ReadData(size_t bytes, void* data) {
   remaining_bytes_ -= bytes;
 }
 
-void PaintOpReader::ReadArray(size_t count, SkPoint* array) {
-  size_t bytes = count * sizeof(SkPoint);
-  if (remaining_bytes_ < bytes)
-    SetInvalid();
-  // Overflow?
-  if (count > static_cast<size_t>(~0) / sizeof(SkPoint))
-    SetInvalid();
-  if (!valid_)
-    return;
-  if (count == 0)
-    return;
-
-  memcpy(array, const_cast<const char*>(memory_), bytes);
-  memory_ += bytes;
-  remaining_bytes_ -= bytes;
-}
-
 void PaintOpReader::ReadSize(size_t* size) {
-  ReadSimple(size);
+  AlignMemory(8);
+  uint64_t size64 = 0;
+  ReadSimple(&size64);
+  *size = size64;
 }
 
 void PaintOpReader::Read(SkScalar* data) {
@@ -204,21 +193,18 @@ void PaintOpReader::Read(SkRRect* rect) {
 }
 
 void PaintOpReader::Read(SkPath* path) {
-  AlignMemory(4);
+  uint32_t transfer_cache_entry_id;
+  ReadSimple(&transfer_cache_entry_id);
   if (!valid_)
     return;
-
-  // This is assumed safe from TOCTOU violations as the SkPath deserializing
-  // function uses an SkRBuffer which reads each piece of memory once much
-  // like PaintOpReader does.  Additionally, paths are later validated in
-  // PaintOpBuffer.
-  size_t read_bytes =
-      path->readFromMemory(const_cast<const char*>(memory_), remaining_bytes_);
-  if (!read_bytes)
-    SetInvalid();
-
-  memory_ += read_bytes;
-  remaining_bytes_ -= read_bytes;
+  auto* entry =
+      options_.transfer_cache->GetEntryAs<ServicePathTransferCacheEntry>(
+          transfer_cache_entry_id);
+  if (entry) {
+    *path = entry->path();
+  } else {
+    valid_ = false;
+  }
 }
 
 void PaintOpReader::Read(PaintFlags* flags) {
@@ -229,20 +215,13 @@ void PaintOpReader::Read(PaintFlags* flags) {
   ReadSimple(&flags->blend_mode_);
   ReadSimple(&flags->bitfields_uint_);
 
-  // TODO(enne): ReadTypeface, http://crbug.com/737629
-
-  // Flattenables must be read at 4-byte boundary, which should be the case
-  // here.
   ReadFlattenable(&flags->path_effect_);
-  AlignMemory(4);
   ReadFlattenable(&flags->mask_filter_);
-  AlignMemory(4);
   ReadFlattenable(&flags->color_filter_);
 
-  AlignMemory(4);
   if (enable_security_constraints_) {
     size_t bytes = 0;
-    ReadSimple(&bytes);
+    ReadSize(&bytes);
     if (bytes != 0u) {
       SetInvalid();
       return;
@@ -321,23 +300,35 @@ void PaintOpReader::Read(PaintImage* image) {
   if (!valid_)
     return;
 
+  bool needs_mips;
+  ReadSimple(&needs_mips);
+  if (!valid_)
+    return;
+
   // If we encountered a decode failure, we may write an invalid id for the
   // image. In these cases, just return, leaving the image as nullptr.
   if (transfer_cache_entry_id == kInvalidImageTransferCacheEntryId)
     return;
 
-  if (auto* entry = transfer_cache_->GetEntryAs<ServiceImageTransferCacheEntry>(
-          transfer_cache_entry_id)) {
+  if (auto* entry =
+          options_.transfer_cache->GetEntryAs<ServiceImageTransferCacheEntry>(
+              transfer_cache_entry_id)) {
+    if (needs_mips)
+      entry->EnsureMips();
     *image = PaintImageBuilder::WithDefault()
                  .set_id(PaintImage::GetNextId())
                  .set_image(entry->image(), PaintImage::kNonLazyStableId)
                  .TakePaintImage();
+  } else {
+    // If a transfer cache id exists, we must have a valid entry for it in the
+    // cache.
+    SetInvalid();
   }
 }
 
 void PaintOpReader::Read(sk_sp<SkData>* data) {
   size_t bytes = 0;
-  ReadSimple(&bytes);
+  ReadSize(&bytes);
   if (remaining_bytes_ < bytes)
     SetInvalid();
   if (!valid_)
@@ -359,35 +350,53 @@ void PaintOpReader::Read(sk_sp<SkData>* data) {
   remaining_bytes_ -= bytes;
 }
 
+void PaintOpReader::Read(sk_sp<SkColorSpace>* color_space) {
+  size_t size = 0;
+  ReadSize(&size);
+  if (remaining_bytes_ < size)
+    valid_ = false;
+  if (!valid_ || size == 0)
+    return;
+
+  // To avoid TOCTOU issues, make a copy of this prior to turning it
+  // into an SkColorSpace.  SkColorSpace::Deserialize reads header
+  // fields multiple times, so is not safe to pass memory_ to directly.
+  std::unique_ptr<char[]> data(new char[size]);
+  memcpy(data.get(), const_cast<const char*>(memory_), size);
+
+  *color_space = SkColorSpace::Deserialize(data.get(), size);
+  // If this had non-zero bytes, it should be a valid color space.
+  if (!color_space)
+    SetInvalid();
+
+  memory_ += size;
+  remaining_bytes_ -= size;
+}
+
 void PaintOpReader::Read(scoped_refptr<PaintTextBlob>* paint_blob) {
-  sk_sp<SkData> data;
-  Read(&data);
-  if (!data || !valid_) {
+  size_t data_bytes = 0u;
+  ReadSize(&data_bytes);
+  if (remaining_bytes_ < data_bytes || data_bytes == 0u)
+    SetInvalid();
+  if (!valid_)
+    return;
+
+  DCHECK(options_.strike_client);
+  SkDeserialProcs procs;
+  TypefaceCtx typeface_ctx(options_.strike_client);
+  procs.fTypefaceProc = &DeserializeTypeface;
+  procs.fTypefaceCtx = &typeface_ctx;
+  sk_sp<SkTextBlob> blob = SkTextBlob::Deserialize(
+      const_cast<const char*>(memory_), data_bytes, procs);
+  if (!blob || typeface_ctx.invalid_typeface) {
     SetInvalid();
     return;
   }
 
-  // Skia expects the following to be true, make sure we don't pass it incorrect
-  // data.
-  if (!data->data() || !SkIsAlign4(data->size())) {
-    SetInvalid();
-    return;
-  }
-
-  TypefacesCatalog catalog;
-  catalog.transfer_cache = transfer_cache_;
-  sk_sp<SkTextBlob> blob = SkTextBlob::Deserialize(data->data(), data->size(),
-                                                   &ResolveTypeface, &catalog);
-  // TODO(vmpstr): If we couldn't serialize |blob|, we should make |paint_blob|
-  // nullptr. However, this causes GL errors right now, because not all
-  // typefaces are serialized. Fix this once we serialize everything. For now
-  // the behavior is that the |paint_blob| op exists and is valid, but
-  // internally it has a nullptr SkTextBlob which skia ignores.
-  // See also: TODO in paint_op_buffer_eq_fuzzer.
-  if (catalog.had_null)
-    blob = nullptr;
   *paint_blob = base::MakeRefCounted<PaintTextBlob>(
       std::move(blob), std::vector<PaintTypeface>());
+  memory_ += data_bytes;
+  remaining_bytes_ -= data_bytes;
 }
 
 void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
@@ -433,10 +442,28 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
   Read(&ref.image_);
   bool has_record = false;
   ReadSimple(&has_record);
-  if (has_record)
-    Read(&ref.record_);
+  uint32_t shader_id = PaintShader::kInvalidRecordShaderId;
+  size_t shader_size = 0;
+  if (has_record) {
+    if (shader_type != PaintShader::Type::kPaintRecord) {
+      SetInvalid();
+      return;
+    }
+    Read(&shader_id);
+    if (shader_id == PaintShader::kInvalidRecordShaderId) {
+      SetInvalid();
+      return;
+    }
+
+    // Track dependent transfer cache entries to make cached shader size
+    // more realistic.
+    size_t pre_size = options_.transfer_cache->GetTotalEntrySizes();
+    size_t record_size = Read(&ref.record_);
+    size_t post_size = options_.transfer_cache->GetTotalEntrySizes();
+    shader_size = post_size - pre_size + record_size;
+  }
   decltype(ref.colors_)::size_type colors_size = 0;
-  ReadSimple(&colors_size);
+  ReadSize(&colors_size);
 
   // If there are too many colors, abort.
   if (colors_size > kMaxShaderColorsSupported) {
@@ -452,7 +479,7 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
   ReadData(colors_bytes, ref.colors_.data());
 
   decltype(ref.positions_)::size_type positions_size = 0;
-  ReadSimple(&positions_size);
+  ReadSize(&positions_size);
   // Positions are optional. If they exist, they have the same count as colors.
   if (positions_size > 0 && positions_size != colors_size) {
     SetInvalid();
@@ -472,9 +499,36 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
     SetInvalid();
     return;
   }
-  // TODO(vmpstr): We should have a PaintShader id and cache these shaders
-  // instead of creating every time we deserialize.
-  (*shader)->CreateSkShader();
+
+  // All shader types but records are done.
+  if (shader_type != PaintShader::Type::kPaintRecord) {
+    (*shader)->CreateSkShader();
+    return;
+  }
+
+  // Record shaders have shader ids.  Attempt to use cached versions of
+  // these so that Skia can cache based on SkPictureShader::fUniqueId.
+  // These shaders are always serialized (and assumed to not be large
+  // records).  Handling this edge case in this roundabout way prevents
+  // transfer cache entries from needing to depend on other transfer cache
+  // entries.
+  auto* entry =
+      options_.transfer_cache->GetEntryAs<ServiceShaderTransferCacheEntry>(
+          shader_id);
+  // Only consider entries that use the same scale and color space.
+  // This limits the service side transfer cache to only having one entry
+  // per shader but this will hit the common case of enabling Skia reuse.
+  if (entry && entry->shader()->tile_ == ref.tile_ &&
+      entry->raster_color_space_id() == options_.raster_color_space_id) {
+    DCHECK(!ref.cached_shader_);
+    ref.cached_shader_ = entry->shader()->GetSkShader();
+  } else {
+    ref.CreateSkShader();
+    std::unique_ptr<ServiceShaderTransferCacheEntry> entry(
+        new ServiceShaderTransferCacheEntry(
+            *shader, options_.raster_color_space_id, shader_size));
+    options_.transfer_cache->CreateLocalEntry(shader_id, std::move(entry));
+  }
 }
 
 void PaintOpReader::Read(SkMatrix* matrix) {
@@ -483,7 +537,7 @@ void PaintOpReader::Read(SkMatrix* matrix) {
 }
 
 void PaintOpReader::Read(SkColorType* color_type) {
-  uint32_t raw_color_type;
+  uint32_t raw_color_type = kUnknown_SkColorType;
   ReadSimple(&raw_color_type);
 
   if (raw_color_type > kLastEnum_SkColorType) {
@@ -643,7 +697,7 @@ void PaintOpReader::ReadColorFilterPaintFilter(
     return;
   filter->reset(new ColorFilterPaintFilter(std::move(color_filter),
                                            std::move(input),
-                                           crop_rect ? &*crop_rect : nullptr));
+                                           base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadBlurPaintFilter(
@@ -662,7 +716,7 @@ void PaintOpReader::ReadBlurPaintFilter(
     return;
   filter->reset(new BlurPaintFilter(sigma_x, sigma_y, tile_mode,
                                     std::move(input),
-                                    crop_rect ? &*crop_rect : nullptr));
+                                    base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadDropShadowPaintFilter(
@@ -691,7 +745,7 @@ void PaintOpReader::ReadDropShadowPaintFilter(
     return;
   filter->reset(new DropShadowPaintFilter(dx, dy, sigma_x, sigma_y, color,
                                           shadow_mode, std::move(input),
-                                          crop_rect ? &*crop_rect : nullptr));
+                                          base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadMagnifierPaintFilter(
@@ -707,7 +761,7 @@ void PaintOpReader::ReadMagnifierPaintFilter(
   if (!valid_)
     return;
   filter->reset(new MagnifierPaintFilter(src_rect, inset, std::move(input),
-                                         crop_rect ? &*crop_rect : nullptr));
+                                         base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadComposePaintFilter(
@@ -739,7 +793,7 @@ void PaintOpReader::ReadAlphaThresholdPaintFilter(
     return;
   filter->reset(new AlphaThresholdPaintFilter(
       region, inner_min, outer_max, std::move(input),
-      crop_rect ? &*crop_rect : nullptr));
+      base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadXfermodePaintFilter(
@@ -761,7 +815,7 @@ void PaintOpReader::ReadXfermodePaintFilter(
 
   filter->reset(new XfermodePaintFilter(blend_mode, std::move(background),
                                         std::move(foreground),
-                                        crop_rect ? &*crop_rect : nullptr));
+                                        base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadArithmeticPaintFilter(
@@ -785,7 +839,7 @@ void PaintOpReader::ReadArithmeticPaintFilter(
     return;
   filter->reset(new ArithmeticPaintFilter(
       k1, k2, k3, k4, enforce_pm_color, std::move(background),
-      std::move(foreground), crop_rect ? &*crop_rect : nullptr));
+      std::move(foreground), base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadMatrixConvolutionPaintFilter(
@@ -825,7 +879,7 @@ void PaintOpReader::ReadMatrixConvolutionPaintFilter(
       static_cast<MatrixConvolutionPaintFilter::TileMode>(tile_mode_int);
   filter->reset(new MatrixConvolutionPaintFilter(
       kernel_size, kernel.data(), gain, bias, kernel_offset, tile_mode,
-      convolve_alpha, std::move(input), crop_rect ? &*crop_rect : nullptr));
+      convolve_alpha, std::move(input), base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadDisplacementMapEffectPaintFilter(
@@ -860,7 +914,7 @@ void PaintOpReader::ReadDisplacementMapEffectPaintFilter(
           channel_y_int);
   filter->reset(new DisplacementMapEffectPaintFilter(
       channel_x, channel_y, scale, std::move(displacement), std::move(color),
-      crop_rect ? &*crop_rect : nullptr));
+      base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadImagePaintFilter(
@@ -914,7 +968,7 @@ void PaintOpReader::ReadMergePaintFilter(
     return;
   filter->reset(new MergePaintFilter(inputs.data(),
                                      static_cast<int>(input_count),
-                                     crop_rect ? &*crop_rect : nullptr));
+                                     base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadMorphologyPaintFilter(
@@ -938,7 +992,7 @@ void PaintOpReader::ReadMorphologyPaintFilter(
       static_cast<MorphologyPaintFilter::MorphType>(morph_type_int);
   filter->reset(new MorphologyPaintFilter(morph_type, radius_x, radius_y,
                                           std::move(input),
-                                          crop_rect ? &*crop_rect : nullptr));
+                                          base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadOffsetPaintFilter(
@@ -954,7 +1008,7 @@ void PaintOpReader::ReadOffsetPaintFilter(
   if (!valid_)
     return;
   filter->reset(new OffsetPaintFilter(dx, dy, std::move(input),
-                                      crop_rect ? &*crop_rect : nullptr));
+                                      base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadTilePaintFilter(
@@ -999,7 +1053,7 @@ void PaintOpReader::ReadTurbulencePaintFilter(
       static_cast<TurbulencePaintFilter::TurbulenceType>(turbulence_type_int);
   filter->reset(new TurbulencePaintFilter(
       turbulence_type, base_frequency_x, base_frequency_y, num_octaves, seed,
-      &tile_size, crop_rect ? &*crop_rect : nullptr));
+      &tile_size, base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadPaintFlagsPaintFilter(
@@ -1011,7 +1065,7 @@ void PaintOpReader::ReadPaintFlagsPaintFilter(
   if (!valid_)
     return;
   filter->reset(
-      new PaintFlagsPaintFilter(flags, crop_rect ? &*crop_rect : nullptr));
+      new PaintFlagsPaintFilter(flags, base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadMatrixPaintFilter(
@@ -1060,7 +1114,7 @@ void PaintOpReader::ReadLightingDistantPaintFilter(
       static_cast<PaintFilter::LightingType>(lighting_type_int);
   filter->reset(new LightingDistantPaintFilter(
       lighting_type, direction, light_color, surface_scale, kconstant,
-      shininess, std::move(input), crop_rect ? &*crop_rect : nullptr));
+      shininess, std::move(input), base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadLightingPointPaintFilter(
@@ -1091,7 +1145,7 @@ void PaintOpReader::ReadLightingPointPaintFilter(
       static_cast<PaintFilter::LightingType>(lighting_type_int);
   filter->reset(new LightingPointPaintFilter(
       lighting_type, location, light_color, surface_scale, kconstant, shininess,
-      std::move(input), crop_rect ? &*crop_rect : nullptr));
+      std::move(input), base::OptionalOrNullptr(crop_rect)));
 }
 
 void PaintOpReader::ReadLightingSpotPaintFilter(
@@ -1130,45 +1184,42 @@ void PaintOpReader::ReadLightingSpotPaintFilter(
   filter->reset(new LightingSpotPaintFilter(
       lighting_type, location, target, specular_exponent, cutoff_angle,
       light_color, surface_scale, kconstant, shininess, std::move(input),
-      crop_rect ? &*crop_rect : nullptr));
+      base::OptionalOrNullptr(crop_rect)));
 }
 
-void PaintOpReader::Read(sk_sp<PaintRecord>* record) {
+size_t PaintOpReader::Read(sk_sp<PaintRecord>* record) {
   size_t size_bytes = 0;
-  ReadSimple(&size_bytes);
+  ReadSize(&size_bytes);
   AlignMemory(PaintOpBuffer::PaintOpAlign);
-
   if (enable_security_constraints_) {
     // Validate that the record was not serialized if security constraints are
     // enabled.
     if (size_bytes != 0) {
       SetInvalid();
-      return;
+      return 0;
     }
     *record = sk_make_sp<PaintOpBuffer>();
-    return;
+    return 0;
   }
 
   if (size_bytes > remaining_bytes_)
     SetInvalid();
   if (!valid_)
-    return;
+    return 0;
 
-  PaintOp::DeserializeOptions options;
-  options.transfer_cache = transfer_cache_;
-
-  *record = PaintOpBuffer::MakeFromMemory(memory_, size_bytes, options);
+  *record = PaintOpBuffer::MakeFromMemory(memory_, size_bytes, options_);
   if (!*record) {
     SetInvalid();
-    return;
+    return 0;
   }
   memory_ += size_bytes;
   remaining_bytes_ -= size_bytes;
+  return size_bytes;
 }
 
 void PaintOpReader::Read(SkRegion* region) {
   size_t region_bytes = 0;
-  ReadSimple(&region_bytes);
+  ReadSize(&region_bytes);
   if (region_bytes == 0 || region_bytes > kMaxRegionByteSize)
     SetInvalid();
   if (!valid_)

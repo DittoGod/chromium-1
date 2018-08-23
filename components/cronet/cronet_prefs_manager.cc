@@ -30,9 +30,11 @@ namespace {
 // Name of the pref used for HTTP server properties persistence.
 const char kHttpServerPropertiesPref[] = "net.http_server_properties";
 // Name of preference directory.
-const char kPrefsDirectoryName[] = "prefs";
+const base::FilePath::CharType kPrefsDirectoryName[] =
+    FILE_PATH_LITERAL("prefs");
 // Name of preference file.
-const char kPrefsFileName[] = "local_prefs.json";
+const base::FilePath::CharType kPrefsFileName[] =
+    FILE_PATH_LITERAL("local_prefs.json");
 // Current version of disk storage.
 const int32_t kStorageVersion = 1;
 // Version number used when the version of disk storage is unknown.
@@ -60,7 +62,7 @@ bool IsCurrentVersion(const base::FilePath& version_filepath) {
 // TODO(xunjieli): Handle failures.
 void InitializeStorageDirectory(const base::FilePath& dir) {
   // Checks version file and clear old storage.
-  base::FilePath version_filepath = dir.Append("version");
+  base::FilePath version_filepath(dir.AppendASCII("version"));
   if (IsCurrentVersion(version_filepath)) {
     // The version is up to date, so there is nothing to do.
     return;
@@ -88,7 +90,7 @@ void InitializeStorageDirectory(const base::FilePath& dir) {
     DLOG(WARNING) << "Cannot write to version file.";
     return;
   }
-  base::FilePath prefs_dir = dir.Append(FILE_PATH_LITERAL(kPrefsDirectoryName));
+  base::FilePath prefs_dir = dir.Append(kPrefsDirectoryName);
   if (!base::CreateDirectory(prefs_dir)) {
     DLOG(WARNING) << "Cannot create prefs directory";
     return;
@@ -166,7 +168,7 @@ class NetworkQualitiesPrefDelegateImpl
 
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &NetworkQualitiesPrefDelegateImpl::SchedulePendingLossyWrites,
             weak_ptr_factory_.GetWeakPtr()),
         base::TimeDelta::FromSeconds(kUpdatePrefsDelaySeconds));
@@ -214,7 +216,12 @@ CronetPrefsManager::CronetPrefsManager(
   DCHECK(network_task_runner->BelongsToCurrentThread());
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
+#if defined(OS_WIN)
+  base::FilePath storage_file_path(
+      base::FilePath::FromUTF8Unsafe(storage_path));
+#else
   base::FilePath storage_file_path(storage_path);
+#endif
 
   // Make sure storage directory has correct version.
   {
@@ -223,11 +230,10 @@ CronetPrefsManager::CronetPrefsManager(
   }
 
   base::FilePath filepath =
-      storage_file_path.Append(FILE_PATH_LITERAL(kPrefsDirectoryName))
-          .Append(FILE_PATH_LITERAL(kPrefsFileName));
+      storage_file_path.Append(kPrefsDirectoryName).Append(kPrefsFileName);
 
-  json_pref_store_ = new JsonPrefStore(filepath, file_task_runner,
-                                       std::unique_ptr<PrefFilter>());
+  json_pref_store_ = new JsonPrefStore(filepath, std::unique_ptr<PrefFilter>(),
+                                       file_task_runner);
 
   // Register prefs and set up the PrefService.
   PrefServiceFactory factory;

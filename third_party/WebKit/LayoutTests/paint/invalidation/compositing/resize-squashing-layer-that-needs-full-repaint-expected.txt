@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -35,16 +36,6 @@
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 0, 500, 500],
           "reason": "paint property change"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) DIV",
-          "rect": [55, 55, 445, 445],
-          "reason": "paint property change"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) DIV id='to-be-removed'",
-          "rect": [0, 0, 50, 50],
-          "reason": "disappeared"
         }
       ]
     }
@@ -59,12 +50,6 @@
         [8, 8, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "compositing update"
     }
   ]
 }

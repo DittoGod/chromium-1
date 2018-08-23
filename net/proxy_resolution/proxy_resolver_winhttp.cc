@@ -52,14 +52,13 @@ static Error WinHttpErrorToNetError(DWORD win_http_error) {
 
 class ProxyResolverWinHttp : public ProxyResolver {
  public:
-  ProxyResolverWinHttp(
-      const scoped_refptr<ProxyResolverScriptData>& script_data);
+  ProxyResolverWinHttp(const scoped_refptr<PacFileData>& script_data);
   ~ProxyResolverWinHttp() override;
 
   // ProxyResolver implementation:
   int GetProxyForURL(const GURL& url,
                      ProxyInfo* results,
-                     const CompletionCallback& /*callback*/,
+                     CompletionOnceCallback /*callback*/,
                      std::unique_ptr<Request>* /*request*/,
                      const NetLogWithSource& /*net_log*/) override;
 
@@ -76,12 +75,11 @@ class ProxyResolverWinHttp : public ProxyResolver {
 };
 
 ProxyResolverWinHttp::ProxyResolverWinHttp(
-    const scoped_refptr<ProxyResolverScriptData>& script_data)
+    const scoped_refptr<PacFileData>& script_data)
     : session_handle_(NULL),
-      pac_url_(script_data->type() == ProxyResolverScriptData::TYPE_AUTO_DETECT
+      pac_url_(script_data->type() == PacFileData::TYPE_AUTO_DETECT
                    ? GURL("http://wpad/wpad.dat")
-                   : script_data->url()) {
-}
+                   : script_data->url()) {}
 
 ProxyResolverWinHttp::~ProxyResolverWinHttp() {
   CloseWinHttpSession();
@@ -89,12 +87,26 @@ ProxyResolverWinHttp::~ProxyResolverWinHttp() {
 
 int ProxyResolverWinHttp::GetProxyForURL(const GURL& query_url,
                                          ProxyInfo* results,
-                                         const CompletionCallback& /*callback*/,
+                                         CompletionOnceCallback /*callback*/,
                                          std::unique_ptr<Request>* /*request*/,
                                          const NetLogWithSource& /*net_log*/) {
   // If we don't have a WinHTTP session, then create a new one.
   if (!session_handle_ && !OpenWinHttpSession())
     return ERR_FAILED;
+
+  // Windows' system resolver does not support WebSocket URLs in proxy.pac. This
+  // was tested in version 10.0.16299, and is also implied by the description of
+  // the ERROR_WINHTTP_UNRECOGNIZED_SCHEME error code in the Microsoft
+  // documentation at
+  // https://docs.microsoft.com/en-us/windows/desktop/api/winhttp/nf-winhttp-winhttpgetproxyforurl.
+  // See https://crbug.com/862121.
+  GURL mutable_query_url = query_url;
+  if (query_url.SchemeIsWSOrWSS()) {
+    GURL::Replacements replacements;
+    replacements.SetSchemeStr(query_url.SchemeIsCryptographic() ? "https"
+                                                                : "http");
+    mutable_query_url = query_url.ReplaceComponents(replacements);
+  }
 
   // If we have been given an empty PAC url, then use auto-detection.
   //
@@ -116,14 +128,14 @@ int ProxyResolverWinHttp::GetProxyForURL(const GURL& query_url,
   // Otherwise, we fail over to trying it with a value of true.  This way we
   // get good performance in the case where WinHTTP uses an out-of-process
   // resolver.  This is important for Vista and Win2k3.
-  BOOL ok = WinHttpGetProxyForUrl(session_handle_,
-                                  base::ASCIIToUTF16(query_url.spec()).c_str(),
-                                  &options, &info);
+  BOOL ok = WinHttpGetProxyForUrl(
+      session_handle_, base::ASCIIToUTF16(mutable_query_url.spec()).c_str(),
+      &options, &info);
   if (!ok) {
     if (ERROR_WINHTTP_LOGIN_FAILURE == GetLastError()) {
       options.fAutoLogonIfChallenged = TRUE;
       ok = WinHttpGetProxyForUrl(
-          session_handle_, base::ASCIIToUTF16(query_url.spec()).c_str(),
+          session_handle_, base::ASCIIToUTF16(mutable_query_url.spec()).c_str(),
           &options, &info);
     }
     if (!ok) {
@@ -204,9 +216,9 @@ ProxyResolverFactoryWinHttp::ProxyResolverFactoryWinHttp()
 }
 
 int ProxyResolverFactoryWinHttp::CreateProxyResolver(
-    const scoped_refptr<ProxyResolverScriptData>& pac_script,
+    const scoped_refptr<PacFileData>& pac_script,
     std::unique_ptr<ProxyResolver>* resolver,
-    const CompletionCallback& callback,
+    CompletionOnceCallback callback,
     std::unique_ptr<Request>* request) {
   resolver->reset(new ProxyResolverWinHttp(pac_script));
   return OK;

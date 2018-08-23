@@ -12,7 +12,9 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "components/update_client/component.h"
+#include "components/update_client/protocol_parser.h"
 #include "url/gurl.h"
 
 namespace update_client {
@@ -22,8 +24,11 @@ class PersistedData;
 
 class UpdateChecker {
  public:
-  using UpdateCheckCallback =
-      base::OnceCallback<void(int error, int retry_after_sec)>;
+  using UpdateCheckCallback = base::OnceCallback<void(
+      const base::Optional<ProtocolParser::Results>& results,
+      ErrorCategory error_category,
+      int error,
+      int retry_after_sec)>;
 
   using Factory =
       std::unique_ptr<UpdateChecker> (*)(scoped_refptr<Configurator> config,
@@ -35,6 +40,8 @@ class UpdateChecker {
   // |additional_attributes| provides a way to customize the <request> element.
   // This value is inserted as-is, therefore it must be well-formed as an
   // XML attribute string.
+  // |is_foreground| controls the value of "X-Goog-Update-Interactivity"
+  // header which is sent with the update check.
   // On completion, the state of |components| is mutated as required by the
   // server response received.
   virtual void CheckForUpdates(const std::string& session_id,

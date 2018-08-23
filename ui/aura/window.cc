@@ -14,7 +14,6 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -31,7 +30,7 @@
 #include "ui/aura/client/window_stacking_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/layout_manager.h"
-#include "ui/aura/local/layer_tree_frame_sink_local.h"
+#include "ui/aura/scoped_keyboard_hook.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_observer.h"
@@ -39,25 +38,35 @@
 #include "ui/aura/window_port.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animator.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/event_target_iterator.h"
+#include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/path.h"
 #include "ui/gfx/scoped_canvas.h"
 
 namespace aura {
+namespace {
+#if DCHECK_IS_ON()
+const char* g_env_arg_required_string = nullptr;
+#endif
 
-Window::Window(WindowDelegate* delegate, client::WindowType type)
-    : Window(delegate, nullptr, type) {}
+}  // namespace
+
+Window::Window(WindowDelegate* delegate, client::WindowType type, Env* env)
+    : Window(delegate, nullptr, type, env) {}
 
 Window::Window(WindowDelegate* delegate,
                std::unique_ptr<WindowPort> port,
-               client::WindowType type)
-    : port_owner_(std::move(port)),
+               client::WindowType type,
+               Env* env)
+    : env_(env ? env : Env::GetInstance()),
+      port_owner_(std::move(port)),
       port_(port_owner_.get()),
       host_(nullptr),
       type_(type),
@@ -75,13 +84,14 @@ Window::Window(WindowDelegate* delegate,
       // notification (such as the workspace code).
       observers_(base::ObserverListPolicy::EXISTING_ONLY) {
   SetTargetHandler(delegate_);
+#if DCHECK_IS_ON()
+  // NOTE: at the time of adding this this function is only called from ash.
+  DCHECK(env || !g_env_arg_required_string) << g_env_arg_required_string;
+#endif
 }
 
 Window::~Window() {
   WindowOcclusionTracker::ScopedPauseOcclusionTracking pause_occlusion_tracking;
-
-  // See comment in header as to why this is done.
-  std::unique_ptr<WindowPort> port = std::move(port_owner_);
 
   if (layer()->owner() == this)
     layer()->CompleteAllAnimations();
@@ -141,13 +151,18 @@ Window::~Window() {
   // acquired it.
   layer()->set_delegate(NULL);
   DestroyLayer();
+
+  // Delete the WindowPort now, in case it needs to reach back into the Window
+  // during destruction.
+  port_owner_.reset();
+  port_ = nullptr;
 }
 
 void Window::Init(ui::LayerType layer_type) {
   WindowOcclusionTracker::ScopedPauseOcclusionTracking pause_occlusion_tracking;
 
   if (!port_owner_) {
-    port_owner_ = Env::GetInstance()->CreateWindowPort(this);
+    port_owner_ = env_->CreateWindowPort(this);
     port_ = port_owner_.get();
   }
   SetLayer(std::make_unique<ui::Layer>(layer_type));
@@ -156,7 +171,7 @@ void Window::Init(ui::LayerType layer_type) {
   layer()->set_delegate(this);
   UpdateLayerName();
   layer()->SetFillsBoundsOpaquely(!transparent_);
-  Env::GetInstance()->NotifyWindowInitialized(this);
+  env_->NotifyWindowInitialized(this);
 }
 
 void Window::SetType(client::WindowType type) {
@@ -272,9 +287,7 @@ void Window::SetTransform(const gfx::Transform& transform) {
   WindowOcclusionTracker::ScopedPauseOcclusionTracking pause_occlusion_tracking;
   for (WindowObserver& observer : observers_)
     observer.OnWindowTargetTransformChanging(this, transform);
-  gfx::Transform old_transform = layer()->transform();
   layer()->SetTransform(transform);
-  port_->OnDidChangeTransform(old_transform, transform);
 }
 
 void Window::SetLayoutManager(LayoutManager* layout_manager) {
@@ -359,6 +372,8 @@ void Window::AddChild(Window* child) {
 
   DCHECK(layer()) << "Parent has not been Init()ed yet.";
   DCHECK(child->layer()) << "Child has not been Init()ed yt.";
+  DCHECK_EQ(env_, child->env_) << "All windows in a hierarchy must share the "
+                                  " same Env.";
   WindowObserver::HierarchyChangeParams params;
   params.target = child;
   params.new_parent = this;
@@ -643,6 +658,19 @@ bool Window::HasCapture() {
   return capture_client && capture_client->GetCaptureWindow() == this;
 }
 
+std::unique_ptr<ScopedKeyboardHook> Window::CaptureSystemKeyEvents(
+    base::Optional<base::flat_set<ui::DomCode>> dom_codes) {
+  Window* root_window = GetRootWindow();
+  if (!root_window)
+    return nullptr;
+
+  WindowTreeHost* host = root_window->GetHost();
+  if (!host)
+    return nullptr;
+
+  return host->CaptureSystemKeyEvents(std::move(dom_codes));
+}
+
 void Window::SuppressPaint() {
   layer()->SuppressPaint();
 }
@@ -779,13 +807,11 @@ void Window::SetVisible(bool visible) {
   NotifyWindowVisibilityChanged(this, visible);
 }
 
-void Window::SetOccluded(bool occluded) {
-  OcclusionState occlusion_state =
-      occluded ? OcclusionState::OCCLUDED : OcclusionState::NOT_OCCLUDED;
+void Window::SetOcclusionState(OcclusionState occlusion_state) {
   if (occlusion_state != occlusion_state_) {
     occlusion_state_ = occlusion_state;
     if (delegate_)
-      delegate_->OnWindowOcclusionChanged(occluded);
+      delegate_->OnWindowOcclusionChanged(occlusion_state);
   }
 }
 
@@ -943,7 +969,8 @@ void Window::OnStackingChanged() {
 }
 
 void Window::NotifyRemovingFromRootWindow(Window* new_root) {
-  port_->OnWillRemoveWindowFromRootWindow();
+  if (IsEmbeddingClient())
+    UnregisterFrameSinkId();
   for (WindowObserver& observer : observers_)
     observer.OnWindowRemovingFromRootWindow(this, new_root);
   for (Window::Windows::const_iterator it = children_.begin();
@@ -953,7 +980,8 @@ void Window::NotifyRemovingFromRootWindow(Window* new_root) {
 }
 
 void Window::NotifyAddedToRootWindow() {
-  port_->OnWindowAddedToRootWindow();
+  if (IsEmbeddingClient())
+    RegisterFrameSinkId();
   for (WindowObserver& observer : observers_)
     observer.OnWindowAddedToRootWindow(this);
   for (Window::Windows::const_iterator it = children_.begin();
@@ -1058,9 +1086,8 @@ void Window::NotifyWindowVisibilityChangedUp(aura::Window* target,
 
 bool Window::CleanupGestureState() {
   bool state_modified = false;
-  state_modified |= ui::GestureRecognizer::Get()->CancelActiveTouches(this);
-  state_modified |=
-      ui::GestureRecognizer::Get()->CleanupStateForConsumer(this);
+  state_modified |= env_->gesture_recognizer()->CancelActiveTouches(this);
+  state_modified |= env_->gesture_recognizer()->CleanupStateForConsumer(this);
   for (Window::Windows::iterator iter = children_.begin();
        iter != children_.end();
        ++iter) {
@@ -1070,34 +1097,76 @@ bool Window::CleanupGestureState() {
 }
 
 std::unique_ptr<cc::LayerTreeFrameSink> Window::CreateLayerTreeFrameSink() {
-  return port_->CreateLayerTreeFrameSink();
+  auto sink = port_->CreateLayerTreeFrameSink();
+  DCHECK(frame_sink_id_.is_valid());
+  DCHECK(embeds_external_client_);
+  DCHECK(GetLocalSurfaceId().is_valid());
+  return sink;
 }
 
 viz::SurfaceId Window::GetSurfaceId() const {
-  return port_->GetSurfaceId();
+  return viz::SurfaceId(GetFrameSinkId(), port_->GetLocalSurfaceId());
 }
 
 void Window::AllocateLocalSurfaceId() {
   port_->AllocateLocalSurfaceId();
 }
 
+bool Window::IsLocalSurfaceIdAllocationSuppressed() const {
+  return port_->IsLocalSurfaceIdAllocationSuppressed();
+}
+
+viz::ScopedSurfaceIdAllocator Window::GetSurfaceIdAllocator(
+    base::OnceCallback<void()> allocation_task) {
+  return port_->GetSurfaceIdAllocator(std::move(allocation_task));
+}
+
 const viz::LocalSurfaceId& Window::GetLocalSurfaceId() const {
   return port_->GetLocalSurfaceId();
 }
 
-viz::FrameSinkId Window::GetFrameSinkId() const {
+void Window::UpdateLocalSurfaceIdFromEmbeddedClient(
+    const base::Optional<viz::LocalSurfaceId>&
+        embedded_client_local_surface_id) {
+  if (embedded_client_local_surface_id) {
+    port_->UpdateLocalSurfaceIdFromEmbeddedClient(
+        *embedded_client_local_surface_id);
+  } else {
+    port_->AllocateLocalSurfaceId();
+  }
+}
+
+const viz::FrameSinkId& Window::GetFrameSinkId() const {
   if (IsRootWindow()) {
     DCHECK(host_);
     auto* compositor = host_->compositor();
     DCHECK(compositor);
     return compositor->frame_sink_id();
   }
-  return port_->GetFrameSinkId();
+  return frame_sink_id_;
+}
+
+void Window::SetEmbedFrameSinkId(const viz::FrameSinkId& frame_sink_id) {
+  DCHECK(frame_sink_id.is_valid());
+  frame_sink_id_ = frame_sink_id;
+  embeds_external_client_ = true;
+  RegisterFrameSinkId();
 }
 
 bool Window::IsEmbeddingClient() const {
-  return embed_frame_sink_id_.is_valid();
+  return embeds_external_client_;
 }
+
+bool Window::RequiresDoubleTapGestureEvents() const {
+  return delegate_ && delegate_->RequiresDoubleTapGestureEvents();
+}
+
+#if DCHECK_IS_ON()
+// static
+void Window::SetEnvArgRequired(const char* error_string) {
+  g_env_arg_required_string = error_string;
+}
+#endif
 
 void Window::OnPaintLayer(const ui::PaintContext& context) {
   Paint(context);
@@ -1127,7 +1196,15 @@ void Window::OnLayerOpacityChanged(ui::PropertyChangeReason reason) {
     observer.OnWindowOpacitySet(this, reason);
 }
 
-void Window::OnLayerTransformed(ui::PropertyChangeReason reason) {
+void Window::OnLayerAlphaShapeChanged() {
+  WindowOcclusionTracker::ScopedPauseOcclusionTracking pause_occlusion_tracking;
+  for (WindowObserver& observer : observers_)
+    observer.OnWindowAlphaShapeSet(this);
+}
+
+void Window::OnLayerTransformed(const gfx::Transform& old_transform,
+                                ui::PropertyChangeReason reason) {
+  port_->OnDidChangeTransform(old_transform, layer()->transform());
   WindowOcclusionTracker::ScopedPauseOcclusionTracking pause_occlusion_tracking;
   for (WindowObserver& observer : observers_)
     observer.OnWindowTransformed(this, reason);
@@ -1162,9 +1239,9 @@ bool Window::CanAcceptEvent(const ui::Event& event) {
 
 ui::EventTarget* Window::GetParentTarget() {
   if (IsRootWindow()) {
-    return client::GetEventClient(this) ?
-        client::GetEventClient(this)->GetToplevelEventTarget() :
-            Env::GetInstance();
+    return client::GetEventClient(this)
+               ? client::GetEventClient(this)->GetToplevelEventTarget()
+               : env_;
   }
   return parent_;
 }
@@ -1234,6 +1311,25 @@ void Window::UpdateLayerName() {
 
   layer()->set_name(layer_name);
 #endif
+}
+
+void Window::RegisterFrameSinkId() {
+  DCHECK(frame_sink_id_.is_valid());
+  DCHECK(IsEmbeddingClient());
+  if (registered_frame_sink_id_ || disable_frame_sink_id_registration_)
+    return;
+  if (auto* compositor = layer()->GetCompositor()) {
+    compositor->AddFrameSink(frame_sink_id_);
+    registered_frame_sink_id_ = true;
+  }
+}
+
+void Window::UnregisterFrameSinkId() {
+  if (!registered_frame_sink_id_)
+    return;
+  registered_frame_sink_id_ = false;
+  if (auto* compositor = layer()->GetCompositor())
+    compositor->RemoveFrameSink(frame_sink_id_);
 }
 
 }  // namespace aura

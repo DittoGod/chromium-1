@@ -4,7 +4,6 @@
 
 #include "content/browser/devtools/devtools_url_request_interceptor.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/pattern.h"
 #include "base/strings/stringprintf.h"
 #include "content/browser/devtools/devtools_interceptor_controller.h"
@@ -42,20 +41,6 @@ DevToolsURLRequestInterceptor::~DevToolsURLRequestInterceptor() {
   // DevToolsURLRequestInterceptorUserData explicitly.
 }
 
-DevToolsURLRequestInterceptor::Pattern::Pattern() = default;
-
-DevToolsURLRequestInterceptor::Pattern::~Pattern() = default;
-
-DevToolsURLRequestInterceptor::Pattern::Pattern(const Pattern& other) = default;
-
-DevToolsURLRequestInterceptor::Pattern::Pattern(
-    const std::string& url_pattern,
-    base::flat_set<ResourceType> resource_types,
-    InterceptionStage interception_stage)
-    : url_pattern(url_pattern),
-      resource_types(std::move(resource_types)),
-      interception_stage(interception_stage) {}
-
 const DevToolsTargetRegistry::TargetInfo*
 DevToolsURLRequestInterceptor::TargetInfoForRequestInfo(
     const ResourceRequestInfo* request_info) const {
@@ -77,7 +62,7 @@ void DevToolsURLRequestInterceptor::ContinueInterceptedRequest(
         BrowserThread::UI, FROM_HERE,
         base::BindOnce(
             &ContinueInterceptedRequestCallback::sendFailure,
-            base::Passed(std::move(callback)),
+            std::move(callback),
             protocol::Response::InvalidParams("Invalid InterceptionId.")));
     return;
   }
@@ -156,8 +141,7 @@ net::URLRequestJob* DevToolsURLRequestInterceptor::InnerMaybeInterceptRequest(
     return nullptr;
   DCHECK(interception_stage != DONT_INTERCEPT);
 
-  bool is_redirect;
-  std::string interception_id = GetIdForRequest(request, &is_redirect);
+  std::string interception_id = base::StringPrintf("id-%zu", ++next_id_);
 
   if (IsNavigationRequest(resource_type)) {
     BrowserThread::PostTask(
@@ -170,8 +154,7 @@ net::URLRequestJob* DevToolsURLRequestInterceptor::InnerMaybeInterceptRequest(
   DevToolsURLInterceptorRequestJob* job = new DevToolsURLInterceptorRequestJob(
       this, interception_id, reinterpret_cast<intptr_t>(entry), request,
       network_delegate, target_info->devtools_token, entry->callback,
-      is_redirect, resource_request_info->GetResourceType(),
-      interception_stage);
+      resource_request_info->GetResourceType(), interception_stage);
   interception_id_to_job_map_[interception_id] = job;
   return job;
 }
@@ -234,7 +217,9 @@ DevToolsURLRequestInterceptor::FilterEntryForRequest(
     return nullptr;
 
   const std::vector<std::unique_ptr<FilterEntry>>& entries = it->second;
-  const std::string url_str = protocol::NetworkHandler::ClearUrlRef(url).spec();
+  std::string unused;
+  const std::string url_str =
+      protocol::NetworkHandler::ExtractFragment(url, &unused);
   for (const auto& entry : entries) {
     for (const Pattern& pattern : entry->patterns) {
       if (!pattern.resource_types.empty() &&
@@ -274,28 +259,6 @@ void DevToolsURLRequestInterceptor::UnregisterSubRequest(
   sub_requests_.erase(sub_request);
 }
 
-void DevToolsURLRequestInterceptor::ExpectRequestAfterRedirect(
-    const net::URLRequest* request,
-    std::string id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  expected_redirects_[request] = id;
-}
-
-std::string DevToolsURLRequestInterceptor::GetIdForRequest(
-    const net::URLRequest* request,
-    bool* is_redirect) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  auto find_it = expected_redirects_.find(request);
-  if (find_it == expected_redirects_.end()) {
-    *is_redirect = false;
-    return base::StringPrintf("id-%zu", ++next_id_);
-  }
-  *is_redirect = true;
-  std::string id = find_it->second;
-  expected_redirects_.erase(find_it);
-  return id;
-}
-
 DevToolsURLInterceptorRequestJob* DevToolsURLRequestInterceptor::GetJob(
     const std::string& interception_id) const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -317,26 +280,5 @@ void DevToolsURLRequestInterceptor::JobFinished(
       base::BindOnce(&DevToolsInterceptorController::NavigationFinished,
                      controller_, interception_id));
 }
-
-DevToolsURLRequestInterceptor::Modifications::Modifications(
-    base::Optional<net::Error> error_reason,
-    base::Optional<std::string> raw_response,
-    protocol::Maybe<std::string> modified_url,
-    protocol::Maybe<std::string> modified_method,
-    protocol::Maybe<std::string> modified_post_data,
-    protocol::Maybe<protocol::Network::Headers> modified_headers,
-    protocol::Maybe<protocol::Network::AuthChallengeResponse>
-        auth_challenge_response,
-    bool mark_as_canceled)
-    : error_reason(std::move(error_reason)),
-      raw_response(std::move(raw_response)),
-      modified_url(std::move(modified_url)),
-      modified_method(std::move(modified_method)),
-      modified_post_data(std::move(modified_post_data)),
-      modified_headers(std::move(modified_headers)),
-      auth_challenge_response(std::move(auth_challenge_response)),
-      mark_as_canceled(mark_as_canceled) {}
-
-DevToolsURLRequestInterceptor::Modifications::~Modifications() {}
 
 }  // namespace content

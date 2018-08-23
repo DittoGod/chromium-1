@@ -36,6 +36,10 @@ class DownloadManagerTabHelper
   // Asynchronously downloads a file using the given |task|.
   virtual void Download(std::unique_ptr<web::DownloadTask> task);
 
+  // Returns |true| after Download() was called, |false| after the task was
+  // cancelled.
+  bool has_download_task() const { return task_.get(); }
+
  protected:
   // Allow subclassing from DownloadManagerTabHelper for testing purposes.
   DownloadManagerTabHelper(web::WebState* web_state,
@@ -52,6 +56,10 @@ class DownloadManagerTabHelper
 
   // Returns key for using with NetworkActivityIndicatorManager.
   NSString* GetNetworkActivityKey() const;
+
+  // Assigns |task| to |task_|; replaces the current download if exists;
+  // instructs the delegate that download has started.
+  void DidCreateDownload(std::unique_ptr<web::DownloadTask> task);
 
   web::WebState* web_state_ = nullptr;
   __weak id<DownloadManagerTabHelperDelegate> delegate_ = nil;

@@ -12,7 +12,7 @@
 #include "base/nix/xdg_util.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 
 namespace {
@@ -46,7 +46,7 @@ bool OpenPrinterConfigDialog(const char* const* command) {
   base::Process process = base::LaunchProcess(argv, base::LaunchOptions());
   if (!process.IsValid())
     return false;
-  base::EnsureProcessGetsReaped(process.Pid());
+  base::EnsureProcessGetsReaped(std::move(process));
   return true;
 }
 

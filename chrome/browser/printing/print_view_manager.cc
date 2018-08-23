@@ -5,11 +5,11 @@
 #include "chrome/browser/printing/print_view_manager.h"
 
 #include <map>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 #include "chrome/browser/printing/print_preview_dialog_controller.h"
@@ -24,11 +24,9 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/webplugininfo.h"
 #include "ipc/ipc_message_macros.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 
 using content::BrowserThread;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(printing::PrintViewManager);
 
 namespace {
 
@@ -40,17 +38,16 @@ base::LazyInstance<std::map<content::RenderProcessHost*, base::Closure>>::Leaky
 void EnableInternalPDFPluginForContents(int render_process_id,
                                         int render_frame_id) {
   // Always enable the internal PDF plugin for the print preview page.
-  base::FilePath pdf_plugin_path = base::FilePath::FromUTF8Unsafe(
+  static const base::FilePath pdf_plugin_path(
       ChromeContentClient::kPDFPluginPath);
-
-  content::WebPluginInfo pdf_plugin;
-  if (!content::PluginService::GetInstance()->GetPluginInfoByPath(
-      pdf_plugin_path, &pdf_plugin)) {
+  auto* plugin_service = content::PluginService::GetInstance();
+  const content::PepperPluginInfo* info =
+      plugin_service->GetRegisteredPpapiPluginInfo(pdf_plugin_path);
+  if (!info)
     return;
-  }
 
   ChromePluginServiceFilter::GetInstance()->OverridePluginForFrame(
-      render_process_id, render_frame_id, GURL(), pdf_plugin);
+      render_process_id, render_frame_id, info->ToWebPluginInfo());
 }
 
 }  // namespace
@@ -85,7 +82,6 @@ PrintViewManager::~PrintViewManager() {
   DCHECK_EQ(NOT_PREVIEWING, print_preview_state_);
 }
 
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
 bool PrintViewManager::PrintForSystemDialogNow(
     const base::Closure& dialog_shown_callback) {
   DCHECK(!dialog_shown_callback.is_null());
@@ -96,7 +92,7 @@ bool PrintViewManager::PrintForSystemDialogNow(
   SetPrintingRFH(print_preview_rfh_);
   int32_t id = print_preview_rfh_->GetRoutingID();
   return PrintNowInternal(print_preview_rfh_,
-                          base::MakeUnique<PrintMsg_PrintForSystemDialog>(id));
+                          std::make_unique<PrintMsg_PrintForSystemDialog>(id));
 }
 
 bool PrintViewManager::BasicPrint(content::RenderFrameHost* rfh) {
@@ -112,7 +108,6 @@ bool PrintViewManager::BasicPrint(content::RenderFrameHost* rfh) {
 
   return !!print_preview_dialog->GetWebUI();
 }
-#endif  // BUILDFLAG(ENABLE_BASIC_PRINTING)
 
 bool PrintViewManager::PrintPreviewNow(content::RenderFrameHost* rfh,
                                        bool has_selection) {
@@ -122,7 +117,7 @@ bool PrintViewManager::PrintPreviewNow(content::RenderFrameHost* rfh,
   if (print_preview_state_ != NOT_PREVIEWING)
     return false;
 
-  auto message = base::MakeUnique<PrintMsg_InitiatePrintPreview>(
+  auto message = std::make_unique<PrintMsg_InitiatePrintPreview>(
       rfh->GetRoutingID(), has_selection);
   if (!PrintNowInternal(rfh, std::move(message)))
     return false;

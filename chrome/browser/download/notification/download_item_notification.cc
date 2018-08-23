@@ -11,7 +11,7 @@
 #include "base/files/file_util.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/note_taking_helper.h"
@@ -171,30 +171,6 @@ void RecordButtonClickAction(DownloadCommands::Command command) {
   }
 }
 
-// A thunk delegate class.
-class DownloadNotificationDelegate
-    : public message_center::NotificationDelegate {
- public:
-  explicit DownloadNotificationDelegate(DownloadItemNotification* notification)
-      : notification_(notification) {}
-
-  void Close(bool by_user) override { notification_->OnNotificationClose(); }
-
-  void Click() override { notification_->OnNotificationClick(); }
-
-  void ButtonClick(int index) override {
-    notification_->OnNotificationButtonClick(index);
-  }
-
- private:
-  ~DownloadNotificationDelegate() override = default;
-
-  // |notification_| is assumed to outlive |this|.
-  DownloadItemNotification* notification_;
-
-  DISALLOW_COPY_AND_ASSIGN(DownloadNotificationDelegate);
-};
-
 }  // namespace
 
 DownloadItemNotification::DownloadItemNotification(download::DownloadItem* item)
@@ -204,6 +180,7 @@ DownloadItemNotification::DownloadItemNotification(download::DownloadItem* item)
   message_center::RichNotificationData rich_notification_data;
   rich_notification_data.should_make_spoken_feedback_for_popup_updates = false;
   rich_notification_data.vector_small_image = &ash::kNotificationDownloadIcon;
+
   notification_ = std::make_unique<message_center::Notification>(
       message_center::NOTIFICATION_TYPE_PROGRESS, GetNotificationId(),
       base::string16(),  // title
@@ -215,12 +192,9 @@ DownloadItemNotification::DownloadItemNotification(download::DownloadItem* item)
       message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
                                  kDownloadNotificationNotifierId),
       rich_notification_data,
-      base::MakeRefCounted<DownloadNotificationDelegate>(this));
-
+      base::MakeRefCounted<message_center::ThunkNotificationDelegate>(
+          weak_factory_.GetWeakPtr()));
   notification_->set_progress(0);
-  // Dangerous notifications don't have a click handler.
-  notification_->set_clickable(!item_->IsDangerous());
-
   Update();
 }
 
@@ -239,9 +213,11 @@ void DownloadItemNotification::OnDownloadRemoved(download::DownloadItem* item) {
   // The given |item| may be already free'd.
   DCHECK_EQ(item, item_);
 
-  // Removing the notification causes calling |NotificationDelegate::Close()|.
   NotificationDisplayServiceFactory::GetForProfile(profile())->Close(
       NotificationHandler::Type::TRANSIENT, GetNotificationId());
+  // |this| will be deleted before there's a chance for Close() to be called
+  // through the delegate, so preemptively call it now.
+  Close(false);
 
   item_ = nullptr;
 }
@@ -259,13 +235,13 @@ void DownloadItemNotification::DisablePopup() {
       NotificationHandler::Type::TRANSIENT, *notification_);
 }
 
-void DownloadItemNotification::OnNotificationClose() {
+void DownloadItemNotification::Close(bool by_user) {
   closed_ = true;
 
   if (item_ && item_->IsDangerous() && !item_->IsDone()) {
     base::RecordAction(
         UserMetricsAction("DownloadNotification.Close_Dangerous"));
-    item_->Cancel(true /* by_user */);
+    item_->Cancel(by_user);
     return;
   }
 
@@ -275,7 +251,38 @@ void DownloadItemNotification::OnNotificationClose() {
   }
 }
 
-void DownloadItemNotification::OnNotificationClick() {
+void DownloadItemNotification::Click(
+    const base::Optional<int>& button_index,
+    const base::Optional<base::string16>& reply) {
+  if (button_index) {
+    if (*button_index < 0 ||
+        static_cast<size_t>(*button_index) >= button_actions_->size()) {
+      // Out of boundary.
+      NOTREACHED();
+      return;
+    }
+
+    DownloadCommands::Command command = button_actions_->at(*button_index);
+    RecordButtonClickAction(command);
+
+    DownloadCommands(item_).ExecuteCommand(command);
+
+    // ExecuteCommand() might cause |item_| to be destroyed.
+    if (item_ && command != DownloadCommands::PAUSE &&
+        command != DownloadCommands::RESUME) {
+      CloseNotification();
+    }
+
+    // Shows the notification again after clicking "Keep" on dangerous download.
+    if (command == DownloadCommands::KEEP) {
+      show_next_ = true;
+      Update();
+    }
+
+    return;
+  }
+
+  // Handle a click on the notification's body.
   if (item_->IsDangerous()) {
     base::RecordAction(
         UserMetricsAction("DownloadNotification.Click_Dangerous"));
@@ -310,37 +317,14 @@ void DownloadItemNotification::OnNotificationClick() {
   }
 }
 
-void DownloadItemNotification::OnNotificationButtonClick(int button_index) {
-  if (button_index < 0 ||
-      static_cast<size_t>(button_index) >= button_actions_->size()) {
-    // Out of boundary.
-    NOTREACHED();
-    return;
-  }
-
-  DownloadCommands::Command command = button_actions_->at(button_index);
-  RecordButtonClickAction(command);
-
-  DownloadCommands(item_).ExecuteCommand(command);
-
-  // ExecuteCommand() might cause |item_| to be destroyed.
-  if (item_ && command != DownloadCommands::PAUSE &&
-      command != DownloadCommands::RESUME) {
-    CloseNotification();
-  }
-
-  // Shows the notification again after clicking "Keep" on dangerous download.
-  if (command == DownloadCommands::KEEP) {
-    show_next_ = true;
-    Update();
-  }
-}
-
 std::string DownloadItemNotification::GetNotificationId() const {
   return item_->GetGuid();
 }
 
 void DownloadItemNotification::CloseNotification() {
+  if (closed_)
+    return;
+
   NotificationDisplayServiceFactory::GetForProfile(profile())->Close(
       NotificationHandler::Type::TRANSIENT, GetNotificationId());
 }
@@ -349,15 +333,14 @@ void DownloadItemNotification::Update() {
   auto download_state = item_->GetState();
 
   // When the download is just completed, interrupted or transitions to
-  // dangerous, increase the priority over its previous value to make sure it
-  // pops up again.
-  bool popup =
+  // dangerous, make sure it pops up again.
+  bool pop_up =
       ((item_->IsDangerous() && !previous_dangerous_state_) ||
        (download_state == download::DownloadItem::COMPLETE &&
         previous_download_state_ != download::DownloadItem::COMPLETE) ||
        (download_state == download::DownloadItem::INTERRUPTED &&
         previous_download_state_ != download::DownloadItem::INTERRUPTED));
-  UpdateNotificationData(!closed_ || show_next_ || popup, popup);
+  UpdateNotificationData(!closed_ || show_next_ || pop_up, pop_up);
 
   show_next_ = false;
   previous_download_state_ = item_->GetState();
@@ -365,8 +348,19 @@ void DownloadItemNotification::Update() {
 }
 
 void DownloadItemNotification::UpdateNotificationData(bool display,
-                                                      bool bump_priority) {
+                                                      bool force_pop_up) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  if (item_->GetState() == download::DownloadItem::CANCELLED) {
+    // Confirms that a download is cancelled by user action.
+    DCHECK(item_->GetLastReason() ==
+               download::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED ||
+           item_->GetLastReason() ==
+               download::DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN);
+
+    CloseNotification();
+    return;
+  }
 
   DownloadItemModel model(item_);
   DownloadCommands command(item_);
@@ -402,14 +396,9 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
         notification_->set_progress(100);
         break;
       case download::DownloadItem::CANCELLED:
-        // Confirms that a download is cancelled by user action.
-        DCHECK(item_->GetLastReason() ==
-                   download::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED ||
-               item_->GetLastReason() ==
-                   download::DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN);
-
-        CloseNotification();
-        return;  // Skips the remaining since the notification has closed.
+        // Handled above.
+        NOTREACHED();
+        return;
       case download::DownloadItem::INTERRUPTED:
         // Shows a notifiation as progress type once so the visible content will
         // be updated. (same as the case of type = COMPLETE)
@@ -437,12 +426,10 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
   }
   notification_->set_buttons(notification_actions);
 
+  notification_->set_renotify(force_pop_up);
+
   if (display) {
     closed_ = false;
-    if (bump_priority &&
-        notification_->priority() < message_center::HIGH_PRIORITY) {
-      notification_->set_priority(notification_->priority() + 1);
-    }
     NotificationDisplayServiceFactory::GetForProfile(profile())->Display(
         NotificationHandler::Type::TRANSIENT, *notification_);
   }
@@ -460,7 +447,7 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
     if (model.HasSupportedImageMimeType()) {
       base::FilePath file_path = item_->GetFullPath();
       base::PostTaskWithTraitsAndReplyWithResult(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
           base::Bind(&ReadNotificationImage, file_path),
           base::Bind(&DownloadItemNotification::OnImageLoaded,
                      weak_factory_.GetWeakPtr()));
@@ -512,7 +499,7 @@ void DownloadItemNotification::OnImageDecoded(const SkBitmap& decoded_bitmap) {
   }
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&CropImage, decoded_bitmap),
       base::Bind(&DownloadItemNotification::OnImageCropped,
                  weak_factory_.GetWeakPtr()));
@@ -704,6 +691,7 @@ base::string16 DownloadItemNotification::GetWarningStatusString() const {
     case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
     case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
     case download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+    case download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY:
     case download::DOWNLOAD_DANGER_TYPE_MAX: {
       break;
     }

@@ -59,8 +59,9 @@ class TestFacetManagerNotifier {
       return;
     }
     task_runner_->PostDelayedTask(
-        FROM_HERE, base::Bind(&FacetManager::NotifyAtRequestedTime,
-                              base::Unretained(facet_manager_)),
+        FROM_HERE,
+        base::BindOnce(&FacetManager::NotifyAtRequestedTime,
+                       base::Unretained(facet_manager_)),
         delay);
   }
 
@@ -221,7 +222,6 @@ class FacetManagerTest : public testing::Test {
   FacetManagerTest()
       : consumer_task_runner_(new base::TestSimpleTaskRunner),
         main_task_runner_(new base::TestMockTimeTaskRunner),
-        main_clock_(main_task_runner_->GetMockClock()),
         facet_manager_notifier_(main_task_runner_, GetShortTestPeriod()),
         facet_manager_host_(&facet_manager_notifier_) {}
 
@@ -241,7 +241,7 @@ class FacetManagerTest : public testing::Test {
         FacetURI::FromCanonicalSpec(kTestFacetURI1));
     facet_manager_ = std::make_unique<FacetManager>(
         FacetURI::FromCanonicalSpec(kTestFacetURI1), fake_facet_manager_host(),
-        main_clock_.get());
+        main_task_runner_->GetMockClock());
     facet_manager_notifier_.set_facet_manager(facet_manager_.get());
     facet_manager_creation_ = Now();
   }
@@ -275,8 +275,9 @@ class FacetManagerTest : public testing::Test {
 
   void SchedulePrefetch(base::Time start, base::Time end) {
     main_task_runner_->PostDelayedTask(
-        FROM_HERE, base::Bind(&FacetManager::Prefetch,
-                              base::Unretained(facet_manager()), end),
+        FROM_HERE,
+        base::BindOnce(&FacetManager::Prefetch,
+                       base::Unretained(facet_manager()), end),
         start - Now());
   }
 
@@ -284,8 +285,9 @@ class FacetManagerTest : public testing::Test {
                               base::Time original_end_of_prefetch) {
     main_task_runner_->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&FacetManager::CancelPrefetch,
-                   base::Unretained(facet_manager()), original_end_of_prefetch),
+        base::BindOnce(&FacetManager::CancelPrefetch,
+                       base::Unretained(facet_manager()),
+                       original_end_of_prefetch),
         cancellation_time - Now());
   }
 
@@ -413,9 +415,6 @@ class FacetManagerTest : public testing::Test {
   MockAffiliationConsumer mock_consumer_;
   scoped_refptr<base::TestSimpleTaskRunner> consumer_task_runner_;
   scoped_refptr<base::TestMockTimeTaskRunner> main_task_runner_;
-  // TODO(tzik): Remove |main_clock_| after updating TestMockTimeTaskRunner to
-  // own the clock instances.
-  std::unique_ptr<base::Clock> main_clock_;
   TestFacetManagerNotifier facet_manager_notifier_;
   MockFacetManagerHost facet_manager_host_;
 

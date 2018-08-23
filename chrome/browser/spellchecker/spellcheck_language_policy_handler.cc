@@ -4,7 +4,6 @@
 
 #include "chrome/browser/spellchecker/spellcheck_language_policy_handler.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -43,7 +42,7 @@ void SpellcheckLanguagePolicyHandler::ApplyPolicySettings(
   const base::Value::ListStorage& languages = value->GetList();
 
   std::unique_ptr<base::ListValue> forced_language_list =
-      base::MakeUnique<base::ListValue>();
+      std::make_unique<base::ListValue>();
   for (const base::Value& language : languages) {
     std::string current_language =
         spellcheck::GetCorrespondingSpellCheckLanguage(
@@ -56,7 +55,7 @@ void SpellcheckLanguagePolicyHandler::ApplyPolicySettings(
   }
 
   prefs->SetValue(spellcheck::prefs::kSpellCheckEnable,
-                  base::MakeUnique<base::Value>(true));
+                  std::make_unique<base::Value>(true));
   prefs->SetValue(spellcheck::prefs::kSpellCheckForcedDictionaries,
                   std::move(forced_language_list));
 }

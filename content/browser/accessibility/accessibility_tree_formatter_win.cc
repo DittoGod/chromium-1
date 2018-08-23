@@ -14,15 +14,14 @@
 #include <utility>
 
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "base/win/com_init_util.h"
 #include "base/win/scoped_bstr.h"
-#include "base/win/scoped_com_initializer.h"
 #include "base/win/scoped_variant.h"
 #include "content/browser/accessibility/accessibility_tree_formatter_utils_win.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
@@ -114,13 +113,11 @@ class AccessibilityTreeFormatterWin : public AccessibilityTreeFormatter {
   base::string16 ProcessTreeForOutput(
       const base::DictionaryValue& node,
       base::DictionaryValue* filtered_dict_result = nullptr) override;
-
-  // Initializes COM services when standalone dump events tool is used.
-  base::win::ScopedCOMInitializer com_initializer;
 };
 
 // static
 AccessibilityTreeFormatter* AccessibilityTreeFormatter::Create() {
+  base::win::AssertComInitialized();
   return new AccessibilityTreeFormatterWin();
 }
 
@@ -314,7 +311,7 @@ void AccessibilityTreeFormatterWin::RecursiveBuildAccessibilityTree(
     if (child_variant.type() == VT_DISPATCH) {
       dispatch = V_DISPATCH(child_variant.ptr());
     } else if (child_variant.type() == VT_I4) {
-      HRESULT hr = node->get_accChild(child_variant, dispatch.GetAddressOf());
+      hr = node->get_accChild(child_variant, dispatch.GetAddressOf());
       if (FAILED(hr)) {
         child_dict->SetString("error",
                               base::ASCIIToUTF16("[Error retrieving child]"));

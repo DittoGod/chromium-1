@@ -15,7 +15,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "base/win/registry.h"
@@ -118,7 +118,7 @@ const base::FilePath::CharType kDowngradeDeleteSuffix[] =
 
 void MoveUserDataForFirstRunAfterDowngrade() {
   base::FilePath user_data_dir;
-  if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
     return;
   InstallLevel install_level = GetInstallLevel();
   base::Version current_version(chrome::kChromeVersion);
@@ -162,11 +162,11 @@ base::Version GetLastVersion(const base::FilePath& user_data_dir) {
 
 void DeleteMovedUserDataSoon() {
   base::FilePath user_data_dir;
-  PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   content::BrowserThread::PostAfterStartupTask(
       FROM_HERE,
       base::CreateTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN}),
       base::Bind(&DeleteMovedUserData, user_data_dir, GetDiskCacheDir()));
 }

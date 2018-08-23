@@ -13,15 +13,14 @@
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/time/clock.h"
-#include "base/time/default_clock.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "components/offline_pages/core/client_policy_controller.h"
 #include "components/offline_pages/core/offline_page_client_policy.h"
-#include "components/offline_pages/core/offline_page_metadata_store_sql.h"
+#include "components/offline_pages/core/offline_page_metadata_store.h"
 #include "components/offline_pages/core/offline_store_utils.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
 
@@ -32,9 +31,9 @@ using ClearStorageResult = ClearStorageTask::ClearStorageResult;
 
 namespace {
 
-#define PAGE_INFO_PROJECTION                                               \
-  " offline_id, client_namespace, client_id, file_size, last_access_time," \
-  " file_path"
+#define PAGE_INFO_PROJECTION                                            \
+  " offline_id, client_namespace, client_id, file_size, creation_time," \
+  " last_access_time, file_path "
 
 // This struct needs to be in sync with |PAGE_INFO_PROJECTION|.
 struct PageInfo {
@@ -43,6 +42,7 @@ struct PageInfo {
   int64_t offline_id;
   ClientId client_id;
   int64_t file_size;
+  base::Time creation_time;
   base::Time last_access_time;
   base::FilePath file_path;
 };
@@ -63,24 +63,23 @@ PageInfo MakePageInfo(sql::Statement* statement) {
   page_info.client_id =
       ClientId(statement->ColumnString(1), statement->ColumnString(2));
   page_info.file_size = statement->ColumnInt64(3);
-  page_info.last_access_time =
+  page_info.creation_time =
       store_utils::FromDatabaseTime(statement->ColumnInt64(4));
+  page_info.last_access_time =
+      store_utils::FromDatabaseTime(statement->ColumnInt64(5));
   page_info.file_path =
-      store_utils::FromDatabaseFilePath(statement->ColumnString(5));
+      store_utils::FromDatabaseFilePath(statement->ColumnString(6));
   return page_info;
 }
 
 std::unique_ptr<std::vector<PageInfo>> GetAllTemporaryPageInfos(
     const std::map<std::string, LifetimePolicy>& temp_namespace_policy_map,
-    sql::Connection* db) {
+    sql::Database* db) {
   auto result = std::make_unique<std::vector<PageInfo>>();
 
-  const char kSql[] = "SELECT " PAGE_INFO_PROJECTION
-                      " FROM offlinepages_v1"
-                      " WHERE client_namespace = ?";
-  sql::Transaction transaction(db);
-  if (!transaction.Begin())
-    return result;
+  static const char kSql[] = "SELECT " PAGE_INFO_PROJECTION
+                             " FROM offlinepages_v1"
+                             " WHERE client_namespace = ?";
 
   for (const auto& temp_namespace_policy : temp_namespace_policy_map) {
     std::string name_space = temp_namespace_policy.first;
@@ -88,10 +87,12 @@ std::unique_ptr<std::vector<PageInfo>> GetAllTemporaryPageInfos(
     statement.BindString(0, name_space);
     while (statement.Step())
       result->emplace_back(MakePageInfo(&statement));
+    if (!statement.Succeeded()) {
+      result->clear();
+      break;
+    }
   }
 
-  if (!transaction.Commit())
-    result->clear();
   return result;
 }
 
@@ -99,7 +100,7 @@ std::unique_ptr<std::vector<PageInfo>> GetPageInfosToClear(
     const std::map<std::string, LifetimePolicy>& temp_namespace_policy_map,
     const base::Time& start_time,
     const ArchiveManager::StorageStats& stats,
-    sql::Connection* db) {
+    sql::Database* db) {
   std::map<std::string, int> namespace_page_count;
   auto page_infos_to_delete = std::make_unique<std::vector<PageInfo>>();
   std::vector<PageInfo> pages_remaining;
@@ -109,10 +110,10 @@ std::unique_ptr<std::vector<PageInfo>> GetPageInfosToClear(
   // just expired pages to make the storage usage below the threshold.
   bool quota_based_clearing =
       stats.temporary_archives_size >=
-      (stats.temporary_archives_size + stats.free_disk_space) *
+      (stats.temporary_archives_size + stats.internal_free_disk_space) *
           kOfflinePageStorageLimit;
   int64_t max_allowed_size =
-      (stats.temporary_archives_size + stats.free_disk_space) *
+      (stats.temporary_archives_size + stats.internal_free_disk_space) *
       kOfflinePageStorageClearThreshold;
 
   // Initialize the counting map with 0s.
@@ -172,7 +173,7 @@ bool DeleteArchiveSync(const base::FilePath& file_path) {
 }
 
 // Deletes a page from the store by |offline_id|.
-bool DeletePageEntryByOfflineIdSync(sql::Connection* db, int64_t offline_id) {
+bool DeletePageEntryByOfflineIdSync(sql::Database* db, int64_t offline_id) {
   static const char kSql[] = "DELETE FROM offlinepages_v1 WHERE offline_id = ?";
   sql::Statement statement(db->GetCachedStatement(SQL_FROM_HERE, kSql));
   statement.BindInt64(0, offline_id);
@@ -183,29 +184,30 @@ std::pair<size_t, DeletePageResult> ClearPagesSync(
     std::map<std::string, LifetimePolicy> temp_namespace_policy_map,
     const base::Time& start_time,
     const ArchiveManager::StorageStats& stats,
-    sql::Connection* db) {
-  if (!db)
-    return std::make_pair(0, DeletePageResult::STORE_FAILURE);
-
-  DeletePageResult result = DeletePageResult::SUCCESS;
-  size_t pages_cleared = 0;
-
-  auto page_infos =
+    sql::Database* db) {
+  std::unique_ptr<std::vector<PageInfo>> page_infos =
       GetPageInfosToClear(temp_namespace_policy_map, start_time, stats, db);
 
-  if (page_infos->empty())
-    return std::make_pair(pages_cleared, result);
-
+  size_t pages_cleared = 0;
   for (const auto& page_info : *page_infos) {
     if (!base::PathExists(page_info.file_path) ||
         DeleteArchiveSync(page_info.file_path)) {
-      if (DeletePageEntryByOfflineIdSync(db, page_info.offline_id))
+      if (DeletePageEntryByOfflineIdSync(db, page_info.offline_id)) {
         pages_cleared++;
+        // Reports the time since creation in minutes.
+        base::TimeDelta time_since_creation =
+            start_time - page_info.creation_time;
+        UMA_HISTOGRAM_CUSTOM_COUNTS(
+            "OfflinePages.ClearTemporaryPages.TimeSinceCreation",
+            time_since_creation.InMinutes(), 1,
+            base::TimeDelta::FromDays(30).InMinutes(), 50);
+      }
     }
   }
-  if (pages_cleared != page_infos->size())
-    result = DeletePageResult::STORE_FAILURE;
-  return std::make_pair(pages_cleared, result);
+
+  return std::make_pair(pages_cleared, pages_cleared == page_infos->size()
+                                           ? DeletePageResult::SUCCESS
+                                           : DeletePageResult::STORE_FAILURE);
 }
 
 std::map<std::string, LifetimePolicy> GetTempNamespacePolicyMap(
@@ -221,7 +223,7 @@ std::map<std::string, LifetimePolicy> GetTempNamespacePolicyMap(
 
 }  // namespace
 
-ClearStorageTask::ClearStorageTask(OfflinePageMetadataStoreSQL* store,
+ClearStorageTask::ClearStorageTask(OfflinePageMetadataStore* store,
                                    ArchiveManager* archive_manager,
                                    ClientPolicyController* policy_controller,
                                    const base::Time& clearup_time,
@@ -243,8 +245,8 @@ ClearStorageTask::~ClearStorageTask() {}
 void ClearStorageTask::Run() {
   TRACE_EVENT_ASYNC_BEGIN0("offline_pages", "ClearStorageTask running", this);
   archive_manager_->GetStorageStats(
-      base::Bind(&ClearStorageTask::OnGetStorageStatsDone,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&ClearStorageTask::OnGetStorageStatsDone,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ClearStorageTask::OnGetStorageStatsDone(
@@ -254,7 +256,8 @@ void ClearStorageTask::OnGetStorageStatsDone(
   store_->Execute(base::BindOnce(&ClearPagesSync, temp_namespace_policy_map,
                                  clearup_time_, stats),
                   base::BindOnce(&ClearStorageTask::OnClearPagesDone,
-                                 weak_ptr_factory_.GetWeakPtr()));
+                                 weak_ptr_factory_.GetWeakPtr()),
+                  {0, DeletePageResult::STORE_FAILURE});
 }
 
 void ClearStorageTask::OnClearPagesDone(

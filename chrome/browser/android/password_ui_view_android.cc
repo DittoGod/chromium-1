@@ -5,29 +5,36 @@
 #include "chrome/browser/android/password_ui_view_android.h"
 
 #include <algorithm>
+#include <memory>
+#include <vector>
 
 #include "base/android/callback_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/bind_helpers.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/metrics/field_trial.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/string_piece.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/password_manager/core/browser/export/password_csv_writer.h"
-#include "components/password_manager/core/browser/password_manager_constants.h"
 #include "components/password_manager/core/browser/password_ui_utils.h"
 #include "components/password_manager/core/browser/ui/credential_provider_interface.h"
 #include "content/public/browser/browser_thread.h"
 #include "jni/PasswordUIView_jni.h"
+#include "ui/base/l10n/l10n_util.h"
 
 using base::android::ConvertUTF16ToJavaString;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 PasswordUIViewAndroid::PasswordUIViewAndroid(JNIEnv* env, jobject obj)
@@ -35,7 +42,7 @@ PasswordUIViewAndroid::PasswordUIViewAndroid(JNIEnv* env, jobject obj)
 
 PasswordUIViewAndroid::~PasswordUIViewAndroid() {}
 
-void PasswordUIViewAndroid::Destroy(JNIEnv*, const JavaParamRef<jobject>&) {
+void PasswordUIViewAndroid::Destroy(JNIEnv*, const JavaRef<jobject>&) {
   switch (state_) {
     case State::ALIVE:
       delete this;
@@ -83,14 +90,14 @@ void PasswordUIViewAndroid::SetPasswordExceptionList(
 }
 
 void PasswordUIViewAndroid::UpdatePasswordLists(JNIEnv* env,
-                                                const JavaParamRef<jobject>&) {
+                                                const JavaRef<jobject>&) {
   DCHECK_EQ(State::ALIVE, state_);
   password_manager_presenter_.UpdatePasswordLists();
 }
 
 ScopedJavaLocalRef<jobject> PasswordUIViewAndroid::GetSavedPasswordEntry(
     JNIEnv* env,
-    const JavaParamRef<jobject>&,
+    const JavaRef<jobject>&,
     int index) {
   DCHECK_EQ(State::ALIVE, state_);
   const autofill::PasswordForm* form =
@@ -111,7 +118,7 @@ ScopedJavaLocalRef<jobject> PasswordUIViewAndroid::GetSavedPasswordEntry(
 
 ScopedJavaLocalRef<jstring> PasswordUIViewAndroid::GetSavedPasswordException(
     JNIEnv* env,
-    const JavaParamRef<jobject>&,
+    const JavaRef<jobject>&,
     int index) {
   DCHECK_EQ(State::ALIVE, state_);
   const autofill::PasswordForm* form =
@@ -124,7 +131,7 @@ ScopedJavaLocalRef<jstring> PasswordUIViewAndroid::GetSavedPasswordException(
 
 void PasswordUIViewAndroid::HandleRemoveSavedPasswordEntry(
     JNIEnv* env,
-    const JavaParamRef<jobject>&,
+    const JavaRef<jobject>&,
     int index) {
   DCHECK_EQ(State::ALIVE, state_);
   password_manager_presenter_.RemoveSavedPassword(index);
@@ -132,7 +139,7 @@ void PasswordUIViewAndroid::HandleRemoveSavedPasswordEntry(
 
 void PasswordUIViewAndroid::HandleRemoveSavedPasswordException(
     JNIEnv* env,
-    const JavaParamRef<jobject>&,
+    const JavaRef<jobject>&,
     int index) {
   DCHECK_EQ(State::ALIVE, state_);
   password_manager_presenter_.RemovePasswordException(index);
@@ -140,8 +147,10 @@ void PasswordUIViewAndroid::HandleRemoveSavedPasswordException(
 
 void PasswordUIViewAndroid::HandleSerializePasswords(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>&,
-    const base::android::JavaParamRef<jobject>& callback) {
+    const JavaRef<jobject>&,
+    const JavaRef<jstring>& java_target_path,
+    const JavaRef<jobject>& success_callback,
+    const JavaRef<jobject>& error_callback) {
   switch (state_) {
     case State::ALIVE:
       state_ = State::ALIVE_SERIALIZATION_PENDING;
@@ -164,43 +173,62 @@ void PasswordUIViewAndroid::HandleSerializePasswords(
   // not to avoid the background computation if |this| is about to be deleted
   // but to simply avoid use after free from the background task runner.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::TaskPriority::USER_VISIBLE},
-      base::BindOnce(&PasswordUIViewAndroid::ObtainAndSerializePasswords,
-                     base::Unretained(this)),
+      FROM_HERE, {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
       base::BindOnce(
-          &PasswordUIViewAndroid::PostSerializedPasswords,
+          &PasswordUIViewAndroid::ObtainAndSerializePasswords,
           base::Unretained(this),
-          base::android::ScopedJavaGlobalRef<jobject>(env, callback)));
+          base::FilePath(ConvertJavaStringToUTF8(env, java_target_path))),
+      base::BindOnce(&PasswordUIViewAndroid::PostSerializedPasswords,
+                     base::Unretained(this),
+                     base::android::ScopedJavaGlobalRef<jobject>(
+                         env, success_callback.obj()),
+                     base::android::ScopedJavaGlobalRef<jobject>(
+                         env, error_callback.obj())));
 }
 
 ScopedJavaLocalRef<jstring> JNI_PasswordUIView_GetAccountDashboardURL(
     JNIEnv* env,
     const JavaParamRef<jclass>&) {
-  return ConvertUTF8ToJavaString(
-      env, password_manager::kPasswordManagerAccountDashboardURL);
+  return ConvertUTF16ToJavaString(
+      env, l10n_util::GetStringUTF16(IDS_PASSWORDS_WEB_LINK));
 }
 
 // static
 static jlong JNI_PasswordUIView_Init(JNIEnv* env,
                                      const JavaParamRef<jobject>& obj) {
-  PasswordUIViewAndroid* controller = new PasswordUIViewAndroid(env, obj);
+  PasswordUIViewAndroid* controller = new PasswordUIViewAndroid(env, obj.obj());
   return reinterpret_cast<intptr_t>(controller);
 }
 
-std::string PasswordUIViewAndroid::ObtainAndSerializePasswords() {
+PasswordUIViewAndroid::SerializationResult
+PasswordUIViewAndroid::ObtainAndSerializePasswords(
+    const base::FilePath& target_path) {
   // This is run on a backend task runner. Do not access any member variables
-  // except for |credential_provider_| and |password_manager_presenter_|.
+  // except for |credential_provider_for_testing_| and
+  // |password_manager_presenter_|.
   password_manager::CredentialProviderInterface* const provider =
       credential_provider_for_testing_ ? credential_provider_for_testing_
                                        : &password_manager_presenter_;
 
-  return password_manager::PasswordCSVWriter::SerializePasswords(
-      provider->GetAllPasswords());
+  std::vector<std::unique_ptr<autofill::PasswordForm>> passwords =
+      provider->GetAllPasswords();
+
+  // The UI should not trigger serialization if there are not passwords.
+  DCHECK(!passwords.empty());
+
+  std::string data =
+      password_manager::PasswordCSVWriter::SerializePasswords(passwords);
+  int bytes_written = base::WriteFile(target_path, data.data(), data.size());
+  if (bytes_written != base::checked_cast<int>(data.size()))
+    return {0, logging::GetLastSystemErrorCode()};
+
+  return {static_cast<int>(passwords.size()), 0};
 }
 
 void PasswordUIViewAndroid::PostSerializedPasswords(
-    const base::android::JavaRef<jobject>& callback,
-    std::string serialized_passwords) {
+    const base::android::JavaRef<jobject>& success_callback,
+    const base::android::JavaRef<jobject>& error_callback,
+    SerializationResult serialization_result) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   switch (state_) {
     case State::ALIVE:
@@ -209,11 +237,16 @@ void PasswordUIViewAndroid::PostSerializedPasswords(
     case State::ALIVE_SERIALIZATION_PENDING: {
       state_ = State::ALIVE;
       if (export_target_for_testing_) {
-        *export_target_for_testing_ = serialized_passwords;
+        *export_target_for_testing_ = serialization_result;
       } else {
-        JNIEnv* env = base::android::AttachCurrentThread();
-        base::android::RunCallbackAndroid(
-            callback, ConvertUTF8ToJavaString(env, serialized_passwords));
+        if (serialization_result.entries_count) {
+          base::android::RunIntCallbackAndroid(
+              success_callback, serialization_result.entries_count);
+        } else {
+          base::android::RunStringCallbackAndroid(
+              error_callback,
+              logging::SystemErrorCodeToString(serialization_result.error));
+        }
       }
       break;
     }

@@ -13,14 +13,14 @@
 #include "components/autofill/core/common/form_data.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/service_manager/public/cpp/interface_provider.h"
+#include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
-#include "third_party/WebKit/public/web/WebInputElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_form_element.h"
+#include "third_party/blink/public/web/web_input_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 using blink::WebDocument;
 using blink::WebElement;
@@ -37,7 +37,7 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
 
   ~FakeContentAutofillDriver() override {}
 
-  void BindRequest(mojom::AutofillDriverRequest request) {
+  void BindRequest(mojom::AutofillDriverAssociatedRequest request) {
     bindings_.AddBinding(this, std::move(request));
   }
 
@@ -48,6 +48,10 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
   bool known_success() const { return known_success_; }
 
   SubmissionSource submission_source() const { return submission_source_; }
+
+  const FormFieldData* select_control_changed() const {
+    return select_control_changed_.get();
+  }
 
  private:
   // mojom::AutofillDriver:
@@ -72,10 +76,17 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
                           const FormFieldData& field,
                           const gfx::RectF& bounding_box) override {}
 
+  void SelectControlDidChange(const FormData& form,
+                              const FormFieldData& field,
+                              const gfx::RectF& bounding_box) override {
+    select_control_changed_ = std::make_unique<FormFieldData>(field);
+  }
+
   void QueryFormFieldAutofill(int32_t id,
                               const FormData& form,
                               const FormFieldData& field,
-                              const gfx::RectF& bounding_box) override {}
+                              const gfx::RectF& bounding_box,
+                              bool autoselect_first_field) override {}
 
   void HidePopup() override {}
 
@@ -95,6 +106,8 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
   void SetDataList(const std::vector<base::string16>& values,
                    const std::vector<base::string16>& labels) override {}
 
+  void SelectFieldOptionsDidChange(const autofill::FormData& form) override {}
+
   // Records whether FocusNoLongerOnForm() get called.
   bool did_unfocus_form_;
 
@@ -105,7 +118,9 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
 
   SubmissionSource submission_source_;
 
-  mojo::BindingSet<mojom::AutofillDriver> bindings_;
+  std::unique_ptr<FormFieldData> select_control_changed_;
+
+  mojo::AssociatedBindingSet<mojom::AutofillDriver> bindings_;
 };
 
 // Helper function to verify the form-related messages received from the
@@ -200,17 +215,17 @@ class FormAutocompleteTest : public ChromeRenderViewTest {
 
     // We only use the fake driver for main frame
     // because our test cases only involve the main frame.
-    service_manager::InterfaceProvider* remote_interfaces =
-        view_->GetMainRenderFrame()->GetRemoteInterfaces();
-    service_manager::InterfaceProvider::TestApi test_api(remote_interfaces);
-    test_api.SetBinderForName(
+    blink::AssociatedInterfaceProvider* remote_interfaces =
+        view_->GetMainRenderFrame()->GetRemoteAssociatedInterfaces();
+    remote_interfaces->OverrideBinderForTesting(
         mojom::AutofillDriver::Name_,
-        base::Bind(&FormAutocompleteTest::BindAutofillDriver,
-                   base::Unretained(this)));
+        base::BindRepeating(&FormAutocompleteTest::BindAutofillDriver,
+                            base::Unretained(this)));
   }
 
-  void BindAutofillDriver(mojo::ScopedMessagePipeHandle handle) {
-    fake_driver_.BindRequest(mojom::AutofillDriverRequest(std::move(handle)));
+  void BindAutofillDriver(mojo::ScopedInterfaceEndpointHandle handle) {
+    fake_driver_.BindRequest(
+        mojom::AutofillDriverAssociatedRequest(std::move(handle)));
   }
 
   void SimulateUserInput(const blink::WebString& id, const std::string& value) {
@@ -820,6 +835,33 @@ TEST_F(FormAutocompleteTest, FormSubmittedByProbablyFormSubmitted) {
   VerifyReceivedAddressRendererMessages(
       fake_driver_, "City", false /* expect_known_success */,
       SubmissionSource::PROBABLY_FORM_SUBMITTED);
+}
+
+TEST_F(FormAutocompleteTest, SelectControlChanged) {
+  LoadHTML(
+      "<html>"
+      "<form>"
+      "<select id='color'><option value='red'>red</option><option "
+      "value='blue'>blue</option></select>"
+      "</form>"
+      "</html>");
+
+  std::string change_value =
+      "var color = document.getElementById('color');"
+      "color.selectedIndex = 1;";
+
+  ExecuteJavaScriptForTests(change_value.c_str());
+  WebElement element =
+      GetMainFrame()->GetDocument().GetElementById(blink::WebString("color"));
+  static_cast<blink::WebAutofillClient*>(autofill_agent_)
+      ->SelectControlDidChange(
+          *reinterpret_cast<blink::WebFormControlElement*>(&element));
+  base::RunLoop().RunUntilIdle();
+
+  const FormFieldData* field = fake_driver_.select_control_changed();
+  ASSERT_TRUE(field);
+  EXPECT_EQ(base::ASCIIToUTF16("color"), field->name);
+  EXPECT_EQ(base::ASCIIToUTF16("blue"), field->value);
 }
 
 }  // namespace autofill

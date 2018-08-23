@@ -41,11 +41,31 @@ void DownloadManagerTabHelper::CreateForWebState(
 
 void DownloadManagerTabHelper::Download(
     std::unique_ptr<web::DownloadTask> task) {
-  task_ = std::move(task);
-  task_->AddObserver(this);
+  __block std::unique_ptr<web::DownloadTask> block_task = std::move(task);
+  if (!task_) {
+    // The task is the first download for this web state.
+    DidCreateDownload(std::move(block_task));
+    return;
+  }
+
+  // Another download is already in progress. Ask the user if current download
+  // should be replaced if new download was initiated by a link click or typed
+  // into the omnibox. Otherwise silently drop the download to prevent web pages
+  // from spamming the user.
+  ui::PageTransition transition = block_task->GetTransitionType();
+  if (!(transition & ui::PAGE_TRANSITION_FROM_ADDRESS_BAR) &&
+      !ui::PageTransitionTypeIncludingQualifiersIs(transition,
+                                                   ui::PAGE_TRANSITION_LINK)) {
+    return;
+  }
+
   [delegate_ downloadManagerTabHelper:this
-                    didCreateDownload:task_.get()
-                    webStateIsVisible:web_state_->IsVisible()];
+              decidePolicyForDownload:block_task.get()
+                    completionHandler:^(NewDownloadPolicy policy) {
+                      if (policy == kNewDownloadPolicyReplace) {
+                        DidCreateDownload(std::move(block_task));
+                      }
+                    }];
 }
 
 void DownloadManagerTabHelper::WasShown(web::WebState* web_state) {
@@ -96,4 +116,18 @@ void DownloadManagerTabHelper::OnDownloadUpdated(web::DownloadTask* task) {
 NSString* DownloadManagerTabHelper::GetNetworkActivityKey() const {
   return [@"DownloadManagerTabHelper."
       stringByAppendingString:task_->GetIndentifier()];
+}
+
+void DownloadManagerTabHelper::DidCreateDownload(
+    std::unique_ptr<web::DownloadTask> task) {
+  if (task_) {
+    [[NetworkActivityIndicatorManager sharedInstance]
+        clearNetworkTasksForGroup:GetNetworkActivityKey()];
+    task_->RemoveObserver(this);
+  }
+  task_ = std::move(task);
+  task_->AddObserver(this);
+  [delegate_ downloadManagerTabHelper:this
+                    didCreateDownload:task_.get()
+                    webStateIsVisible:web_state_->IsVisible()];
 }

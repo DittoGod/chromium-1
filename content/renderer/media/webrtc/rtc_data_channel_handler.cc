@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -106,7 +105,7 @@ void RtcDataChannelHandler::Observer::OnMessage(
       new webrtc::DataBuffer(buffer));
   main_thread_->PostTask(
       FROM_HERE, base::BindOnce(&RtcDataChannelHandler::Observer::OnMessageImpl,
-                                this, base::Passed(&new_buffer)));
+                                this, std::move(new_buffer)));
 }
 
 void RtcDataChannelHandler::Observer::OnStateChangeImpl(

@@ -10,8 +10,10 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
+#include "build/build_config.h"
 #include "media/audio/audio_debug_recording_manager.h"
 #include "media/audio/audio_manager.h"
 
@@ -21,21 +23,53 @@ namespace media {
 // AudioManager::Shutdown() (called before AudioManager destruction) shuts down
 // AudioManager thread.
 
+// TODO(https://crbug.com/788657) remove this file after switching to mojo
+// implementation.
+
 namespace {
 
-void CreateFile(const base::FilePath& debug_recording_file_path,
-                const base::FilePath& file_name_suffix,
-                base::OnceCallback<void(base::File)> reply_callback) {
+#if defined(OS_WIN)
+#define IntToStringType base::IntToString16
+#else
+#define IntToStringType base::IntToString
+#endif
+
+bool StreamTypeToStringType(AudioDebugRecordingStreamType stream_type,
+                            base::FilePath::StringType* out) {
+  switch (stream_type) {
+    case AudioDebugRecordingStreamType::kInput:
+      *out = FILE_PATH_LITERAL("input");
+      return true;
+    case AudioDebugRecordingStreamType::kOutput:
+      *out = FILE_PATH_LITERAL("output");
+      return true;
+  }
+  NOTREACHED();
+  return false;
+}
+
+void CreateWavFile(const base::FilePath& debug_recording_file_path,
+                   AudioDebugRecordingStreamType stream_type,
+                   uint32_t id,
+                   base::OnceCallback<void(base::File)> reply_callback) {
+  base::FilePath::StringType stream_type_str;
+  if (!StreamTypeToStringType(stream_type, &stream_type_str)) {
+    std::move(reply_callback).Run(base::File());
+    return;
+  }
+
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(
           [](const base::FilePath& file_name) {
             return base::File(file_name, base::File::FLAG_CREATE_ALWAYS |
                                              base::File::FLAG_WRITE);
           },
-          debug_recording_file_path.AddExtension(file_name_suffix.value())),
+          debug_recording_file_path.AddExtension(stream_type_str)
+              .AddExtension(IntToStringType(id))
+              .AddExtension(FILE_PATH_LITERAL("wav"))),
       std::move(reply_callback));
 }
 
@@ -51,7 +85,7 @@ AudioDebugRecordingSessionImpl::AudioDebugRecordingSessionImpl(
       FROM_HERE,
       base::BindOnce(
           [](AudioManager* manager,
-             AudioDebugRecordingManager::CreateFileCallback
+             AudioDebugRecordingManager::CreateWavFileCallback
                  create_file_callback) {
             AudioDebugRecordingManager* debug_recording_manager =
                 manager->GetAudioDebugRecordingManager();
@@ -61,7 +95,7 @@ AudioDebugRecordingSessionImpl::AudioDebugRecordingSessionImpl(
                 std::move(create_file_callback));
           },
           base::Unretained(audio_manager),
-          base::BindRepeating(&CreateFile, debug_recording_file_path)));
+          base::BindRepeating(&CreateWavFile, debug_recording_file_path)));
 }
 
 AudioDebugRecordingSessionImpl::~AudioDebugRecordingSessionImpl() {

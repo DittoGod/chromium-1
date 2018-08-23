@@ -42,6 +42,7 @@ class CC_PAINT_EXPORT PaintImage {
   static const size_t kDefaultFrameIndex;
 
   static const Id kInvalidId;
+  static const ContentId kInvalidContentId;
 
   class CC_PAINT_EXPORT FrameKey {
    public:
@@ -52,6 +53,7 @@ class CC_PAINT_EXPORT PaintImage {
     uint64_t hash() const { return hash_; }
     std::string ToString() const;
     size_t frame_index() const { return frame_index_; }
+    ContentId content_id() const { return content_id_; }
 
    private:
     ContentId content_id_;
@@ -92,6 +94,10 @@ class CC_PAINT_EXPORT PaintImage {
   static Id GetNextId();
   static ContentId GetNextContentId();
 
+  // Creates a PaintImage wrapping |bitmap|. Note that the pixels will be copied
+  // unless the bitmap is marked immutable.
+  static PaintImage CreateFromBitmap(SkBitmap bitmap);
+
   PaintImage();
   PaintImage(const PaintImage& other);
   PaintImage(PaintImage&& other);
@@ -131,7 +137,6 @@ class CC_PAINT_EXPORT PaintImage {
   bool is_multipart() const { return is_multipart_; }
   int repetition_count() const { return repetition_count_; }
   bool ShouldAnimate() const;
-  size_t frame_index() const { return frame_index_; }
   AnimationSequenceId reset_animation_sequence_id() const {
     return reset_animation_sequence_id_;
   }
@@ -156,10 +161,12 @@ class CC_PAINT_EXPORT PaintImage {
   // Returns the total number of frames known to exist in this image.
   size_t FrameCount() const;
 
+  // Returns an SkImage for the frame at |index|.
+  sk_sp<SkImage> GetSkImageForFrame(size_t index) const;
+
   std::string ToString() const;
 
  private:
-  static const ContentId kInvalidContentId = -1;
   friend class PaintImageBuilder;
   FRIEND_TEST_ALL_PREFIXES(PaintImageTest, Subsetting);
 
@@ -179,9 +186,6 @@ class CC_PAINT_EXPORT PaintImage {
   void CreateSkImage();
   PaintImage MakeSubset(const gfx::Rect& subset) const;
 
-  // Returns an SkImage for the frame at |index|.
-  sk_sp<SkImage> GetSkImageForFrame(size_t index) const;
-
   sk_sp<SkImage> sk_image_;
   sk_sp<PaintRecord> paint_record_;
   gfx::Rect paint_record_rect_;
@@ -198,9 +202,6 @@ class CC_PAINT_EXPORT PaintImage {
   // If non-empty, holds the subset of this image relative to the original image
   // at the origin.
   gfx::Rect subset_rect_;
-
-  // The frame index to use when rasterizing this image.
-  size_t frame_index_ = kDefaultFrameIndex;
 
   // Whether the data fetched for this image is a part of a multpart response.
   bool is_multipart_ = false;

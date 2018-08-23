@@ -7,7 +7,6 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -39,7 +38,7 @@ void DownloadNotificationManager::OnNewDownloadReady(
 
   if (manager_for_profile_.find(profile) == manager_for_profile_.end()) {
     manager_for_profile_[profile] =
-        base::MakeUnique<DownloadNotificationManagerForProfile>(profile, this);
+        std::make_unique<DownloadNotificationManagerForProfile>(profile, this);
   }
 
   manager_for_profile_[profile]->OnNewDownloadReady(download);

@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -68,12 +69,12 @@
         },
         {
           "object": "InlineTextBox ' world'",
-          "rect": [70, 158, 42, 20],
+          "rect": [70, 158, 41, 20],
           "reason": "disappeared"
         },
         {
           "object": "InlineTextBox 'world'",
-          "rect": [74, 79, 38, 19],
+          "rect": [74, 79, 37, 19],
           "reason": "appeared"
         },
         {
@@ -389,40 +390,6 @@
           "newPixel": "#FFFFFF"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='test'",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'hello '",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'world'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBR BR",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox '\n'",
-      "reason": "geometry"
     }
   ]
 }

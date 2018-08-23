@@ -33,8 +33,8 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginParams.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_params.h"
 #include "url/gurl.h"
 
 using InstantProcessNavigationTest = ChromeRenderViewTest;
@@ -51,11 +51,10 @@ const char kHtmlWithIframe[] ="<iframe srcdoc=\"Nothing here\"></iframe>";
 TEST_F(InstantProcessNavigationTest, ForkForNavigationsFromInstantProcess) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kInstantProcess);
-  bool unused;
   ChromeContentRendererClient* client =
       static_cast<ChromeContentRendererClient*>(content_renderer_client_.get());
-  EXPECT_TRUE(client->ShouldFork(
-      GetMainFrame(), GURL("http://foo"), "GET", false, false, &unused));
+  EXPECT_TRUE(client->ShouldFork(GetMainFrame(), GURL("http://foo"), "GET",
+                                 false, false));
 }
 
 // Tests that renderer-initiated navigations from a non-Instant render process
@@ -69,16 +68,13 @@ TEST_F(InstantProcessNavigationTest, ForkForNavigationsToNewTabURLs) {
   client->RenderThreadStarted();
   SearchBouncer::GetInstance()->SetNewTabPageURL(
       GURL("http://example.com/newtab"));
-  bool unused;
   EXPECT_TRUE(client->ShouldFork(
-      GetMainFrame(), GURL("http://example.com/newtab"), "GET", false, false,
-      &unused));
+      GetMainFrame(), GURL("http://example.com/newtab"), "GET", false, false));
   EXPECT_FALSE(client->ShouldFork(GetMainFrame(),
                                   GURL("http://example.com/search?q=foo"),
-                                  "GET", false, false, &unused));
-  EXPECT_FALSE(client->ShouldFork(
-      GetMainFrame(), GURL("http://example.com/"), "GET", false, false,
-      &unused));
+                                  "GET", false, false));
+  EXPECT_FALSE(client->ShouldFork(GetMainFrame(), GURL("http://example.com/"),
+                                  "GET", false, false));
 }
 
 TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
@@ -99,9 +95,12 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
       render_frame->GetRenderView()->GetRoutingID()));
 
   GURL result;
+  bool attach_same_site_cookies;
   // Make sure the SearchBox rewrites a thumbnail request from the main frame.
-  EXPECT_TRUE(client.WillSendRequest(GetMainFrame(), ui::PAGE_TRANSITION_LINK,
-                                     blink::WebURL(thumbnail_url), &result));
+  client.WillSendRequest(GetMainFrame(), ui::PAGE_TRANSITION_LINK,
+                         blink::WebURL(thumbnail_url), nullptr, &result,
+                         &attach_same_site_cookies);
+  EXPECT_NE(result, thumbnail_url);
 
   // Make sure the SearchBox rewrites a thumbnail request from the iframe.
   blink::WebFrame* child_frame = GetMainFrame()->FirstChild();
@@ -109,8 +108,10 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
   ASSERT_TRUE(child_frame->IsWebLocalFrame());
   blink::WebLocalFrame* local_child =
       static_cast<blink::WebLocalFrame*>(child_frame);
-  EXPECT_TRUE(client.WillSendRequest(local_child, ui::PAGE_TRANSITION_LINK,
-                                     blink::WebURL(thumbnail_url), &result));
+  client.WillSendRequest(local_child, ui::PAGE_TRANSITION_LINK,
+                         blink::WebURL(thumbnail_url), nullptr, &result,
+                         &attach_same_site_cookies);
+  EXPECT_NE(result, thumbnail_url);
 }
 
 // The tests below examine Youtube requests that use the Flash API and ensure

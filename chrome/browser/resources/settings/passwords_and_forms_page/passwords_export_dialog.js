@@ -50,12 +50,12 @@ Polymer({
   /**
    * The interface for callbacks to the browser.
    * Defined in passwords_section.js
-   * @type {PasswordManager}
+   * @type {PasswordManagerProxy}
    * @private
    */
   passwordManager_: null,
 
-  /** @private {function(!PasswordManager.PasswordExportProgress):void} */
+  /** @private {function(!PasswordManagerProxy.PasswordExportProgress):void} */
   onPasswordsFileExportProgressListener_: null,
 
   /**
@@ -77,7 +77,7 @@ Polymer({
   /**
    * We display the progress bar for at least |progressBarBlockMs|. If progress
    * is achieved earlier, we store the update here and consume it later.
-   * @private {?PasswordManager.PasswordExportProgress}
+   * @private {?PasswordManagerProxy.PasswordExportProgress}
    */
   delayedProgress_: null,
 
@@ -104,7 +104,7 @@ Polymer({
   /**
    * Handles an export progress event by changing the visible dialog or caching
    * the event for later consumption.
-   * @param {!PasswordManager.PasswordExportProgress} progress
+   * @param {!PasswordManagerProxy.PasswordExportProgress} progress
    * @private
    */
   onPasswordsFileExportProgress_(progress) {
@@ -183,7 +183,7 @@ Polymer({
 
   /**
    * Prepares and displays the appropriate view (with delay, if necessary).
-   * @param {!PasswordManager.PasswordExportProgress} progress
+   * @param {!PasswordManagerProxy.PasswordExportProgress} progress
    * @private
    */
   processProgress_(progress) {
@@ -227,6 +227,16 @@ Polymer({
    * @private
    */
   onCancelButtonTap_: function() {
+    this.close();
+  },
+
+  /**
+   * Handler for tapping the 'cancel' button on the progress dialog. It should
+   * cancel the export and dismiss the dialog.
+   * @private
+   */
+  onCancelProgressButtonTap_: function() {
+    this.passwordManager_.cancelExportPasswords();
     this.close();
   },
 });

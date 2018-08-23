@@ -84,10 +84,10 @@ $ cd src
 
 ## Setting up the build
 
-Chromium uses [Ninja](https://ninja-build.org) as its main build tool along
-with a tool called [GN](../tools/gn/docs/quick_start.md) to generate `.ninja`
-files. You can create any number of *build directories* with different
-configurations. To create a build directory, run:
+Chromium uses [Ninja](https://ninja-build.org) as its main build tool along with
+a tool called [GN](https://gn.googlesource.com/gn/+/master/docs/quick_start.md)
+to generate `.ninja` files. You can create any number of *build directories*
+with different configurations. To create a build directory, run:
 
 ```shell
 $ gn gen out/fuchsia --args="is_debug=false dcheck_always_on=true is_component_build=false target_os=\"fuchsia\""
@@ -104,8 +104,11 @@ Currently, not all targets build on Fuchsia. You can build base\_unittests, for
 example:
 
 ```shell
-$ ninja -C out/fuchsia base_unittests
+$ autoninja -C out/fuchsia base_unittests
 ```
+
+`autoninja` is a wrapper that automatically provides optimal values for the
+arguments passed to `ninja`.
 
 ## Run
 
@@ -125,6 +128,6 @@ The run script also symbolizes backtraces.
 
 A useful alias (for "Build And Run Filtered") is:
 ```shell
-alias barf='ninja -C out/fuchsia base_unittests -j1000 && out/fuchsia/bin/run_base_unittests --test-launcher-filter-file=../../testing/buildbot/filters/fuchsia.base_unittests.filter'
+alias barf='ninja -C out/fuchsia net_unittests -j1000 && out/fuchsia/bin/run_net_unittests --test-launcher-filter-file=../../testing/buildbot/filters/fuchsia.net_unittests.filter'
 ```
 to build and run only the tests that are not excluded/known-failing on the bot.

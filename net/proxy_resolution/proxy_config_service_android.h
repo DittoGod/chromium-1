@@ -21,7 +21,7 @@ class SequencedTaskRunner;
 
 namespace net {
 
-class ProxyConfig;
+class ProxyConfigWithAnnotation;
 
 class NET_EXPORT ProxyConfigServiceAndroid : public ProxyConfigService {
  public:
@@ -73,7 +73,13 @@ class NET_EXPORT ProxyConfigServiceAndroid : public ProxyConfigService {
   // Called only on the network thread.
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
-  ConfigAvailability GetLatestProxyConfig(ProxyConfig* config) override;
+  ConfigAvailability GetLatestProxyConfig(
+      ProxyConfigWithAnnotation* config) override;
+
+  void SetProxyOverride(const std::string& host,
+                        int port,
+                        const std::vector<std::string>& exclusion_list);
+  void ClearProxyOverride();
 
  private:
   friend class ProxyConfigServiceAndroidTestBase;

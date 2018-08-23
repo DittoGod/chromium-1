@@ -42,7 +42,8 @@ unpacker.Decompressor = function(
   this.passphraseManager = passphraseManager;
 
   /**
-   * Requests in progress.
+   * Requests in progress. No need to save them onSuspend for now as metadata
+   * reads are restarted from start.
    * @public {!Object<!unpacker.types.RequestId, !Object>}
    * @const
    */
@@ -235,7 +236,9 @@ unpacker.Decompressor.prototype.processMessage = function(
     default:
       console.error('Invalid NaCl operation: ' + operation + '.');
       requestInProgress.onError('FAILED');
+      break;
   }
+
   delete this.requestsInProgress[requestId];
 };
 

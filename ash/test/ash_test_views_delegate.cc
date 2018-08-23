@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/test/ash_test_helper.h"
 #include "ash/test/ash_test_views_delegate.h"
 
 #include "ash/shell.h"
+#include "ash/test/ash_test_helper.h"
 
 namespace ash {
 
@@ -16,12 +16,19 @@ AshTestViewsDelegate::~AshTestViewsDelegate() = default;
 void AshTestViewsDelegate::OnBeforeWidgetInit(
     views::Widget::InitParams* params,
     views::internal::NativeWidgetDelegate* delegate) {
-  TestViewsDelegate::OnBeforeWidgetInit(params, delegate);
-
-  if (!params->parent && !params->context && ash::Shell::HasInstance()) {
-    // If the window has neither a parent nor a context add to the root.
-    params->parent = ash::Shell::Get()->GetPrimaryRootWindow();
+  if (running_outside_ash_) {
+    DCHECK(ash::Shell::HasInstance());
+    if (!params->parent && !params->context)
+      params->context = Shell::GetRootWindowForNewWindows();
+  } else {
+    CHECK(params->native_widget || params->context || params->parent)
+        << "Widgets must be created with a context or parent. In tests use "
+        << "CurrentContext(). In non-test code you likely want to use the "
+        << "parent the Widget will be added to, or possibly "
+        << "Shell::GetRootWindowForNewWindows().";
   }
+
+  TestViewsDelegate::OnBeforeWidgetInit(params, delegate);
 }
 
 void AshTestViewsDelegate::NotifyAccessibilityEvent(

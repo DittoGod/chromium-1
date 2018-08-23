@@ -22,17 +22,19 @@
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/fake_auth_policy_client.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "chromeos/login/auth/key.h"
 #include "chromeos/login/auth/user_context.h"
+#include "components/account_id/account_id.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/policy_builder.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_service.h"
@@ -52,10 +54,11 @@ void SetUserKeys(policy::UserPolicyBuilder* user_policy) {
   const AccountId account_id =
       AccountId::FromUserEmail(user_policy->policy_data().username());
   base::FilePath user_keys_dir;
-  ASSERT_TRUE(PathService::Get(chromeos::DIR_USER_POLICY_KEYS, &user_keys_dir));
+  ASSERT_TRUE(
+      base::PathService::Get(chromeos::DIR_USER_POLICY_KEYS, &user_keys_dir));
   const std::string sanitized_username =
       chromeos::CryptohomeClient::GetStubSanitizedUsername(
-          cryptohome::Identification(account_id));
+          cryptohome::CreateAccountIdentifierFromAccountId(account_id));
   const base::FilePath user_key_file =
       user_keys_dir.AppendASCII(sanitized_username).AppendASCII("policy.pub");
   std::string user_key_bits = user_policy->GetPublicSigningKeyAsString();
@@ -66,39 +69,70 @@ void SetUserKeys(policy::UserPolicyBuilder* user_policy) {
             base::checked_cast<int>(user_key_bits.length()));
 }
 
-void SetDeviceAffiliationID(
+void SetDeviceAffiliationIDs(
     policy::DevicePolicyCrosTestHelper* test_helper,
     chromeos::FakeSessionManagerClient* fake_session_manager_client,
+    chromeos::FakeAuthPolicyClient* fake_auth_policy_client,
     const std::set<std::string>& device_affiliation_ids) {
-  test_helper->InstallOwnerKey();
-  test_helper->MarkAsEnterpriseOwned();
-
+  // Assume it's Active Directory when the AuthPolicyClient is started.
+  // Make sure we don't overwrite the install attributes in that case.
+  const bool is_active_directory =
+      fake_auth_policy_client && fake_auth_policy_client->started();
+  if (!is_active_directory) {
+    test_helper->InstallOwnerKey();
+    test_helper->MarkAsEnterpriseOwned();
+  }
   policy::DevicePolicyBuilder* device_policy = test_helper->device_policy();
   for (const auto& device_affiliation_id : device_affiliation_ids) {
     device_policy->policy_data().add_device_affiliation_ids(
         device_affiliation_id);
   }
-  device_policy->SetDefaultSigningKey();
+  if (!is_active_directory)
+    device_policy->SetDefaultSigningKey();
   device_policy->Build();
 
   fake_session_manager_client->set_device_policy(device_policy->GetBlob());
   fake_session_manager_client->OnPropertyChangeComplete(true);
+
+  // Need fake_auth_policy_client for Active Directory accounts.
+  if (fake_auth_policy_client)
+    fake_auth_policy_client->set_device_affiliation_ids(device_affiliation_ids);
 }
 
 void SetUserAffiliationIDs(
     policy::UserPolicyBuilder* user_policy,
     chromeos::FakeSessionManagerClient* fake_session_manager_client,
-    const std::string& user_email,
+    chromeos::FakeAuthPolicyClient* fake_auth_policy_client,
+    const AccountId& user_account_id,
     const std::set<std::string>& user_affiliation_ids) {
-  const AccountId account_id = AccountId::FromUserEmail(user_email);
-  user_policy->policy_data().set_username(user_email);
-  SetUserKeys(user_policy);
+  const bool is_active_directory =
+      user_account_id.GetAccountType() == AccountType::ACTIVE_DIRECTORY;
+  user_policy->policy_data().set_username(user_account_id.GetUserEmail());
+  if (!is_active_directory) {
+    user_policy->policy_data().set_gaia_id(user_account_id.GetGaiaId());
+    SetUserKeys(user_policy);
+  }
   for (const auto& user_affiliation_id : user_affiliation_ids) {
     user_policy->policy_data().add_user_affiliation_ids(user_affiliation_id);
   }
   user_policy->Build();
+
+  // Make sure AD policy is stored using the proper cryptohome key. This code
+  // runs before the AD account is migrated, so it would use the email address.
+  // TODO(ljusten): Clean this up as soon as CL:1055509 lands.
+  cryptohome::Identification cryptohome_id =
+      is_active_directory ? cryptohome::Identification::FromString(
+                                user_account_id.GetAccountIdKey())
+                          : cryptohome::Identification(user_account_id);
+
   fake_session_manager_client->set_user_policy(
-      cryptohome::Identification(account_id), user_policy->GetBlob());
+      cryptohome::CreateAccountIdentifierFromIdentification(cryptohome_id),
+      user_policy->GetBlob());
+
+  // Need fake_auth_policy_client for Active Directory accounts.
+  DCHECK(!is_active_directory || fake_auth_policy_client);
+  if (fake_auth_policy_client)
+    fake_auth_policy_client->set_user_affiliation_ids(user_affiliation_ids);
 }
 
 void PreLoginUser(const AccountId& account_id) {
@@ -116,7 +150,12 @@ void LoginUser(const AccountId& account_id) {
       chromeos::UserSessionManager::GetInstance());
   session_manager_test_api.SetShouldObtainTokenHandleInTests(false);
 
-  chromeos::UserContext user_context(account_id);
+  const bool is_active_directory =
+      account_id.GetAccountType() == AccountType::ACTIVE_DIRECTORY;
+  const user_manager::UserType user_type =
+      is_active_directory ? user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY
+                          : user_manager::UserType::USER_TYPE_REGULAR;
+  chromeos::UserContext user_context(user_type, account_id);
   user_context.SetKey(chromeos::Key("password"));
   if (account_id.GetUserEmail() == kEnterpriseUserEmail) {
     user_context.SetRefreshToken(kFakeRefreshToken);

@@ -14,9 +14,10 @@
 #include "content/common/content_export.h"
 #include "content/common/indexed_db/indexed_db.mojom.h"
 #include "content/common/indexed_db/indexed_db_constants.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBCursor.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBDatabase.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBTypes.h"
+#include "third_party/blink/public/common/indexeddb/web_idb_types.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_cursor.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_database.h"
 
 namespace blink {
 class WebBlobInfo;
@@ -26,12 +27,11 @@ class WebString;
 
 namespace content {
 
+class IndexedDBCallbacksImpl;
+
 class CONTENT_EXPORT WebIDBDatabaseImpl : public blink::WebIDBDatabase {
  public:
-  WebIDBDatabaseImpl(
-      indexed_db::mojom::DatabaseAssociatedPtrInfo database,
-      scoped_refptr<base::SingleThreadTaskRunner> io_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> callback_runner);
+  WebIDBDatabaseImpl(indexed_db::mojom::DatabaseAssociatedPtrInfo database);
   ~WebIDBDatabaseImpl() override;
 
   // blink::WebIDBDatabase
@@ -134,10 +134,11 @@ class CONTENT_EXPORT WebIDBDatabaseImpl : public blink::WebIDBDatabase {
   void Commit(long long transaction_id) override;
 
  private:
+  indexed_db::mojom::CallbacksAssociatedPtrInfo GetCallbacksProxy(
+      std::unique_ptr<IndexedDBCallbacksImpl> callbacks);
+
   FRIEND_TEST_ALL_PREFIXES(WebIDBDatabaseImplTest, ValueSizeTest);
   FRIEND_TEST_ALL_PREFIXES(WebIDBDatabaseImplTest, KeyAndValueSizeTest);
-
-  class IOThreadHelper;
 
   // Maximum size (in bytes) of value/key pair allowed for put requests. Any
   // requests larger than this size will be rejected.
@@ -145,10 +146,8 @@ class CONTENT_EXPORT WebIDBDatabaseImpl : public blink::WebIDBDatabase {
   // of memory.
   size_t max_put_value_size_ = kMaxIDBMessageSizeInBytes;
 
-  IOThreadHelper* helper_;
   std::set<int32_t> observer_ids_;
-  scoped_refptr<base::SingleThreadTaskRunner> io_runner_;
-  scoped_refptr<base::SingleThreadTaskRunner> callback_runner_;
+  indexed_db::mojom::DatabaseAssociatedPtr database_;
 };
 
 }  // namespace content

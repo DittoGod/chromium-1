@@ -38,7 +38,7 @@ void MediaSessionControllersManager::RenderFrameDeleted(
     return;
 
   for (auto it = controllers_map_.begin(); it != controllers_map_.end();) {
-    if (it->first.first == render_frame_host)
+    if (it->first.render_frame_host == render_frame_host)
       it = controllers_map_.erase(it);
     else
       ++it;
@@ -92,6 +92,14 @@ void MediaSessionControllersManager::OnEnd(const MediaPlayerId& id) {
   if (!IsMediaSessionEnabled())
     return;
   controllers_map_.erase(id);
+}
+
+void MediaSessionControllersManager::WebContentsMutedStateChanged(bool muted) {
+  if (!IsMediaSessionEnabled())
+    return;
+
+  for (auto& entry : controllers_map_)
+    entry.second->WebContentsMutedStateChanged(muted);
 }
 
 }  // namespace content

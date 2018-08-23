@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -22,16 +23,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTableRow TR",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutTableCell TD id='target'",
-      "reason": "incremental"
     }
   ]
 }

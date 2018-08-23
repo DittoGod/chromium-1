@@ -12,7 +12,7 @@
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
 #include "chrome/browser/ui/passwords/password_dialog_controller.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/passwords/credentials_item_view.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/common/password_form.h"
@@ -44,12 +44,6 @@ views::StyledLabel::RangeStyleInfo GetLinkStyle() {
   auto result = views::StyledLabel::RangeStyleInfo::CreateForLink();
   result.disable_line_wrapping = false;
   return result;
-}
-
-Profile* GetProfileFromWebContents(content::WebContents* web_contents) {
-  if (!web_contents)
-    return nullptr;
-  return Profile::FromBrowserContext(web_contents->GetBrowserContext());
 }
 
 // Creates a list view of credentials in |forms|.
@@ -109,8 +103,10 @@ void AccountChooserDialogView::ShowAccountChooser() {
 }
 
 void AccountChooserDialogView::ControllerGone() {
-  controller_ = nullptr;
+  // During Widget::Close() phase some accessibility event may occur. Thus,
+  // |controller_| should be kept around.
   GetWidget()->Close();
+  controller_ = nullptr;
 }
 
 ui::ModalType AccountChooserDialogView::GetModalType() const {
@@ -170,25 +166,32 @@ base::string16 AccountChooserDialogView::GetDialogButtonLabel(
 void AccountChooserDialogView::StyledLabelLinkClicked(views::StyledLabel* label,
                                                       const gfx::Range& range,
                                                       int event_flags) {
-  controller_->OnSmartLockLinkClicked();
+  // On Mac the button click event may be dispatched after the dialog was
+  // hidden. Thus, the controller can be NULL.
+  if (controller_)
+    controller_->OnSmartLockLinkClicked();
 }
 
 void AccountChooserDialogView::ButtonPressed(views::Button* sender,
                                              const ui::Event& event) {
   CredentialsItemView* view = static_cast<CredentialsItemView*>(sender);
-  controller_->OnChooseCredentials(
-      *view->form(),
-      password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD);
+  // On Mac the button click event may be dispatched after the dialog was
+  // hidden. Thus, the controller can be NULL.
+  if (controller_) {
+    controller_->OnChooseCredentials(
+        *view->form(),
+        password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD);
+  }
 }
 
 void AccountChooserDialogView::InitWindow() {
   SetLayoutManager(std::make_unique<views::FillLayout>());
-  AddChildView(
-      CreateCredentialsView(controller_->GetLocalForms(), this,
-                            content::BrowserContext::GetDefaultStoragePartition(
-                                GetProfileFromWebContents(web_contents_))
-                                ->GetURLLoaderFactoryForBrowserProcess()
-                                .get()));
+  AddChildView(CreateCredentialsView(
+      controller_->GetLocalForms(), this,
+      content::BrowserContext::GetDefaultStoragePartition(
+          Profile::FromBrowserContext(web_contents_->GetBrowserContext()))
+          ->GetURLLoaderFactoryForBrowserProcess()
+          .get()));
 }
 
 #if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)

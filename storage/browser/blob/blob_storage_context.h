@@ -18,12 +18,14 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/trace_event/memory_dump_provider.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_entry.h"
 #include "storage/browser/blob/blob_memory_controller.h"
 #include "storage/browser/blob/blob_storage_registry.h"
 #include "storage/browser/storage_browser_export.h"
 #include "storage/common/blob_storage/blob_storage_constants.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom.h"
 
 class GURL;
 
@@ -32,6 +34,7 @@ class BlobDispatcherHost;
 class BlobDispatcherHostTest;
 class BlobTransportHostTest;
 class ChromeBlobStorageContext;
+class ShareableBlobDataItem;
 }
 
 namespace storage {
@@ -42,25 +45,40 @@ class BlobDataSnapshot;
 // This class handles the logistics of blob storage within the browser process.
 // This class is not threadsafe, access on IO thread. In Chromium there is one
 // instance per profile.
-class STORAGE_EXPORT BlobStorageContext {
+class STORAGE_EXPORT BlobStorageContext
+    : public base::trace_event::MemoryDumpProvider {
  public:
   using TransportAllowedCallback = BlobEntry::TransportAllowedCallback;
+  using BuildAbortedCallback = BlobEntry::BuildAbortedCallback;
 
   // Initializes the context without disk support.
   BlobStorageContext();
   // Disk support is enabled if |file_runner| isn't null.
   BlobStorageContext(base::FilePath storage_directory,
                      scoped_refptr<base::TaskRunner> file_runner);
-  ~BlobStorageContext();
+  ~BlobStorageContext() override;
 
+  // The following three methods all lookup a BlobDataHandle based on some
+  // input. If no blob matching the input exists these methods return null.
   std::unique_ptr<BlobDataHandle> GetBlobDataFromUUID(const std::string& uuid);
   std::unique_ptr<BlobDataHandle> GetBlobDataFromPublicURL(const GURL& url);
+  // If this BlobStorageContext is deleted before this method finishes, the
+  // callback will still be called with null.
+  void GetBlobDataFromBlobPtr(
+      blink::mojom::BlobPtr blob,
+      base::OnceCallback<void(std::unique_ptr<BlobDataHandle>)> callback);
 
   // Always returns a handle to a blob. Use BlobStatus::GetBlobStatus() and
   // BlobStatus::RunOnConstructionComplete(callback) to determine construction
   // completion and possible errors.
   std::unique_ptr<BlobDataHandle> AddFinishedBlob(
       std::unique_ptr<BlobDataBuilder> builder);
+
+  std::unique_ptr<BlobDataHandle> AddFinishedBlob(
+      const std::string& uuid,
+      const std::string& content_type,
+      const std::string& content_disposition,
+      std::vector<scoped_refptr<ShareableBlobDataItem>> items);
 
   std::unique_ptr<BlobDataHandle> AddBrokenBlob(
       const std::string& uuid,
@@ -106,7 +124,8 @@ class STORAGE_EXPORT BlobStorageContext {
   std::unique_ptr<BlobDataHandle> AddFutureBlob(
       const std::string& uuid,
       const std::string& content_type,
-      const std::string& content_disposition);
+      const std::string& content_disposition,
+      BuildAbortedCallback build_aborted_callback);
 
   // Same as BuildBlob, but for a blob that was previously registered by calling
   // AddFutureBlob.
@@ -138,16 +157,22 @@ class STORAGE_EXPORT BlobStorageContext {
     mutable_memory_controller()->set_limits_for_testing(limits);
   }
 
+  void DisableFilePagingForTesting() {
+    mutable_memory_controller()->DisableFilePaging(base::File::FILE_OK);
+  }
+
  protected:
   friend class content::BlobDispatcherHost;
   friend class content::BlobDispatcherHostTest;
   friend class content::BlobTransportHostTest;
   friend class content::ChromeBlobStorageContext;
+  friend class BlobBuilderFromStream;
   friend class BlobTransportHost;
   friend class BlobDataHandle;
   friend class BlobDataHandle::BlobDataHandleShared;
   friend class BlobRegistryImplTest;
   friend class BlobStorageContextTest;
+  friend class BlobURLTokenImpl;
 
   enum class TransportQuotaType { MEMORY, FILE };
 
@@ -207,6 +232,10 @@ class STORAGE_EXPORT BlobStorageContext {
                                BlobStatus reason);
 
   void ClearAndFreeMemory(BlobEntry* entry);
+
+  // base::trace_event::MemoryDumpProvider implementation.
+  bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
+                    base::trace_event::ProcessMemoryDump* pmd) override;
 
   BlobStorageRegistry registry_;
   BlobMemoryController memory_controller_;

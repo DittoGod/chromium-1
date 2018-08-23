@@ -155,13 +155,55 @@ void DoSomething(const base::RepeatingCallback<double(double)>& callback) {
 
 If running a callback could result in its own destruction (e.g., if the callback
 recipient deletes the object the callback is a member of), the callback should
-be moved before it can be safely invoked. The `base::ResetAndReturn` method
-provides this functionality.
+be moved before it can be safely invoked. (Note that this is only an issue for
+RepeatingCallbacks, because a OnceCallback always has to be moved for
+execution.)
 
 ```cpp
 void Foo::RunCallback() {
-  base::ResetAndReturn(&foo_deleter_callback_).Run();
+  std::move(&foo_deleter_callback_).Run();
 }
+```
+
+### Creating a Callback That Does Nothing
+
+Sometimes you need a callback that does nothing when run (e.g. test code that
+doesn't care to be notified about certain types of events).  It may be tempting
+to pass a default-constructed callback of the right type:
+
+```cpp
+using MyCallback = base::OnceCallback<void(bool arg)>;
+void MyFunction(MyCallback callback) {
+  std::move(callback).Run(true);  // Uh oh...
+}
+...
+MyFunction(MyCallback());  // ...this will crash when Run()!
+```
+
+Default-constructed callbacks are null, and thus cannot be Run().  Instead, use
+`base::DoNothing()`:
+
+```cpp
+...
+MyFunction(base::DoNothing());  // Can be Run(), will no-op
+```
+
+`base::DoNothing()` can be passed for any OnceCallback or RepeatingCallback that
+returns void.
+
+Implementation-wise, `base::DoNothing()` is actually a functor which produces a
+callback from `operator()`.  This makes it unusable when trying to bind other
+arguments to it.  Normally, the only reason to bind arguments to DoNothing() is
+to manage object lifetimes, and in these cases, you should strive to use idioms
+like DeleteSoon(), ReleaseSoon(), or RefCountedDeleteOnSequence instead.  If you
+truly need to bind an argument to DoNothing(), or if you need to explicitly
+create a callback object (because implicit conversion through operator()() won't
+compile), you can instantiate directly:
+
+```cpp
+// Binds |foo_ptr| to a no-op OnceCallback takes a scoped_refptr<Foo>.
+// ANTIPATTERN WARNING: This should likely be changed to ReleaseSoon()!
+base::Bind(base::DoNothing::Once<scoped_refptr<Foo>>(), foo_ptr);
 ```
 
 ### Passing Unbound Input Parameters
@@ -472,7 +514,7 @@ These functions, along with a set of internal templates, are responsible for
  - Determining the number of parameters that are bound
  - Creating the BindState storing the bound parameters
  - Performing compile-time asserts to avoid error-prone behavior
- - Returning an `Callback<>` with an arity matching the number of unbound
+ - Returning a `Callback<>` with an arity matching the number of unbound
    parameters and that knows the correct refcounting semantics for the
    target object if we are binding a method.
 
@@ -504,6 +546,12 @@ void Foo(const char* ptr);
 void Bar(char* ptr);
 base::Bind(&Foo, "test");
 base::Bind(&Bar, "test");  // This fails because ptr is not const.
+```
+ - In case of partial binding of parameters a possibility of having unbound
+   parameters before bound parameters. Example:
+```cpp
+void Foo(int x, bool y);
+base::Bind(&Foo, _1, false); // _1 is a placeholder.
 ```
 
 If you are thinking of forward declaring `base::Callback` in your own header

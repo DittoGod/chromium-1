@@ -68,7 +68,8 @@ bool TestPersistentCookieStore::flushed() {
 #pragma mark -
 #pragma mark Private methods
 
-void TestPersistentCookieStore::Load(const LoadedCallback& loaded_callback) {
+void TestPersistentCookieStore::Load(const LoadedCallback& loaded_callback,
+                                     const NetLogWithSource& /* net_log */) {
   loaded_callback_ = loaded_callback;
 }
 
@@ -92,28 +93,6 @@ void TestPersistentCookieStore::SetBeforeFlushCallback(
 
 void TestPersistentCookieStore::Flush(base::OnceClosure callback) {
   flushed_ = true;
-}
-
-#pragma mark -
-#pragma mark GetCookieCallback
-
-GetCookieCallback::GetCookieCallback() : did_run_(false) {}
-
-#pragma mark -
-#pragma mark GetCookieCallback methods
-
-bool GetCookieCallback::did_run() {
-  return did_run_;
-}
-
-const std::string& GetCookieCallback::cookie_line() {
-  return cookie_line_;
-}
-
-void GetCookieCallback::Run(const std::string& cookie_line) {
-  ASSERT_FALSE(did_run_);
-  did_run_ = true;
-  cookie_line_ = cookie_line;
 }
 
 #pragma mark -
@@ -148,11 +127,11 @@ ScopedTestingCookieStoreIOSClient::~ScopedTestingCookieStoreIOSClient() {
 void RecordCookieChanges(std::vector<net::CanonicalCookie>* out_cookies,
                          std::vector<bool>* out_removes,
                          const net::CanonicalCookie& cookie,
-                         net::CookieStore::ChangeCause cause) {
+                         net::CookieChangeCause cause) {
   DCHECK(out_cookies);
   out_cookies->push_back(cookie);
   if (out_removes)
-    out_removes->push_back(net::CookieStore::ChangeCauseIsDeletion(cause));
+    out_removes->push_back(net::CookieChangeCauseIsDeletion(cause));
 }
 
 void SetCookie(const std::string& cookie_line,

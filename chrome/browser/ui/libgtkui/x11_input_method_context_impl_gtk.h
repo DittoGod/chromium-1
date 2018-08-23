@@ -8,12 +8,12 @@
 #include <vector>
 
 #include "base/containers/hash_tables.h"
-#include "base/event_types.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/base/glib/glib_integers.h"
 #include "ui/base/glib/glib_signal.h"
 #include "ui/base/ime/linux/linux_input_method_context.h"
+#include "ui/events/platform_event.h"
 #include "ui/gfx/geometry/rect.h"
 
 typedef union _GdkEvent GdkEvent;
@@ -23,11 +23,11 @@ namespace libgtkui {
 
 // An implementation of LinuxInputMethodContext which is based on X11 event loop
 // and uses GtkIMContext(gtk-immodule) as a bridge from/to underlying IMEs.
-class X11InputMethodContextImplGtk2 : public ui::LinuxInputMethodContext {
+class X11InputMethodContextImplGtk : public ui::LinuxInputMethodContext {
  public:
-  X11InputMethodContextImplGtk2(ui::LinuxInputMethodContextDelegate* delegate,
-                                bool is_simple);
-  ~X11InputMethodContextImplGtk2() override;
+  X11InputMethodContextImplGtk(ui::LinuxInputMethodContextDelegate* delegate,
+                               bool is_simple);
+  ~X11InputMethodContextImplGtk() override;
 
   // Overriden from ui::LinuxInputMethodContext
   bool DispatchKeyEvent(const ui::KeyEvent& key_event) override;
@@ -44,7 +44,7 @@ class X11InputMethodContextImplGtk2 : public ui::LinuxInputMethodContext {
 
   // Constructs a GdkEventKey from a XKeyEvent and returns it.  Otherwise,
   // returns nullptr.  The returned GdkEvent must be freed by gdk_event_free.
-  GdkEvent* GdkEventFromNativeEvent(const base::NativeEvent& native_event);
+  GdkEvent* GdkEventFromNativeEvent(const ui::PlatformEvent& native_event);
 
   // Returns true if the hardware |keycode| is assigned to a modifier key.
   bool IsKeycodeModifierKey(unsigned int keycode) const;
@@ -58,20 +58,20 @@ class X11InputMethodContextImplGtk2 : public ui::LinuxInputMethodContext {
 
   // GtkIMContext event handlers.  They are shared among |gtk_context_simple_|
   // and |gtk_multicontext_|.
-  CHROMEG_CALLBACK_1(X11InputMethodContextImplGtk2,
+  CHROMEG_CALLBACK_1(X11InputMethodContextImplGtk,
                      void,
                      OnCommit,
                      GtkIMContext*,
                      gchar*);
-  CHROMEG_CALLBACK_0(X11InputMethodContextImplGtk2,
+  CHROMEG_CALLBACK_0(X11InputMethodContextImplGtk,
                      void,
                      OnPreeditChanged,
                      GtkIMContext*);
-  CHROMEG_CALLBACK_0(X11InputMethodContextImplGtk2,
+  CHROMEG_CALLBACK_0(X11InputMethodContextImplGtk,
                      void,
                      OnPreeditEnd,
                      GtkIMContext*);
-  CHROMEG_CALLBACK_0(X11InputMethodContextImplGtk2,
+  CHROMEG_CALLBACK_0(X11InputMethodContextImplGtk,
                      void,
                      OnPreeditStart,
                      GtkIMContext*);
@@ -95,7 +95,7 @@ class X11InputMethodContextImplGtk2 : public ui::LinuxInputMethodContext {
   std::vector<int> super_keycodes_;
   std::vector<int> hyper_keycodes_;
 
-  DISALLOW_COPY_AND_ASSIGN(X11InputMethodContextImplGtk2);
+  DISALLOW_COPY_AND_ASSIGN(X11InputMethodContextImplGtk);
 };
 
 }  // namespace libgtkui

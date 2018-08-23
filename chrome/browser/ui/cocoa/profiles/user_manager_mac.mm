@@ -36,18 +36,6 @@
 
 namespace {
 
-// Update the App Controller with a new Profile. Used when a Profile is locked
-// to set the Controller to the Guest profile so the old Profile's bookmarks,
-// etc... cannot be accessed.
-void ChangeAppControllerForProfile(Profile* profile,
-                                   Profile::CreateStatus status) {
-  if (status == Profile::CREATE_STATUS_INITIALIZED) {
-    AppController* controller =
-        base::mac::ObjCCast<AppController>([NSApp delegate]);
-    [controller windowChangedToProfile:profile];
-  }
-}
-
 // An open User Manager window. There can only be one open at a time. This
 // is reset to NULL when the window is closed.
 UserManagerMac* instance_ = nullptr;  // Weak.
@@ -205,11 +193,15 @@ class UserManagerProfileDialogDelegate
   if ((self = [super initWithWindow:window])) {
     webContents_ = webContents;
 
-    dialogWebContents_.reset(content::WebContents::Create(
-        content::WebContents::CreateParams(profile)));
+    dialogWebContents_ = content::WebContents::Create(
+        content::WebContents::CreateParams(profile));
     window.get().contentView = dialogWebContents_->GetNativeView();
     webContentsDelegate_.reset(new UserManagerProfileDialogDelegate());
     dialogWebContents_->SetDelegate(webContentsDelegate_.get());
+
+    // Load the url for the WebContents before constrained window creation so
+    // that the dialog can get focus properly.
+    [self show];
 
     base::scoped_nsobject<CustomConstrainedWindowSheet> sheet(
        [[CustomConstrainedWindowSheet alloc]
@@ -224,7 +216,6 @@ class UserManagerProfileDialogDelegate
     auto closeButton = [window standardWindowButton:NSWindowCloseButton];
     [closeButton setTarget:self];
     [closeButton setAction:@selector(closeButtonClicked:)];
-    [self show];
   }
 
   return self;
@@ -309,8 +300,8 @@ class UserManagerProfileDialogDelegate
     userManagerObserver_ = userManagerObserver;
 
     // Initialize the web view.
-    webContents_.reset(content::WebContents::Create(
-        content::WebContents::CreateParams(profile)));
+    webContents_ = content::WebContents::Create(
+        content::WebContents::CreateParams(profile));
     window.contentView = webContents_->GetNativeView();
 
     // When a window has layer-backed subviews, its contentView must be
@@ -365,14 +356,8 @@ class UserManagerProfileDialogDelegate
   // will not trigger a -windowChangedToProfile and update the menu bar.
   // This is only important if the active profile is Guest, which may have
   // happened after locking a profile.
-  if (profiles::SetActiveProfileToGuestIfLocked()) {
-    g_browser_process->profile_manager()->CreateProfileAsync(
-        ProfileManager::GetGuestProfilePath(),
-        base::Bind(&ChangeAppControllerForProfile),
-        base::string16(),
-        std::string(),
-        std::string());
-  }
+  if (profiles::SetActiveProfileToGuestIfLocked())
+    app_controller_mac::CreateGuestProfileIfNeeded();
   [[self window] makeKeyAndOrderFront:self];
 }
 

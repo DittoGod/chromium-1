@@ -10,6 +10,7 @@
 #include "base/callback_helpers.h"
 #include "mojo/public/cpp/bindings/strong_associated_binding.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
+#include "storage/browser/blob/blob_builder_from_stream.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_impl.h"
 #include "storage/browser/blob/blob_storage_context.h"
@@ -88,6 +89,9 @@ class BlobRegistryImpl::BlobUnderConstruction {
                     const std::string& bad_message_reason = "") {
     DCHECK(BlobStatusIsError(reason));
     DCHECK_EQ(bad_message_reason.empty(), !BlobStatusIsBadIPC(reason));
+    // Cancelling would also try to delete |this| by removing it from
+    // blobs_under_construction_, so preemptively own |this|.
+    auto self = std::move(blob_registry_->blobs_under_construction_[uuid()]);
     // The blob might no longer have any references, in which case it may no
     // longer exist. If that happens just skip calling cancel.
     if (context() && context()->registry().HasEntry(uuid()))
@@ -322,8 +326,8 @@ void BlobRegistryImpl::BlobUnderConstruction::ResolvedAllBlobUUIDs() {
     std::unique_ptr<BlobDataHandle> handle =
         context()->GetBlobDataFromUUID(blob_uuid);
     handle->RunOnConstructionBegin(
-        base::Bind(&BlobUnderConstruction::DependentBlobReady,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&BlobUnderConstruction::DependentBlobReady,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -335,8 +339,8 @@ void BlobRegistryImpl::BlobUnderConstruction::DependentBlobReady(
     // iterating over |referenced_blob_uuids_|.
     base::SequencedTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&BlobUnderConstruction::ResolvedAllBlobDependencies,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&BlobUnderConstruction::ResolvedAllBlobDependencies,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -422,6 +426,10 @@ void BlobRegistryImpl::BlobUnderConstruction::TransportComplete(
     return;
   }
 
+  // The calls below could delete |this|, so make sure we detect that and don't
+  // try to delete |this| again afterwards.
+  auto weak_this = weak_ptr_factory_.GetWeakPtr();
+
   // The blob might no longer have any references, in which case it may no
   // longer exist. If that happens just skip calling Complete.
   // TODO(mek): Stop building sooner if a blob is no longer referenced.
@@ -438,7 +446,8 @@ void BlobRegistryImpl::BlobUnderConstruction::TransportComplete(
     std::move(bad_message_callback_)
         .Run("Received invalid data while transporting blob");
   }
-  MarkAsFinishedAndDeleteSelf();
+  if (weak_this)
+    MarkAsFinishedAndDeleteSelf();
 }
 
 #if DCHECK_IS_ON()
@@ -525,13 +534,34 @@ void BlobRegistryImpl::Register(
       this, uuid, content_type, content_disposition, std::move(elements),
       bindings_.GetBadMessageCallback());
 
-  std::unique_ptr<BlobDataHandle> handle =
-      context_->AddFutureBlob(uuid, content_type, content_disposition);
+  std::unique_ptr<BlobDataHandle> handle = context_->AddFutureBlob(
+      uuid, content_type, content_disposition,
+      base::BindOnce(&BlobRegistryImpl::BlobBuildAborted,
+                     weak_ptr_factory_.GetWeakPtr(), uuid));
   BlobImpl::Create(std::move(handle), std::move(blob));
 
   blobs_under_construction_[uuid]->StartTransportation();
 
   std::move(callback).Run();
+}
+
+void BlobRegistryImpl::RegisterFromStream(
+    const std::string& content_type,
+    const std::string& content_disposition,
+    uint64_t expected_length,
+    mojo::ScopedDataPipeConsumerHandle data,
+    blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+    RegisterFromStreamCallback callback) {
+  if (!context_) {
+    std::move(callback).Run(nullptr);
+    return;
+  }
+
+  blobs_being_streamed_.insert(std::make_unique<BlobBuilderFromStream>(
+      context_, content_type, content_disposition, expected_length,
+      std::move(data), std::move(progress_client),
+      base::BindOnce(&BlobRegistryImpl::StreamingBlobDone,
+                     base::Unretained(this), std::move(callback))));
 }
 
 void BlobRegistryImpl::GetBlobFromUUID(blink::mojom::BlobRequest blob,
@@ -575,6 +605,25 @@ void BlobRegistryImpl::URLStoreForOrigin(
 void BlobRegistryImpl::SetURLStoreCreationHookForTesting(
     URLStoreCreationHook* hook) {
   g_url_store_creation_hook = hook;
+}
+
+void BlobRegistryImpl::BlobBuildAborted(const std::string& uuid) {
+  blobs_under_construction_.erase(uuid);
+}
+
+void BlobRegistryImpl::StreamingBlobDone(
+    RegisterFromStreamCallback callback,
+    BlobBuilderFromStream* builder,
+    std::unique_ptr<BlobDataHandle> result) {
+  blobs_being_streamed_.erase(builder);
+  blink::mojom::SerializedBlobPtr blob;
+  if (result) {
+    DCHECK_EQ(BlobStatus::DONE, result->GetBlobStatus());
+    blob = blink::mojom::SerializedBlob::New(
+        result->uuid(), result->content_type(), result->size(), nullptr);
+    BlobImpl::Create(std::move(result), MakeRequest(&blob->blob));
+  }
+  std::move(callback).Run(std::move(blob));
 }
 
 }  // namespace storage

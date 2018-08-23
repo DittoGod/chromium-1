@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/callback_forward.h"
+#include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
@@ -24,19 +25,24 @@ class MemoryMappedRuleset;
 
 // The integrity verification status of a given ruleset version.
 //
-// A ruleset file starts from the NOT_VERIFIED state, after which it can be
-// classified as INTACT or CORRUPT upon integrity verification.
+// A ruleset file starts from the kNotVerified state, after which it can be
+// classified as kIntact, kCorrupt, or kInvalidFile upon integrity verification.
+//
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class RulesetVerificationStatus {
-  NOT_VERIFIED,
-  INTACT,
-  CORRUPT,
+  kNotVerified = 0,
+  kIntact = 1,
+  kCorrupt = 2,
+  kInvalidFile = 3,
+  kMaxValue = kInvalidFile,
 };
 
 // This class is the same as RulesetDealer, but additionally does a one-time
 // integrity checking on the ruleset before handing it out from GetRuleset().
 //
 // The |status| of verification is persisted throughout the entire lifetime of
-// |this| object, and is reset to NOT_VERIFIED only when a new ruleset is
+// |this| object, and is reset to kNotVerified only when a new ruleset is
 // supplied to SetRulesetFile() method.
 class VerifiedRulesetDealer : public RulesetDealer {
  public:
@@ -49,11 +55,17 @@ class VerifiedRulesetDealer : public RulesetDealer {
   void SetRulesetFile(base::File ruleset_file) override;
   scoped_refptr<const MemoryMappedRuleset> GetRuleset() override;
 
+  // Opens file and use it as ruleset file on success. Returns valid
+  // |base::File| in the case of file opened and set. Returns invalid
+  // |base::File| in the case of file open error. In the case of error
+  // ruleset dealer continues to use the previous file (if any).
+  base::File OpenAndSetRulesetFile(const base::FilePath& file_path);
+
   // For tests only.
   RulesetVerificationStatus status() const { return status_; }
 
  private:
-  RulesetVerificationStatus status_ = RulesetVerificationStatus::NOT_VERIFIED;
+  RulesetVerificationStatus status_ = RulesetVerificationStatus::kNotVerified;
 
   DISALLOW_COPY_AND_ASSIGN(VerifiedRulesetDealer);
 };
@@ -77,9 +89,12 @@ class VerifiedRulesetDealer::Handle {
   // at least until the callback returns.
   void GetDealerAsync(base::Callback<void(VerifiedRulesetDealer*)> callback);
 
-  // Sets the ruleset |file| that the VerifiedRulesetDealer should distribute
-  // from now on.
-  void SetRulesetFile(base::File file);
+  // Schedules file open to use as a new ruleset file. In the case of success,
+  // the new and valid |base::File| is passed to |callback|. In the case of
+  // error an invalid |base::File| is passed to |callback| and dealer continues
+  // to use previous ruleset file (if any).
+  void TryOpenAndSetRulesetFile(const base::FilePath& path,
+                                base::OnceCallback<void(base::File)> callback);
 
  private:
   // Note: Raw pointer, |dealer_| already holds a reference to |task_runner_|.

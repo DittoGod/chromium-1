@@ -4,6 +4,7 @@
 
 #include "chrome/browser/media/webrtc/permission_bubble_media_access_handler.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/metrics/field_trial.h"
@@ -28,20 +29,26 @@
 #include "chrome/browser/media/webrtc/screen_capture_infobar_delegate_android.h"
 #include "chrome/browser/permissions/permission_uma_util.h"
 #include "chrome/browser/permissions/permission_util.h"
+
 #endif  // defined(OS_ANDROID)
 
 using content::BrowserThread;
 
+using RepeatingMediaResponseCallback =
+    base::RepeatingCallback<void(const content::MediaStreamDevices& devices,
+                                 content::MediaStreamRequestResult result,
+                                 std::unique_ptr<content::MediaStreamUI> ui)>;
+
 struct PermissionBubbleMediaAccessHandler::PendingAccessRequest {
   PendingAccessRequest(const content::MediaStreamRequest& request,
-                       const content::MediaResponseCallback& callback)
+                       RepeatingMediaResponseCallback callback)
       : request(request), callback(callback) {}
   ~PendingAccessRequest() {}
 
   // TODO(gbillock): make the MediaStreamDevicesController owned by
   // this object when we're using bubbles.
   content::MediaStreamRequest request;
-  content::MediaResponseCallback callback;
+  RepeatingMediaResponseCallback callback;
 };
 
 PermissionBubbleMediaAccessHandler::PermissionBubbleMediaAccessHandler() {
@@ -64,7 +71,8 @@ bool PermissionBubbleMediaAccessHandler::SupportsStreamType(
 #if defined(OS_ANDROID)
   return type == content::MEDIA_DEVICE_VIDEO_CAPTURE ||
          type == content::MEDIA_DEVICE_AUDIO_CAPTURE ||
-         type == content::MEDIA_DESKTOP_VIDEO_CAPTURE;
+         type == content::MEDIA_GUM_DESKTOP_VIDEO_CAPTURE ||
+         type == content::MEDIA_DISPLAY_VIDEO_CAPTURE;
 #else
   return type == content::MEDIA_DEVICE_VIDEO_CAPTURE ||
          type == content::MEDIA_DEVICE_AUDIO_CAPTURE;
@@ -72,10 +80,12 @@ bool PermissionBubbleMediaAccessHandler::SupportsStreamType(
 }
 
 bool PermissionBubbleMediaAccessHandler::CheckMediaAccessPermission(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     content::MediaStreamType type,
     const extensions::Extension* extension) {
+  content::WebContents* web_contents =
+      content::WebContents::FromRenderFrameHost(render_frame_host);
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   ContentSettingsType content_settings_type =
@@ -87,32 +97,33 @@ bool PermissionBubbleMediaAccessHandler::CheckMediaAccessPermission(
   GURL embedding_origin = web_contents->GetLastCommittedURL().GetOrigin();
   PermissionManager* permission_manager = PermissionManager::Get(profile);
   return permission_manager
-             ->GetPermissionStatus(content_settings_type, security_origin,
-                                   embedding_origin)
+             ->GetPermissionStatusForFrame(content_settings_type,
+                                           render_frame_host, security_origin)
              .content_setting == CONTENT_SETTING_ALLOW;
 }
 
 void PermissionBubbleMediaAccessHandler::HandleRequest(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
-    const content::MediaResponseCallback& callback,
+    content::MediaResponseCallback callback,
     const extensions::Extension* extension) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
 #if defined(OS_ANDROID)
-  if (request.video_type == content::MEDIA_DESKTOP_VIDEO_CAPTURE &&
+  if (IsScreenCaptureMediaType(request.video_type) &&
       !base::FeatureList::IsEnabled(
           chrome::android::kUserMediaScreenCapturing)) {
     // If screen capturing isn't enabled on Android, we'll use "invalid state"
     // as result, same as on desktop.
-    callback.Run(content::MediaStreamDevices(),
-                 content::MEDIA_DEVICE_INVALID_STATE, nullptr);
+    std::move(callback).Run(content::MediaStreamDevices(),
+                            content::MEDIA_DEVICE_INVALID_STATE, nullptr);
     return;
   }
 #endif  // defined(OS_ANDROID)
 
   RequestsQueue& queue = pending_requests_[web_contents];
-  queue.push_back(PendingAccessRequest(request, callback));
+  queue.push_back(PendingAccessRequest(
+      request, base::AdaptCallbackForRepeating(std::move(callback))));
 
   // If this is the only request then show the infobar.
   if (queue.size() == 1)
@@ -135,7 +146,7 @@ void PermissionBubbleMediaAccessHandler::ProcessQueuedAccessRequest(
 
   const content::MediaStreamRequest request = it->second.front().request;
 #if defined(OS_ANDROID)
-  if (request.video_type == content::MEDIA_DESKTOP_VIDEO_CAPTURE) {
+  if (IsScreenCaptureMediaType(request.video_type)) {
     ScreenCaptureInfoBarDelegateAndroid::Create(
         web_contents, request,
         base::Bind(&PermissionBubbleMediaAccessHandler::OnAccessRequestResponse,
@@ -196,7 +207,7 @@ void PermissionBubbleMediaAccessHandler::OnAccessRequestResponse(
   if (queue.empty())
     return;
 
-  content::MediaResponseCallback callback = queue.front().callback;
+  RepeatingMediaResponseCallback callback = queue.front().callback;
   queue.pop_front();
 
   if (!queue.empty()) {

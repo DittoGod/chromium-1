@@ -37,6 +37,12 @@ class TestAccessibilityController : ash::mojom::AccessibilityController {
   void SetDarkenScreen(bool darken) override {}
   void BrailleDisplayStateChanged(bool connected) override {}
   void SetFocusHighlightRect(const gfx::Rect& bounds_in_screen) override {}
+  void SetCaretBounds(const gfx::Rect& bounds_in_screen) override {}
+  void SetAccessibilityPanelAlwaysVisible(bool always_visible) override {}
+  void SetAccessibilityPanelBounds(
+      const gfx::Rect& bounds,
+      ash::mojom::AccessibilityPanelState state) override {}
+  void SetSelectToSpeakState(ash::mojom::SelectToSpeakState state) override {}
 
   bool was_client_set() const { return was_client_set_; }
 
@@ -68,6 +74,18 @@ class FakeAccessibilityControllerClient : public AccessibilityControllerClient {
     last_a11y_gesture_ = gesture;
   }
 
+  void ToggleDictation(ToggleDictationCallback callback) override {
+    ++toggle_dictation_count_;
+    dictation_on_ = !dictation_on_;
+    std::move(callback).Run(dictation_on_);
+  }
+
+  void SilenceSpokenFeedback() override { ++silence_spoken_feedback_count_; }
+
+  void OnTwoFingerTouchStart() override { ++on_two_finger_touch_start_count_; }
+
+  void OnTwoFingerTouchStop() override { ++on_two_finger_touch_stop_count_; }
+
   void ShouldToggleSpokenFeedbackViaTouch(
       ShouldToggleSpokenFeedbackViaTouchCallback callback) override {
     std::move(callback).Run(true);
@@ -77,23 +95,24 @@ class FakeAccessibilityControllerClient : public AccessibilityControllerClient {
     spoken_feedback_toggle_count_down_ = tick_count;
   }
 
-  ash::mojom::AccessibilityAlert last_a11y_alert() const {
-    return last_a11y_alert_;
-  }
-  int32_t last_sound_key() const { return last_sound_key_; }
-  ax::mojom::Gesture last_a11y_gesture() const { return last_a11y_gesture_; }
-  int spoken_feedback_toggle_count_down() const {
-    return spoken_feedback_toggle_count_down_;
+  void RequestSelectToSpeakStateChange() override {
+    ++select_to_speak_state_changes_;
   }
 
- private:
   ash::mojom::AccessibilityAlert last_a11y_alert_ =
       ash::mojom::AccessibilityAlert::NONE;
   int32_t last_sound_key_ = -1;
   ax::mojom::Gesture last_a11y_gesture_ = ax::mojom::Gesture::kNone;
+  int toggle_dictation_count_ = 0;
+  int silence_spoken_feedback_count_ = 0;
+  int on_two_finger_touch_start_count_ = 0;
+  int on_two_finger_touch_stop_count_ = 0;
   int spoken_feedback_toggle_count_down_ = -1;
+  int select_to_speak_state_changes_ = 0;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(FakeAccessibilityControllerClient);
+  bool dictation_on_ = false;
 };
 
 }  // namespace
@@ -122,12 +141,12 @@ TEST_F(AccessibilityControllerClientTest, MethodCalls) {
   const ash::mojom::AccessibilityAlert alert =
       ash::mojom::AccessibilityAlert::SCREEN_ON;
   client.TriggerAccessibilityAlert(alert);
-  EXPECT_EQ(alert, client.last_a11y_alert());
+  EXPECT_EQ(alert, client.last_a11y_alert_);
 
   // Tests PlayEarcon method call.
   const int32_t sound_key = chromeos::SOUND_SHUTDOWN;
   client.PlayEarcon(sound_key);
-  EXPECT_EQ(sound_key, client.last_sound_key());
+  EXPECT_EQ(sound_key, client.last_sound_key_);
 
   // Tests PlayShutdownSound method call.
   base::TimeDelta sound_duration;
@@ -140,7 +159,26 @@ TEST_F(AccessibilityControllerClientTest, MethodCalls) {
   // Tests HandleAccessibilityGesture method call.
   ax::mojom::Gesture gesture = ax::mojom::Gesture::kClick;
   client.HandleAccessibilityGesture(gesture);
-  EXPECT_EQ(gesture, client.last_a11y_gesture());
+  EXPECT_EQ(gesture, client.last_a11y_gesture_);
+
+  // Tests ToggleDictation method call.
+  EXPECT_EQ(0, client.toggle_dictation_count_);
+  client.ToggleDictation(base::BindOnce([](bool b) {}));
+  EXPECT_EQ(1, client.toggle_dictation_count_);
+
+  EXPECT_EQ(0, client.silence_spoken_feedback_count_);
+  client.SilenceSpokenFeedback();
+  EXPECT_EQ(1, client.silence_spoken_feedback_count_);
+
+  // Tests OnTwoFingerTouchStart method call.
+  EXPECT_EQ(0, client.on_two_finger_touch_start_count_);
+  client.OnTwoFingerTouchStart();
+  EXPECT_EQ(1, client.on_two_finger_touch_start_count_);
+
+  // Tests OnTwoFingerTouchStop method call.
+  EXPECT_EQ(0, client.on_two_finger_touch_stop_count_);
+  client.OnTwoFingerTouchStop();
+  EXPECT_EQ(1, client.on_two_finger_touch_stop_count_);
 
   // Tests ShouldToggleSpokenFeedbackViaTouch method call.
   bool should_toggle = false;
@@ -153,5 +191,9 @@ TEST_F(AccessibilityControllerClientTest, MethodCalls) {
   // Tests PlaySpokenFeedbackToggleCountdown method call.
   const int tick_count = 2;
   client.PlaySpokenFeedbackToggleCountdown(tick_count);
-  EXPECT_EQ(tick_count, client.spoken_feedback_toggle_count_down());
+  EXPECT_EQ(tick_count, client.spoken_feedback_toggle_count_down_);
+
+  // Tests RequestSelectToSpeakStateChange method call.
+  client.RequestSelectToSpeakStateChange();
+  EXPECT_EQ(1, client.select_to_speak_state_changes_);
 }

@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -16,16 +17,6 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
-        {
-          "object": "LayoutBlockFlow (anonymous)",
-          "rect": [8, 8, 784, 104],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutInline SPAN",
-          "rect": [4, 4, 108, 188],
-          "reason": "geometry"
-        },
         {
           "object": "LayoutInline SPAN",
           "rect": [4, 4, 108, 188],
@@ -42,32 +33,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutInline SPAN",
-      "reason": "outline"
-    },
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutInline SPAN",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='block'",
-      "reason": "geometry"
     }
   ]
 }

@@ -57,7 +57,7 @@ WebUIDataSource* CreateVersionUIDataSource() {
   html_source->AddString(version_ui::kVersion,
                          version_info::GetVersionNumber());
   html_source->AddString(version_ui::kVersionModifier,
-                         chrome::GetChannelString());
+                         chrome::GetChannelName());
   html_source->AddString(version_ui::kJSEngine, "V8");
   html_source->AddString(version_ui::kJSVersion, V8_VERSION_STRING);
   html_source->AddLocalizedString(version_ui::kCompany,
@@ -117,13 +117,9 @@ WebUIDataSource* CreateVersionUIDataSource() {
   html_source->AddString(version_ui::kFlashVersion, std::string());
 #endif  // OS_ANDROID
 
-#if defined(ARCH_CPU_64_BITS)
-  html_source->AddLocalizedString(version_ui::kVersionBitSize,
-                                  IDS_VERSION_UI_64BIT);
-#else
-  html_source->AddLocalizedString(version_ui::kVersionBitSize,
-                                  IDS_VERSION_UI_32BIT);
-#endif
+  html_source->AddLocalizedString(
+      version_ui::kVersionBitSize,
+      sizeof(void*) == 8 ? IDS_VERSION_UI_64BIT : IDS_VERSION_UI_32BIT);
 
 #if defined(OS_WIN)
   html_source->AddString(
@@ -141,26 +137,6 @@ WebUIDataSource* CreateVersionUIDataSource() {
 #endif
 
 #if defined(OS_WIN)
-#if defined(__clang__)
-  html_source->AddString(version_ui::kCompiler, "clang");
-#elif defined(_MSC_VER) && _MSC_VER == 1900
-#if BUILDFLAG(PGO_BUILD)
-  html_source->AddString(version_ui::kCompiler, "MSVC 2015 (PGO)");
-#else
-  html_source->AddString(version_ui::kCompiler, "MSVC 2015");
-#endif
-#elif defined(_MSC_VER) && _MSC_VER >= 1910 && _MSC_VER < 2000
-#if BUILDFLAG(PGO_BUILD)
-  html_source->AddString(version_ui::kCompiler, "MSVC 2017 (PGO)");
-#else
-  html_source->AddString(version_ui::kCompiler, "MSVC 2017");
-#endif
-#elif defined(_MSC_VER)
-#error "Unsupported version of MSVC."
-#else
-  html_source->AddString(version_ui::kCompiler, "Unknown");
-#endif
-
   base::string16 update_cohort_name =
       install_static::InstallDetails::Get().update_cohort_name();
   if (!update_cohort_name.empty()) {

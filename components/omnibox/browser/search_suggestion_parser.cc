@@ -23,12 +23,15 @@
 #include "base/values.h"
 #include "components/omnibox/browser/autocomplete_i18n.h"
 #include "components/omnibox/browser/autocomplete_input.h"
+#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/url_prefix.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/http/http_response_headers.h"
-#include "net/url_request/url_fetcher.h"
+#include "services/network/public/cpp/resource_response.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "ui/base/device_form_factor.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "url/url_constants.h"
 
 namespace {
@@ -79,14 +82,37 @@ SearchSuggestionParser::SuggestResult::SuggestResult(
     const base::string16& suggestion,
     AutocompleteMatchType::Type type,
     int subtype_identifier,
+    bool from_keyword_provider,
+    int relevance,
+    bool relevance_from_server,
+    const base::string16& input_text)
+    : SuggestResult(suggestion,
+                    type,
+                    subtype_identifier,
+                    suggestion,
+                    /*match_contents_prefix=*/base::string16(),
+                    /*annotation=*/base::string16(),
+                    /*suggest_query_params=*/"",
+                    /*deletion_url=*/"",
+                    /*image_dominant_color=*/"",
+                    /*image_url=*/"",
+                    from_keyword_provider,
+                    relevance,
+                    relevance_from_server,
+                    /*should_prefetch=*/false,
+                    input_text) {}
+
+SearchSuggestionParser::SuggestResult::SuggestResult(
+    const base::string16& suggestion,
+    AutocompleteMatchType::Type type,
+    int subtype_identifier,
     const base::string16& match_contents,
     const base::string16& match_contents_prefix,
     const base::string16& annotation,
-    const base::string16& answer_contents,
-    const base::string16& answer_type,
-    std::unique_ptr<SuggestionAnswer> answer,
     const std::string& suggest_query_params,
     const std::string& deletion_url,
+    const std::string& image_dominant_color,
+    const std::string& image_url,
     bool from_keyword_provider,
     int relevance,
     bool relevance_from_server,
@@ -102,9 +128,8 @@ SearchSuggestionParser::SuggestResult::SuggestResult(
       match_contents_prefix_(match_contents_prefix),
       annotation_(annotation),
       suggest_query_params_(suggest_query_params),
-      answer_contents_(answer_contents),
-      answer_type_(answer_type),
-      answer_(std::move(answer)),
+      image_dominant_color_(image_dominant_color),
+      image_url_(image_url),
       should_prefetch_(should_prefetch) {
   match_contents_ = match_contents;
   DCHECK(!match_contents_.empty());
@@ -121,8 +146,9 @@ SearchSuggestionParser::SuggestResult::SuggestResult(
       answer_contents_(result.answer_contents_),
       answer_type_(result.answer_type_),
       answer_(SuggestionAnswer::copy(result.answer_.get())),
-      should_prefetch_(result.should_prefetch_) {
-}
+      image_dominant_color_(result.image_dominant_color_),
+      image_url_(result.image_url_),
+      should_prefetch_(result.should_prefetch_) {}
 
 SearchSuggestionParser::SuggestResult::~SuggestResult() {}
 
@@ -141,6 +167,8 @@ SearchSuggestionParser::SuggestResult&
   answer_contents_ = rhs.answer_contents_;
   answer_type_ = rhs.answer_type_;
   answer_ = SuggestionAnswer::copy(rhs.answer_.get());
+  image_dominant_color_ = rhs.image_dominant_color_;
+  image_url_ = rhs.image_url_;
   should_prefetch_ = rhs.should_prefetch_;
 
   return *this;
@@ -218,6 +246,15 @@ void SearchSuggestionParser::SuggestResult::ClassifyMatchContents(
   }
 }
 
+void SearchSuggestionParser::SuggestResult::SetAnswer(
+    const base::string16& answer_contents,
+    const base::string16& answer_type,
+    std::unique_ptr<SuggestionAnswer> answer) {
+  answer_contents_ = answer_contents;
+  answer_type_ = answer_type;
+  answer_ = std::move(answer);
+}
+
 int SearchSuggestionParser::SuggestResult::CalculateRelevance(
     const AutocompleteInput& input,
     bool keyword_provider_requested) const {
@@ -255,7 +292,8 @@ SearchSuggestionParser::NavigationResult::NavigationResult(
                                    nullptr,
                                    nullptr,
                                    nullptr),
-          scheme_classifier)),
+          scheme_classifier,
+          nullptr)),
       description_(description) {
   DCHECK(url_.is_valid());
   CalculateAndClassifyMatchContents(true, input_text);
@@ -357,11 +395,15 @@ bool SearchSuggestionParser::Results::HasServerProvidedScores() const {
 
 // static
 std::string SearchSuggestionParser::ExtractJsonData(
-    const net::URLFetcher* source) {
-  const net::HttpResponseHeaders* const response_headers =
-      source->GetResponseHeaders();
-  std::string json_data;
-  source->GetResponseAsString(&json_data);
+    const network::SimpleURLLoader* source,
+    std::unique_ptr<std::string> response_body) {
+  const net::HttpResponseHeaders* response_headers = nullptr;
+  if (source->ResponseInfo())
+    response_headers = source->ResponseInfo()->headers.get();
+  if (!response_body)
+    return std::string();
+
+  std::string json_data = std::move(*response_body);
 
   // JSON is supposed to be UTF-8, but some suggest service providers send
   // JSON files in non-UTF-8 encodings.  The actual encoding is usually
@@ -372,8 +414,7 @@ std::string SearchSuggestionParser::ExtractJsonData(
       base::string16 data_16;
       // TODO(jungshik): Switch to CodePageToUTF8 after it's added.
       if (base::CodepageToUTF16(json_data, charset.c_str(),
-                                base::OnStringConversionError::FAIL,
-                                &data_16))
+                                base::OnStringConversionError::FAIL, &data_16))
         json_data = base::UTF16ToUTF8(data_16);
     }
   }
@@ -472,7 +513,6 @@ bool SearchSuggestionParser::ParseSuggestResults(
   // Clear the previous results now that new results are available.
   results->suggest_results.clear();
   results->navigation_results.clear();
-  results->answers_image_urls.clear();
 
   base::string16 suggestion;
   std::string type;
@@ -500,8 +540,9 @@ bool SearchSuggestionParser::ParseSuggestResults(
     std::string deletion_url;
 
     if (suggestion_details &&
-        suggestion_details->GetDictionary(index, &suggestion_detail))
+        suggestion_details->GetDictionary(index, &suggestion_detail)) {
       suggestion_detail->GetString("du", &deletion_url);
+    }
 
     if ((match_type == AutocompleteMatchType::NAVSUGGEST) ||
         (match_type == AutocompleteMatchType::NAVSUGGEST_PERSONALIZED)) {
@@ -518,24 +559,33 @@ bool SearchSuggestionParser::ParseSuggestResults(
             input.text()));
       }
     } else {
+      base::string16 annotation;
       base::string16 match_contents = suggestion;
-      if ((match_type == AutocompleteMatchType::CALCULATOR) &&
-          !suggestion.compare(0, 2, base::UTF8ToUTF16("= "))) {
-        // Calculator results include a "= " prefix but we don't want to include
-        // this in the search terms.
-        suggestion.erase(0, 2);
-        // Additionally, on larger (non-phone) form factors, we don't want to
-        // display it in the suggestion contents either, because those devices
-        // display a suggestion type icon that looks like a '='.
-        if (ui::GetDeviceFormFactor() != ui::DEVICE_FORM_FACTOR_PHONE)
-          match_contents.erase(0, 2);
+      if (match_type == AutocompleteMatchType::CALCULATOR) {
+        if (!suggestion.compare(0, 2, base::UTF8ToUTF16("= "))) {
+          // Calculator results include a "= " prefix but we don't want to
+          // include this in the search terms.
+          suggestion.erase(0, 2);
+          // Additionally, on larger (non-phone) form factors, we don't want to
+          // display it in the suggestion contents either, because those devices
+          // display a suggestion type icon that looks like a '='.
+          if (ui::GetDeviceFormFactor() != ui::DEVICE_FORM_FACTOR_PHONE &&
+              !OmniboxFieldTrial::IsNewAnswerLayoutEnabled())
+            match_contents.erase(0, 2);
+        }
+        if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_DESKTOP &&
+            OmniboxFieldTrial::IsNewAnswerLayoutEnabled()) {
+          annotation = match_contents;
+          match_contents = query;
+        }
       }
 
       base::string16 match_contents_prefix;
-      base::string16 annotation;
       base::string16 answer_contents;
       base::string16 answer_type_str;
       std::unique_ptr<SuggestionAnswer> answer;
+      std::string image_dominant_color;
+      std::string image_url;
       std::string suggest_query_params;
 
       if (suggestion_details) {
@@ -547,6 +597,8 @@ bool SearchSuggestionParser::ParseSuggestResults(
           if (match_contents.empty())
             match_contents = suggestion;
           suggestion_detail->GetString("a", &annotation);
+          suggestion_detail->GetString("dc", &image_dominant_color);
+          suggestion_detail->GetString("i", &image_url);
           suggestion_detail->GetString("q", &suggest_query_params);
 
           // Extract the Answer, if provided.
@@ -561,7 +613,6 @@ bool SearchSuggestionParser::ParseSuggestResults(
               answer_parsed_successfully = true;
 
               answer->set_type(answer_type);
-              answer->AddImageURLsTo(&results->answers_image_urls);
 
               std::string contents;
               base::JSONWriter::Write(*answer_json, &contents);
@@ -577,12 +628,23 @@ bool SearchSuggestionParser::ParseSuggestResults(
 
       bool should_prefetch = static_cast<int>(index) == prefetch_index;
       results->suggest_results.push_back(SuggestResult(
-          base::CollapseWhitespace(suggestion, false), match_type,
-          subtype_identifier, base::CollapseWhitespace(match_contents, false),
-          match_contents_prefix, annotation, answer_contents, answer_type_str,
-          std::move(answer), suggest_query_params, deletion_url,
-          is_keyword_result, relevance, relevances != nullptr, should_prefetch,
+          base::CollapseWhitespace(suggestion, false),
+          match_type,
+          subtype_identifier,
+          base::CollapseWhitespace(match_contents, false),
+          match_contents_prefix,
+          annotation,
+          suggest_query_params,
+          deletion_url,
+          image_dominant_color,
+          image_url,
+          is_keyword_result,
+          relevance,
+          relevances != nullptr,
+          should_prefetch,
           trimmed_input));
+      results->suggest_results.back().SetAnswer(answer_contents,
+          answer_type_str, std::move(answer));
     }
   }
   results->relevances_from_server = relevances != nullptr;

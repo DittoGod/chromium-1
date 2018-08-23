@@ -17,14 +17,17 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/cloud_policy_validator.h"
 #include "components/policy/core/common/remote_commands/remote_command_job.h"
 #include "components/policy/policy_export.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace policy {
@@ -57,14 +60,20 @@ class POLICY_EXPORT CloudPolicyClient {
   using StatusCallback = base::Callback<void(bool status)>;
 
   // A callback for available licenses request. If the operation succeeded,
-  // |success| is true, and |map| contains available licenses.
-  using LicenseRequestCallback =
-      base::Callback<void(bool success, const LicenseMap& map)>;
+  // |status| is DM_STATUS_SUCCESS, and |map| contains available licenses.
+  using LicenseRequestCallback = base::Callback<void(
+      DeviceManagementStatus status,
+      const LicenseMap& map)>;
 
   // A callback which receives fetched remote commands.
-  using RemoteCommandCallback = base::Callback<void(
+  using RemoteCommandCallback = base::OnceCallback<void(
       DeviceManagementStatus,
       const std::vector<enterprise_management::RemoteCommand>&)>;
+
+  // A callback which fetches device dm_token based on user affiliation.
+  // Should be called once per registration.
+  using DeviceDMTokenCallback = base::RepeatingCallback<std::string(
+      const std::vector<std::string>& user_affiliation_ids)>;
 
   // Observer interface for state and policy changes.
   class POLICY_EXPORT Observer {
@@ -88,25 +97,33 @@ class POLICY_EXPORT CloudPolicyClient {
     virtual void OnClientError(CloudPolicyClient* client) = 0;
   };
 
-  // If non-empty, |machine_id| and |machine_model| are passed to the server
-  // verbatim. As these reveal machine identity, they must only be used where
-  // this is appropriate (i.e. device policy, but not user policy). |service|
-  // and |signing_service| are weak pointers and it's the caller's
-  // responsibility to keep them valid for the lifetime of CloudPolicyClient.
-  // The |signing_service| is used to sign sensitive requests.
+  // If non-empty, |machine_id|, |machine_model| and |brand_code| are passed
+  // to the server verbatim. As these reveal machine identity, they must only
+  // be used where this is appropriate (i.e. device policy, but not user
+  // policy). |service| and |signing_service| are weak pointers and it's the
+  // caller's responsibility to keep them valid for the lifetime of
+  // CloudPolicyClient. The |signing_service| is used to sign sensitive
+  // requests. |device_dm_token_callback| is used to retrieve device DMToken for
+  // affiliated users. Could be null if it's not possible to use
+  // device DMToken for user policy fetches.
   CloudPolicyClient(
       const std::string& machine_id,
       const std::string& machine_model,
+      const std::string& brand_code,
       DeviceManagementService* service,
-      scoped_refptr<net::URLRequestContextGetter> request_context,
-      SigningService* signing_service);
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      SigningService* signing_service,
+      DeviceDMTokenCallback device_dm_token_callback);
   virtual ~CloudPolicyClient();
 
   // Sets the DMToken, thereby establishing a registration with the server. A
   // policy fetch is not automatically issued but can be requested by calling
   // FetchPolicy().
-  virtual void SetupRegistration(const std::string& dm_token,
-                                 const std::string& client_id);
+  // |user_affiliation_ids| are used to get device DMToken if relevant.
+  virtual void SetupRegistration(
+      const std::string& dm_token,
+      const std::string& client_id,
+      const std::vector<std::string>& user_affiliation_ids);
 
   // Attempts to register with the device management service. Results in a
   // registration change or error notification.
@@ -133,6 +150,11 @@ class POLICY_EXPORT CloudPolicyClient {
       const std::string& requisition,
       const std::string& current_state_key);
 
+  // Attempts to enroll with the device management service using an enrollment
+  // token. Results in a registration change or error notification.
+  virtual void RegisterWithToken(const std::string& token,
+                                 const std::string& client_id);
+
   // Sets information about a policy invalidation. Subsequent fetch operations
   // will use the given info, and callers can use fetched_invalidation_version
   // to determine which version of policy was fetched.
@@ -146,6 +168,16 @@ class POLICY_EXPORT CloudPolicyClient {
   // multiple requests to fetch policy, new requests will cancel any pending
   // requests and the latest request will eventually trigger notifications.
   virtual void FetchPolicy();
+
+  // Upload a policy validation report to the server. Like FetchPolicy, this
+  // method requires that the client is in a registered state. This method
+  // should only be called if the policy was rejected (e.g. validation or
+  // serialization error).
+  virtual void UploadPolicyValidationReport(
+      CloudPolicyValidatorBase::Status status,
+      const std::vector<ValueValidationIssue>& value_validation_issues,
+      const std::string& policy_type,
+      const std::string& policy_token);
 
   // Requests OAuth2 auth codes for the device robot account. The client being
   // registered is a prerequisite to this operation and this call will CHECK if
@@ -171,6 +203,13 @@ class POLICY_EXPORT CloudPolicyClient {
       const std::string& certificate_data,
       const StatusCallback& callback);
 
+  // Upload an enrollment identifier to the server. Like FetchPolicy, this
+  // method requires that the client is in a registered state.
+  // |enrollment_id| must hold an enrollment identifier. The |callback| will be
+  // called when the operation completes.
+  virtual void UploadEnterpriseEnrollmentId(const std::string& enrollment_id,
+                                            const StatusCallback& callback);
+
   // Uploads device/session status to the server. As above, the client must be
   // in a registered state. If non-null, |device_status| and |session_status|
   // will be included in the upload status request. The |callback| will be
@@ -179,6 +218,24 @@ class POLICY_EXPORT CloudPolicyClient {
       const enterprise_management::DeviceStatusReportRequest* device_status,
       const enterprise_management::SessionStatusReportRequest* session_status,
       const StatusCallback& callback);
+
+  // Uploads Chrome Desktop report to the server. As above, the client must be
+  // in a registered state. |chrome_desktop_report| will be included in the
+  // upload request. The |callback| will be called when the operation completes.
+  virtual void UploadChromeDesktopReport(
+      std::unique_ptr<enterprise_management::ChromeDesktopReportRequest>
+          chrome_desktop_report,
+      const StatusCallback& callback);
+
+  // Uploads a report on the status of app push-installs. The client must be in
+  // a registered state. The |callback| will be called when the operation
+  // completes.
+  virtual void UploadAppInstallReport(
+      const enterprise_management::AppInstallReportRequest* app_install_report,
+      const StatusCallback& callback);
+
+  // Cancels the pending app push-install status report upload, if an.
+  virtual void CancelAppInstallReportUpload();
 
   // Attempts to fetch remote commands, with |last_command_id| being the ID of
   // the last command that finished execution and |command_results| being
@@ -191,7 +248,7 @@ class POLICY_EXPORT CloudPolicyClient {
       std::unique_ptr<RemoteCommandJob::UniqueIDType> last_command_id,
       const std::vector<enterprise_management::RemoteCommandResult>&
           command_results,
-      const RemoteCommandCallback& callback);
+      RemoteCommandCallback callback);
 
   // Sends a device attribute update permission request to the server, uses
   // OAuth2 token |auth_token| to identify user who requests a permission to
@@ -229,6 +286,7 @@ class POLICY_EXPORT CloudPolicyClient {
 
   const std::string& machine_id() const { return machine_id_; }
   const std::string& machine_model() const { return machine_model_; }
+  const std::string& brand_code() const { return brand_code_; }
 
   void set_last_policy_timestamp(const base::Time& timestamp) {
     last_policy_timestamp_ = timestamp;
@@ -266,6 +324,9 @@ class POLICY_EXPORT CloudPolicyClient {
 
   const std::string& dm_token() const { return dm_token_; }
   const std::string& client_id() const { return client_id_; }
+  const base::DictionaryValue* configuration_seed() const {
+    return configuration_seed_.get();
+  };
 
   // The device mode as received in the registration request.
   DeviceMode device_mode() const { return device_mode_; }
@@ -299,10 +360,13 @@ class POLICY_EXPORT CloudPolicyClient {
     return fetched_invalidation_version_;
   }
 
-  scoped_refptr<net::URLRequestContextGetter> GetRequestContext();
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory();
 
   // Returns the number of active requests.
   int GetActiveRequestCountForTest() const;
+
+  void SetURLLoaderFactoryForTesting(
+      scoped_refptr<network::SharedURLLoaderFactory> factory);
 
  protected:
   // A set of (policy type, settings entity ID) pairs to fetch.
@@ -357,8 +421,8 @@ class POLICY_EXPORT CloudPolicyClient {
       int net_error,
       const enterprise_management::DeviceManagementResponse& response);
 
-  // Callback for status upload requests.
-  void OnStatusUploadCompleted(
+  // Callback for several types of status/report upload requests.
+  void OnReportUploadCompleted(
       const DeviceManagementRequestJob* job,
       const StatusCallback& callback,
       DeviceManagementStatus status,
@@ -368,7 +432,7 @@ class POLICY_EXPORT CloudPolicyClient {
   // Callback for remote command fetch requests.
   void OnRemoteCommandsFetched(
       const DeviceManagementRequestJob* job,
-      const RemoteCommandCallback& callback,
+      RemoteCommandCallback callback,
       DeviceManagementStatus status,
       int net_error,
       const enterprise_management::DeviceManagementResponse& response);
@@ -417,16 +481,21 @@ class POLICY_EXPORT CloudPolicyClient {
   // Data necessary for constructing policy requests.
   const std::string machine_id_;
   const std::string machine_model_;
+  const std::string brand_code_;
   PolicyTypeSet types_to_fetch_;
   std::vector<std::string> state_keys_to_upload_;
 
   std::string dm_token_;
+  std::unique_ptr<base::DictionaryValue> configuration_seed_;
   DeviceMode device_mode_ = DEVICE_MODE_NOT_SET;
   std::string client_id_;
   base::Time last_policy_timestamp_;
   int public_key_version_ = -1;
   bool public_key_version_valid_ = false;
   std::string robot_api_auth_code_;
+  // Device DMToken for affiliated user policy requests.
+  // Retrieved from |device_dm_token_callback_| on registration.
+  std::string device_dm_token_;
 
   // Information for the latest policy invalidation received.
   int64_t invalidation_version_ = 0;
@@ -449,12 +518,19 @@ class POLICY_EXPORT CloudPolicyClient {
   // silently cancelled if Unregister() is called.
   std::vector<std::unique_ptr<DeviceManagementRequestJob>> request_jobs_;
 
+  // Only one outstanding app push-install report upload is allowed, and it must
+  // be accessible so that it can be canceled.
+  DeviceManagementRequestJob* app_install_report_request_job_ = nullptr;
+
   // The policy responses returned by the last policy fetch operation.
   ResponseMap responses_;
   DeviceManagementStatus status_ = DM_STATUS_SUCCESS;
 
-  base::ObserverList<Observer, true> observers_;
-  scoped_refptr<net::URLRequestContextGetter> request_context_;
+  DeviceDMTokenCallback device_dm_token_callback_;
+
+  base::ObserverList<Observer, true>::Unchecked observers_;
+
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
  private:
   void SetClientId(const std::string& client_id);

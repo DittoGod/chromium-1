@@ -15,7 +15,7 @@
 #include "content/public/common/referrer.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/web_contents_tester.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
@@ -57,6 +57,11 @@ void PageLoadMetricsObserverTestHarness::SimulateTimingAndMetadataUpdate(
     const mojom::PageLoadTiming& timing,
     const mojom::PageLoadMetadata& metadata) {
   tester_->SimulateTimingAndMetadataUpdate(timing, metadata);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulatePageLoadDataUseUpdate(
+    const mojom::PageLoadDataUse& data_use) {
+  tester_->SimulatePageLoadDataUseUpdate(data_use);
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateFeaturesUpdate(

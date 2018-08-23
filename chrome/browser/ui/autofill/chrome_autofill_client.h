@@ -21,6 +21,8 @@
 #include "content/public/browser/web_contents_user_data.h"
 
 #if !defined(OS_ANDROID)
+#include "components/autofill/core/browser/ui/local_card_migration_bubble_controller.h"
+#include "components/autofill/core/browser/ui/local_card_migration_dialog_controller.h"
 #include "components/autofill/core/browser/ui/save_card_bubble_controller.h"
 #include "components/zoom/zoom_observer.h"
 #endif  // !defined(OS_ANDROID)
@@ -51,22 +53,30 @@ class ChromeAutofillClient
   scoped_refptr<AutofillWebDataService> GetDatabase() override;
   PrefService* GetPrefs() override;
   syncer::SyncService* GetSyncService() override;
-  IdentityProvider* GetIdentityProvider() override;
+  identity::IdentityManager* GetIdentityManager() override;
   ukm::UkmRecorder* GetUkmRecorder() override;
+  ukm::SourceId GetUkmSourceId() override;
   AddressNormalizer* GetAddressNormalizer() override;
-  SaveCardBubbleController* GetSaveCardBubbleController() override;
-  void ShowAutofillSettings() override;
+  security_state::SecurityLevel GetSecurityLevelForUmaHistograms() override;
+  void ShowAutofillSettings(bool show_credit_card_settings) override;
   void ShowUnmaskPrompt(const CreditCard& card,
                         UnmaskCardReason reason,
                         base::WeakPtr<CardUnmaskDelegate> delegate) override;
   void OnUnmaskVerificationResult(PaymentsRpcResult result) override;
+  void ShowLocalCardMigrationDialog(
+      base::OnceClosure show_migration_dialog_closure) override;
+  void ConfirmMigrateLocalCardToCloud(
+      std::vector<MigratableCreditCard>& migratable_credit_cards,
+      base::OnceClosure start_migrating_cards_closure) override;
+  void ConfirmSaveAutofillProfile(const AutofillProfile& profile,
+                                  base::OnceClosure callback) override;
   void ConfirmSaveCreditCardLocally(const CreditCard& card,
                                     const base::Closure& callback) override;
   void ConfirmSaveCreditCardToCloud(
       const CreditCard& card,
       std::unique_ptr<base::DictionaryValue> legal_message,
-      bool should_cvc_be_requested,
-      const base::Closure& callback) override;
+      bool should_request_name_from_user,
+      base::OnceCallback<void(const base::string16&)> callback) override;
   void ConfirmCreditCardFillAssist(const CreditCard& card,
                                    const base::Closure& callback) override;
   void LoadRiskData(
@@ -77,6 +87,7 @@ class ChromeAutofillClient
       const gfx::RectF& element_bounds,
       base::i18n::TextDirection text_direction,
       const std::vector<autofill::Suggestion>& suggestions,
+      bool autoselect_first_suggestion,
       base::WeakPtr<AutofillPopupDelegate> delegate) override;
   void UpdateAutofillPopupDataListValues(
       const std::vector<base::string16>& values,
@@ -92,6 +103,7 @@ class ChromeAutofillClient
   bool IsContextSecure() override;
   bool ShouldShowSigninPromo() override;
   bool IsAutofillSupported() override;
+  bool AreServerCardsSupported() override;
   void ExecuteCommand(int id) override;
 
   // content::WebContentsObserver implementation.
@@ -119,9 +131,6 @@ class ChromeAutofillClient
 
   base::WeakPtr<AutofillPopupControllerImpl> popup_controller_;
   CardUnmaskPromptControllerImpl unmask_controller_;
-
-  // The identity provider, used for Payments integration.
-  std::unique_ptr<IdentityProvider> identity_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeAutofillClient);
 };

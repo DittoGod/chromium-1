@@ -9,7 +9,7 @@
 #include "ash/ash_export.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "ash/wallpaper/wallpaper_delegate.h"
+#include "ash/wallpaper/wallpaper_controller.h"
 #include "base/scoped_observer.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
@@ -178,6 +178,17 @@ bool WallpaperWidgetController::IsAnimating() const {
   return animating_widget_.get();
 }
 
+void WallpaperWidgetController::EndPendingAnimation() {
+  if (!IsAnimating())
+    return;
+  animating_widget_->StopAnimating();
+}
+
+void WallpaperWidgetController::AddAnimationEndCallback(
+    base::OnceClosure callback) {
+  animation_end_callbacks_.emplace_back(std::move(callback));
+}
+
 void WallpaperWidgetController::SetWallpaperWidget(views::Widget* widget,
                                                    float blur_sigma) {
   DCHECK(widget);
@@ -227,8 +238,10 @@ void WallpaperWidgetController::WidgetHandlerReset(WidgetHandler* widget) {
 }
 
 void WallpaperWidgetController::WidgetFinishedAnimating(WidgetHandler* widget) {
-  if (widget == animating_widget_.get())
-    SetAnimatingWidgetAsActive();
+  if (widget != animating_widget_.get())
+    return;
+
+  SetAnimatingWidgetAsActive();
 }
 
 void WallpaperWidgetController::SetAnimatingWidgetAsActive() {
@@ -241,7 +254,15 @@ void WallpaperWidgetController::SetAnimatingWidgetAsActive() {
     std::move(wallpaper_set_callback_).Run();
 
   // Notify observers that animation finished.
-  Shell::Get()->wallpaper_delegate()->OnWallpaperAnimationFinished();
+  RunAnimationEndCallbacks();
+  Shell::Get()->wallpaper_controller()->OnWallpaperAnimationFinished();
+}
+
+void WallpaperWidgetController::RunAnimationEndCallbacks() {
+  std::list<base::OnceClosure> callbacks;
+  animation_end_callbacks_.swap(callbacks);
+  for (auto& callback : callbacks)
+    std::move(callback).Run();
 }
 
 }  // namespace ash

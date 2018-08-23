@@ -14,20 +14,22 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/appcache/appcache_interceptor.h"
 #include "content/browser/appcache/chrome_appcache_service.h"
 #include "content/browser/background_fetch/background_fetch_context.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
+#include "content/browser/code_cache/generated_code_cache_context.h"
+#include "content/browser/cookie_store/cookie_store_context.h"
 #include "content/browser/devtools/devtools_url_request_interceptor.h"
 #include "content/browser/fileapi/browser_file_system_helper.h"
+#include "content/browser/loader/prefetch_url_loader_service.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/resource_context_impl.h"
 #include "content/browser/service_worker/service_worker_request_handler.h"
@@ -37,17 +39,19 @@
 #include "content/browser/streams/stream_registry.h"
 #include "content/browser/streams/stream_url_request_job.h"
 #include "content/browser/webui/url_data_manager_backend.h"
+#include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_constants.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/origin_trial_policy.h"
 #include "content/public/common/url_constants.h"
 #include "crypto/sha2.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/features.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "storage/browser/blob/blob_url_request_job_factory.h"
 #include "storage/browser/fileapi/file_system_url_request_job_factory.h"
@@ -367,7 +371,7 @@ StoragePartitionImplMap::StoragePartitionImplMap(
     BrowserContext* browser_context)
     : browser_context_(browser_context),
       file_access_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND})),
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT})),
       resource_context_initialized_(false) {}
 
 StoragePartitionImplMap::~StoragePartitionImplMap() {
@@ -394,7 +398,7 @@ StoragePartitionImpl* StoragePartitionImplMap::Get(
 
   std::unique_ptr<StoragePartitionImpl> partition_ptr(
       StoragePartitionImpl::Create(browser_context_, in_memory,
-                                   relative_partition_path));
+                                   relative_partition_path, partition_domain));
   StoragePartitionImpl* partition = partition_ptr.get();
   partitions_[partition_config] = std::move(partition_ptr);
 
@@ -402,19 +406,13 @@ StoragePartitionImpl* StoragePartitionImplMap::Get(
       ChromeBlobStorageContext::GetFor(browser_context_);
   StreamContext* stream_context = StreamContext::GetFor(browser_context_);
   ProtocolHandlerMap protocol_handlers;
-  protocol_handlers[url::kBlobScheme] =
-      linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
-          new BlobProtocolHandler(blob_storage_context, stream_context));
-  protocol_handlers[url::kFileSystemScheme] =
-      linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
-          CreateFileSystemProtocolHandler(partition_domain,
-                                          partition->GetFileSystemContext()));
+  protocol_handlers[url::kBlobScheme] = std::make_unique<BlobProtocolHandler>(
+      blob_storage_context, stream_context);
+  protocol_handlers[url::kFileSystemScheme] = CreateFileSystemProtocolHandler(
+      partition_domain, partition->GetFileSystemContext());
   for (const auto& scheme : URLDataManagerBackend::GetWebUISchemes()) {
-    protocol_handlers[scheme] =
-        linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
-            URLDataManagerBackend::CreateProtocolHandler(
-                browser_context_->GetResourceContext(), blob_storage_context)
-                .release());
+    protocol_handlers[scheme] = URLDataManagerBackend::CreateProtocolHandler(
+        browser_context_->GetResourceContext(), blob_storage_context);
   }
 
   URLRequestInterceptorScopedVector request_interceptors;
@@ -440,6 +438,18 @@ StoragePartitionImpl* StoragePartitionImplMap::Get(
       browser_context_->CreateMediaRequestContext() :
       browser_context_->CreateMediaRequestContextForStoragePartition(
           partition->GetPath(), in_memory));
+  partition->GetCookieStoreContext()->ListenToCookieChanges(
+      partition->GetNetworkContext(), base::DoNothing());
+
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    // This needs to happen after SetURLRequestContext() since we need this
+    // code path only for non-NetworkService cases where NetworkContext needs to
+    // be initialized using |url_request_context_|, which is initialized by
+    // SetURLRequestContext().
+    DCHECK(partition->url_loader_factory_getter());
+    DCHECK(partition->url_request_context_);
+    partition->url_loader_factory_getter()->HandleFactoryRequests();
+  }
 
   PostCreateInitialization(partition, in_memory);
 
@@ -475,11 +485,9 @@ void StoragePartitionImplMap::AsyncObliterate(
       it->second->ClearData(
           // All except shader cache.
           ~StoragePartition::REMOVE_DATA_MASK_SHADER_CACHE,
-          StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL,
-          GURL(),
-          StoragePartition::OriginMatcherFunction(),
-          base::Time(), base::Time::Max(),
-          base::Bind(&base::DoNothing));
+          StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL, GURL(),
+          StoragePartition::OriginMatcherFunction(), base::Time(),
+          base::Time::Max(), base::DoNothing());
       if (!config.in_memory) {
         paths_to_keep.push_back(it->second->GetPath());
       }
@@ -494,7 +502,7 @@ void StoragePartitionImplMap::AsyncObliterate(
       GetStoragePartitionDomainPath(partition_domain));
 
   base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&BlockingObliteratePath, browser_context_->GetPath(),
                      domain_root, paths_to_keep,
                      base::ThreadTaskRunnerHandle::Get(), on_gc_required));
@@ -520,7 +528,7 @@ void StoragePartitionImplMap::GarbageCollect(
   file_access_runner_->PostTaskAndReply(
       FROM_HERE,
       base::BindOnce(&BlockingGarbageCollect, storage_root, file_access_runner_,
-                     base::Passed(&active_paths)),
+                     std::move(active_paths)),
       done);
 }
 
@@ -547,7 +555,7 @@ void StoragePartitionImplMap::PostCreateInitialization(
   }
 
   // Check first to avoid memory leak in unittests.
-  if (BrowserThread::IsMessageLoopValid(BrowserThread::IO)) {
+  if (BrowserThread::IsThreadInitialized(BrowserThread::IO)) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
         base::BindOnce(
@@ -572,6 +580,18 @@ void StoragePartitionImplMap::PostCreateInitialization(
         base::BindOnce(&ServiceWorkerContextWrapper::InitializeResourceContext,
                        partition->GetServiceWorkerContext(),
                        browser_context_->GetResourceContext()));
+
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&PrefetchURLLoaderService::InitializeResourceContext,
+                       partition->GetPrefetchURLLoaderService(),
+                       browser_context_->GetResourceContext(),
+                       base::RetainedRef(partition->GetURLRequestContext())));
+
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&BackgroundFetchContext::InitializeOnIOThread,
+                       partition->GetBackgroundFetchContext()));
 
     // We do not call InitializeURLRequestContext() for media contexts because,
     // other than the HTTP cache, the media contexts share the same backing

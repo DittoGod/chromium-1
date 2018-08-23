@@ -14,7 +14,7 @@
 #import "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #import "ios/chrome/browser/crash_report/breakpad_helper.h"
 
@@ -47,7 +47,7 @@ void UpdateBreakpadMemoryValues() {
 void AsynchronousFreeMemoryMonitor() {
   UpdateBreakpadMemoryValues();
   base::PostDelayedTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&AsynchronousFreeMemoryMonitor),
       base::TimeDelta::FromSeconds(kMemoryMonitorDelayInSeconds));
 }
@@ -55,6 +55,6 @@ void AsynchronousFreeMemoryMonitor() {
 
 void StartFreeMemoryMonitor() {
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND},
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
                            base::BindOnce(&AsynchronousFreeMemoryMonitor));
 }

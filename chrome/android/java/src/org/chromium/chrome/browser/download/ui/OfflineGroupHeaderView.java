@@ -7,10 +7,10 @@ package org.chromium.chrome.browser.download.ui;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.support.v7.content.res.AppCompatResources;
 import android.text.format.DateUtils;
 import android.text.format.Formatter;
 import android.util.AttributeSet;
-import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -44,7 +44,6 @@ public class OfflineGroupHeaderView
     private TextView mDescriptionTextView;
     private ImageView mExpandImage;
     private TintedImageView mIconImageView;
-    private View mNewBadgeView;
 
     public OfflineGroupHeaderView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -55,8 +54,8 @@ public class OfflineGroupHeaderView
         mIconBackgroundResId = R.drawable.list_item_icon_modern_bg;
 
         if (FeatureUtilities.isChromeModernDesignEnabled()) {
-            mIconForegroundColorList = ApiCompatibilityUtils.getColorStateList(
-                    context.getResources(), R.color.dark_mode_tint);
+            mIconForegroundColorList =
+                    AppCompatResources.getColorStateList(context, R.color.dark_mode_tint);
         } else {
             mIconForegroundColorList = DownloadUtils.getIconForegroundColorList(context);
         }
@@ -69,7 +68,6 @@ public class OfflineGroupHeaderView
         mIconImageView = (TintedImageView) findViewById(R.id.icon_view);
         mDescriptionTextView = (TextView) findViewById(R.id.description);
         mExpandImage = (ImageView) findViewById(R.id.expand_icon);
-        mNewBadgeView = findViewById(R.id.new_badge);
     }
 
     /**
@@ -112,14 +110,14 @@ public class OfflineGroupHeaderView
         updateExpandIcon(header.isExpanded());
         setChecked(mSelectionDelegate.isHeaderSelected(header));
         updateCheckIcon(isChecked());
-        mNewBadgeView.setVisibility(header.shouldShowRecentBadge() ? View.VISIBLE : View.GONE);
     }
 
     private void updateExpandIcon(boolean expanded) {
-        mExpandImage.setImageResource(expanded ? R.drawable.ic_collapsed : R.drawable.ic_expanded);
+        mExpandImage.setImageResource(expanded ? R.drawable.ic_expand_less_black_24dp
+                                               : R.drawable.ic_expand_more_black_24dp);
         mExpandImage.setContentDescription(
-                getResources().getString(expanded ? R.string.accessibility_collapse_offline_pages
-                                                  : R.string.accessibility_expand_offline_pages));
+                getResources().getString(expanded ? R.string.accessibility_collapse_section_header
+                                                  : R.string.accessibility_expand_section_header));
     }
 
     private void updateCheckIcon(boolean checked) {

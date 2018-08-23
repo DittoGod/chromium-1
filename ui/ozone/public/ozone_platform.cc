@@ -7,9 +7,11 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
+#include "ui/display/screen.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/ozone/platform_object.h"
 #include "ui/ozone/platform_selection.h"
+#include "ui/ozone/public/platform_screen.h"
 
 namespace ui {
 
@@ -20,12 +22,31 @@ bool g_platform_initialized_gpu = false;
 base::LazyInstance<base::OnceCallback<void(OzonePlatform*)>>::Leaky
     instance_callback = LAZY_INSTANCE_INITIALIZER;
 
+const OzonePlatform::PlatformProperties kDefaultPlatformProperties;
+
 base::Lock& GetOzoneInstanceLock() {
   static base::Lock lock;
   return lock;
 }
 
 }  // namespace
+
+OzonePlatform::PlatformProperties::PlatformProperties() = default;
+
+OzonePlatform::PlatformProperties::PlatformProperties(
+    bool needs_request,
+    bool custom_frame_default,
+    bool can_use_system_title_bar,
+    std::vector<gfx::BufferFormat> buffer_formats)
+    : needs_view_owner_request(needs_request),
+      custom_frame_pref_default(custom_frame_default),
+      use_system_title_bar(can_use_system_title_bar),
+      supported_buffer_formats(buffer_formats) {}
+
+OzonePlatform::PlatformProperties::~PlatformProperties() = default;
+
+OzonePlatform::PlatformProperties::PlatformProperties(
+    const PlatformProperties& other) = default;
 
 OzonePlatform::OzonePlatform() {
   GetOzoneInstanceLock().AssertAcquired();
@@ -60,14 +81,6 @@ void OzonePlatform::InitializeForGPU(const InitParams& args) {
   instance_->InitializeGPU(args);
   if (!args.single_process && !instance_callback.Get().is_null())
     std::move(instance_callback.Get()).Run(instance_);
-}
-
-// static
-void OzonePlatform::Shutdown() {
-  base::AutoLock lock(GetOzoneInstanceLock());
-  auto* tmp = instance_;
-  instance_ = nullptr;
-  delete tmp;
 }
 
 // static
@@ -117,13 +130,20 @@ IPC::MessageFilter* OzonePlatform::GetGpuMessageFilter() {
   return nullptr;
 }
 
+std::unique_ptr<PlatformScreen> OzonePlatform::CreateScreen() {
+  return nullptr;
+}
+
+const OzonePlatform::PlatformProperties&
+OzonePlatform::GetPlatformProperties() {
+  return kDefaultPlatformProperties;
+}
+
 base::MessageLoop::Type OzonePlatform::GetMessageLoopTypeForGpu() {
   return base::MessageLoop::TYPE_DEFAULT;
 }
 
-void OzonePlatform::AddInterfaces(
-    service_manager::BinderRegistryWithArgs<
-        const service_manager::BindSourceInfo&>* registry) {}
+void OzonePlatform::AddInterfaces(service_manager::BinderRegistry* registry) {}
 
 void OzonePlatform::AfterSandboxEntry() {}
 

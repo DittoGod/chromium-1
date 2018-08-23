@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -45,6 +47,7 @@ class SiteIsolationPolicyBrowserTest : public InProcessBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(SiteIsolationPolicyBrowserTest);
 };
 
+template <bool policy_value>
 class SitePerProcessPolicyBrowserTest : public SiteIsolationPolicyBrowserTest {
  protected:
   SitePerProcessPolicyBrowserTest() {}
@@ -62,7 +65,7 @@ class SitePerProcessPolicyBrowserTest : public SiteIsolationPolicyBrowserTest {
     policy::PolicyMap values;
     values.Set(policy::key::kSitePerProcess, policy::POLICY_LEVEL_MANDATORY,
                policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-               std::make_unique<base::Value>(true), nullptr);
+               std::make_unique<base::Value>(policy_value), nullptr);
     provider_.UpdateChromePolicy(values);
 
     // Append the automation switch which should disable Site Isolation when the
@@ -77,6 +80,11 @@ class SitePerProcessPolicyBrowserTest : public SiteIsolationPolicyBrowserTest {
  private:
   DISALLOW_COPY_AND_ASSIGN(SitePerProcessPolicyBrowserTest);
 };
+
+typedef SitePerProcessPolicyBrowserTest<true>
+    SitePerProcessPolicyBrowserTestEnabled;
+typedef SitePerProcessPolicyBrowserTest<false>
+    SitePerProcessPolicyBrowserTestDisabled;
 
 class IsolateOriginsPolicyBrowserTest : public SiteIsolationPolicyBrowserTest {
  protected:
@@ -106,19 +114,11 @@ class IsolateOriginsPolicyBrowserTest : public SiteIsolationPolicyBrowserTest {
 };
 
 class WebDriverSitePerProcessPolicyBrowserTest
-    : public SitePerProcessPolicyBrowserTest {
+    : public SitePerProcessPolicyBrowserTestEnabled {
  protected:
-  WebDriverSitePerProcessPolicyBrowserTest()
-      : are_sites_isolated_for_testing_(false) {}
+  WebDriverSitePerProcessPolicyBrowserTest() = default;
 
   void SetUpInProcessBrowserTestFixture() override {
-    // First take note if tests are running in site isolated environment as this
-    // will change the outcome of the test. We can't just call this method after
-    // the call to the base setup method because setting the Site Isolation
-    // policy is indistinguishable from setting the the command line flag
-    // directly.
-    are_sites_isolated_for_testing_ = content::AreAllSitesIsolatedForTesting();
-
     // We setup the policy here, because the policy must be 'live' before the
     // renderer is created, since the value for this policy is passed to the
     // renderer via a command-line. Setting the policy in the test itself or in
@@ -134,13 +134,24 @@ class WebDriverSitePerProcessPolicyBrowserTest
     provider_.UpdateChromePolicy(values);
   }
 
-  bool are_sites_isolated_for_testing_;
-
  private:
   DISALLOW_COPY_AND_ASSIGN(WebDriverSitePerProcessPolicyBrowserTest);
 };
 
-IN_PROC_BROWSER_TEST_F(SitePerProcessPolicyBrowserTest, Simple) {
+// Ensure that --disable-site-isolation-trials does not override policies.
+class NoOverrideSitePerProcessPolicyBrowserTest
+    : public SitePerProcessPolicyBrowserTestEnabled {
+ protected:
+  NoOverrideSitePerProcessPolicyBrowserTest() {}
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitch(switches::kDisableSiteIsolationTrials);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(NoOverrideSitePerProcessPolicyBrowserTest);
+};
+
+IN_PROC_BROWSER_TEST_F(SitePerProcessPolicyBrowserTestEnabled, Simple) {
   Expectations expectations[] = {
       {"https://foo.com/noodles.html", true},
       {"http://foo.com/", true},
@@ -165,8 +176,56 @@ IN_PROC_BROWSER_TEST_F(IsolateOriginsPolicyBrowserTest, Simple) {
 
 IN_PROC_BROWSER_TEST_F(WebDriverSitePerProcessPolicyBrowserTest, Simple) {
   Expectations expectations[] = {
-      {"https://foo.com/noodles.html", are_sites_isolated_for_testing_},
-      {"http://example.org/pumpkins.html", are_sites_isolated_for_testing_},
+      {"https://foo.com/noodles.html", true},
+      {"http://example.org/pumpkins.html", true},
   };
   CheckExpectations(expectations, arraysize(expectations));
+}
+
+IN_PROC_BROWSER_TEST_F(NoOverrideSitePerProcessPolicyBrowserTest, Simple) {
+  Expectations expectations[] = {
+      {"https://foo.com/noodles.html", true},
+      {"http://example.org/pumpkins.html", true},
+  };
+  CheckExpectations(expectations, arraysize(expectations));
+}
+
+class SitePerProcessPolicyBrowserTestFieldTrialTest
+    : public SitePerProcessPolicyBrowserTestDisabled {
+ public:
+  SitePerProcessPolicyBrowserTestFieldTrialTest() {
+    scoped_feature_list_.InitAndEnableFeature(features::kSitePerProcess);
+  }
+  ~SitePerProcessPolicyBrowserTestFieldTrialTest() override {}
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(SitePerProcessPolicyBrowserTestFieldTrialTest);
+};
+
+IN_PROC_BROWSER_TEST_F(SitePerProcessPolicyBrowserTestFieldTrialTest, Simple) {
+  // Skip this test if all sites are isolated.
+  if (content::AreAllSitesIsolatedForTesting())
+    return;
+  ASSERT_TRUE(base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableSiteIsolationTrials));
+  Expectations expectations[] = {
+      {"https://foo.com/noodles.html", false},
+      {"http://example.org/pumpkins.html", false},
+  };
+  CheckExpectations(expectations, arraysize(expectations));
+}
+
+// https://crbug.com/833423: The test is incompatible with the
+// not_site_per_process_browser_tests step on the trybots.
+#if defined(OS_LINUX)
+#define MAYBE_NoPolicyNoTrialsFlags DISABLED_NoPolicyNoTrialsFlags
+#else
+#define MAYBE_NoPolicyNoTrialsFlags NoPolicyNoTrialsFlags
+#endif
+IN_PROC_BROWSER_TEST_F(SiteIsolationPolicyBrowserTest,
+                       MAYBE_NoPolicyNoTrialsFlags) {
+  ASSERT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableSiteIsolationTrials));
 }

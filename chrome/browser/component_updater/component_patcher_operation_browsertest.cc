@@ -13,11 +13,11 @@
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "build/build_config.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "components/patch_service/public/cpp/patch.h"
+#include "components/services/patch/public/cpp/patch.h"
 #include "components/update_client/component_patcher_operation.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/service_manager_connection.h"
@@ -28,7 +28,7 @@
 namespace {
 
 constexpr base::TaskTraits kTaskTraits = {
-    base::MayBlock(), base::TaskPriority::BACKGROUND,
+    base::MayBlock(), base::TaskPriority::BEST_EFFORT,
     base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN};
 
 }  // namespace
@@ -43,7 +43,7 @@ class PatchTest : public InProcessBrowserTest {
 
   static base::FilePath TestFile(const char* name) {
     base::FilePath path;
-    PathService::Get(base::DIR_SOURCE_ROOT, &path);
+    base::PathService::Get(base::DIR_SOURCE_ROOT, &path);
     return path.AppendASCII("components")
         .AppendASCII("test")
         .AppendASCII("data")
@@ -102,7 +102,7 @@ class PatchTest : public InProcessBrowserTest {
         ->PostTask(
             FROM_HERE,
             base::BindOnce(&PatchTest::PatchAsyncSequencedTaskRunner,
-                           base::Unretained(this), base::Passed(&connector),
+                           base::Unretained(this), std::move(connector),
                            operation, input, patch, output, expected_result));
     run_loop.Run();
     EXPECT_TRUE(done_called_);

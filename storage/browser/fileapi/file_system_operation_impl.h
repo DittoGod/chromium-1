@@ -19,7 +19,7 @@
 #include "storage/browser/fileapi/file_system_url.h"
 #include "storage/browser/fileapi/file_writer_delegate.h"
 #include "storage/browser/storage_browser_export.h"
-#include "third_party/WebKit/common/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 
 namespace storage {
 
@@ -64,7 +64,7 @@ class STORAGE_EXPORT FileSystemOperationImpl : public FileSystemOperation {
               const StatusCallback& callback) override;
   void Write(const FileSystemURL& url,
              std::unique_ptr<FileWriterDelegate> writer_delegate,
-             std::unique_ptr<net::URLRequest> blob_request,
+             std::unique_ptr<BlobReader> blob_reader,
              const WriteCallback& callback) override;
   void Truncate(const FileSystemURL& url,
                 int64_t length,
@@ -78,7 +78,7 @@ class STORAGE_EXPORT FileSystemOperationImpl : public FileSystemOperation {
                 const OpenFileCallback& callback) override;
   void Cancel(const StatusCallback& cancel_callback) override;
   void CreateSnapshotFile(const FileSystemURL& path,
-                          const SnapshotFileCallback& callback) override;
+                          SnapshotFileCallback callback) override;
   void CopyInForeignFile(const base::FilePath& src_local_disk_path,
                          const FileSystemURL& dest_url,
                          const StatusCallback& callback) override;

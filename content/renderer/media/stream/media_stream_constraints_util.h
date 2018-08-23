@@ -11,16 +11,19 @@
 #include "content/common/content_export.h"
 #include "content/renderer/media/stream/media_stream_audio_processor_options.h"
 #include "content/renderer/media/stream/video_track_adapter.h"
+#include "media/base/video_facing.h"
 #include "media/capture/video_capture_types.h"
-#include "third_party/WebKit/public/platform/WebMediaConstraints.h"
-#include "third_party/WebKit/public/platform/modules/mediastream/media_devices.mojom.h"
-#include "third_party/webrtc/api/optional.h"
+#include "third_party/blink/public/platform/modules/mediastream/media_devices.mojom.h"
+#include "third_party/blink/public/platform/web_media_constraints.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
 
 namespace content {
 
+namespace media_constraints {
 class ResolutionSet;
 template <typename T>
 class NumericRangeSet;
+}  // namespace media_constraints
 
 // This class represents the output the SelectSettings algorithm for video
 // constraints (see https://w3c.github.io/mediacapture-main/#dfn-selectsettings)
@@ -285,10 +288,6 @@ bool CONTENT_EXPORT GetConstraintValueAsString(
     const blink::StringConstraint blink::WebMediaTrackConstraintSet::*picker,
     std::string* value);
 
-rtc::Optional<bool> ConstraintToOptional(
-    const blink::WebMediaConstraints& constraints,
-    const blink::BooleanConstraint blink::WebMediaTrackConstraintSet::*picker);
-
 template <typename ConstraintType>
 bool ConstraintHasMax(const ConstraintType& constraint) {
   return constraint.HasMax() || constraint.HasExact();
@@ -353,8 +352,8 @@ bool IsDeviceCapture(const blink::WebMediaConstraints& constraints);
 // |frame_rate_set| are empty.
 VideoTrackAdapterSettings CONTENT_EXPORT SelectVideoTrackAdapterSettings(
     const blink::WebMediaTrackConstraintSet& basic_constraint_set,
-    const ResolutionSet& resolution_set,
-    const NumericRangeSet<double>& frame_rate_set,
+    const media_constraints::ResolutionSet& resolution_set,
+    const media_constraints::NumericRangeSet<double>& frame_rate_set,
     const media::VideoCaptureFormat& source_format);
 
 // Generic distance function between two values for numeric constraints. Based
@@ -367,6 +366,16 @@ double NumericConstraintFitnessDistance(double value1, double value2);
 double StringConstraintFitnessDistance(
     const blink::WebString& value,
     const blink::StringConstraint& constraint);
+
+// This method computes capabilities for a video source based on the given
+// |formats|. |facing_mode| is valid only in case of video device capture.
+blink::WebMediaStreamSource::Capabilities CONTENT_EXPORT
+ComputeCapabilitiesForVideoSource(
+    const blink::WebString& device_id,
+    const media::VideoCaptureFormats& formats,
+    media::VideoFacingMode facing_mode,
+    bool is_device_capture,
+    const base::Optional<std::string>& group_id = base::nullopt);
 
 }  // namespace content
 

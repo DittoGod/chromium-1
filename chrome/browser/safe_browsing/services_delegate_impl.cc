@@ -13,6 +13,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "components/safe_browsing/db/v4_local_database_manager.h"
 #include "content/public/browser/browser_thread.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/preferences/public/mojom/tracked_preference_validation_delegate.mojom.h"
 
 namespace safe_browsing {
@@ -45,12 +46,12 @@ ServicesDelegateImpl::~ServicesDelegateImpl() {
 }
 
 void ServicesDelegateImpl::InitializeCsdService(
-    net::URLRequestContextGetter* context_getter) {
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 #if defined(SAFE_BROWSING_CSD)
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableClientSidePhishingDetection)) {
-    csd_service_.reset(ClientSideDetectionService::Create(context_getter));
+    csd_service_.reset(ClientSideDetectionService::Create(url_loader_factory));
   }
 #endif  // defined(SAFE_BROWSING_CSD)
 }
@@ -61,18 +62,18 @@ ServicesDelegateImpl::GetEstimatedExtendedReportingLevel() const {
 }
 
 const scoped_refptr<SafeBrowsingDatabaseManager>&
-ServicesDelegateImpl::v4_local_database_manager() const {
-  return v4_local_database_manager_;
+ServicesDelegateImpl::database_manager() const {
+  return database_manager_;
 }
 
-void ServicesDelegateImpl::Initialize(bool v4_enabled) {
+void ServicesDelegateImpl::Initialize() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  if (v4_enabled) {
-    v4_local_database_manager_ = V4LocalDatabaseManager::Create(
-        SafeBrowsingService::GetBaseFilename(),
-        base::Bind(&ServicesDelegateImpl::GetEstimatedExtendedReportingLevel,
-                   base::Unretained(this)));
+  if (!database_manager_set_for_tests_) {
+    if (services_creator_ && services_creator_->CanCreateDatabaseManager())
+      database_manager_ = services_creator_->CreateDatabaseManager();
+    else
+      database_manager_ = CreateDatabaseManager();
   }
 
   download_service_.reset(
@@ -90,6 +91,13 @@ void ServicesDelegateImpl::Initialize(bool v4_enabled) {
        services_creator_->CanCreateResourceRequestDetector())
           ? services_creator_->CreateResourceRequestDetector()
           : CreateResourceRequestDetector());
+}
+
+void ServicesDelegateImpl::SetDatabaseManagerForTest(
+    SafeBrowsingDatabaseManager* database_manager_to_set) {
+  DCHECK(!database_manager_);
+  database_manager_set_for_tests_ = true;
+  database_manager_ = database_manager_to_set;
 }
 
 void ServicesDelegateImpl::ShutdownServices() {
@@ -152,6 +160,15 @@ DownloadProtectionService* ServicesDelegateImpl::GetDownloadService() {
   return download_service_.get();
 }
 
+scoped_refptr<SafeBrowsingDatabaseManager>
+ServicesDelegateImpl::CreateDatabaseManager() {
+  return V4LocalDatabaseManager::Create(
+      SafeBrowsingService::GetBaseFilename(),
+      base::BindRepeating(
+          &ServicesDelegateImpl::GetEstimatedExtendedReportingLevel,
+          base::Unretained(this)));
+}
+
 DownloadProtectionService*
 ServicesDelegateImpl::CreateDownloadProtectionService() {
   return new DownloadProtectionService(safe_browsing_service_);
@@ -168,18 +185,13 @@ ResourceRequestDetector* ServicesDelegateImpl::CreateResourceRequestDetector() {
 }
 
 void ServicesDelegateImpl::StartOnIOThread(
-    net::URLRequestContextGetter* url_request_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const V4ProtocolConfig& v4_config) {
-  if (v4_local_database_manager_.get()) {
-    v4_local_database_manager_->StartOnIOThread(url_request_context_getter,
-                                                v4_config);
-  }
+  database_manager_->StartOnIOThread(url_loader_factory, v4_config);
 }
 
 void ServicesDelegateImpl::StopOnIOThread(bool shutdown) {
-  if (v4_local_database_manager_.get()) {
-    v4_local_database_manager_->StopOnIOThread(shutdown);
-  }
+  database_manager_->StopOnIOThread(shutdown);
 }
 
 void ServicesDelegateImpl::CreatePasswordProtectionService(Profile* profile) {

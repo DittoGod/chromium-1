@@ -6,22 +6,26 @@
 #define CHROME_BROWSER_USB_USB_TAB_HELPER_H_
 
 #include <map>
+#include <memory>
 
 #include "base/macros.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 
-namespace device {
+namespace blink {
 namespace mojom {
-class UsbChooserService;
-class UsbDeviceManager;
+class WebUsbService;
 }
+}  // namespace blink
 
+namespace device {
 namespace usb {
 class PermissionProvider;
 }
-}
+}  // namespace device
+
+class WebUsbChooser;
 
 struct FrameUsbServices;
 
@@ -37,13 +41,9 @@ class UsbTabHelper : public content::WebContentsObserver,
 
   ~UsbTabHelper() override;
 
-  void CreateDeviceManager(
+  void CreateWebUsbService(
       content::RenderFrameHost* render_frame_host,
-      mojo::InterfaceRequest<device::mojom::UsbDeviceManager> request);
-
-  void CreateChooserService(
-      content::RenderFrameHost* render_frame_host,
-      mojo::InterfaceRequest<device::mojom::UsbChooserService> request);
+      mojo::InterfaceRequest<blink::mojom::WebUsbService> request);
 
   void IncrementConnectionCount(content::RenderFrameHost* render_frame_host);
   void DecrementConnectionCount(content::RenderFrameHost* render_frame_host);
@@ -55,6 +55,7 @@ class UsbTabHelper : public content::WebContentsObserver,
 
   // content::WebContentsObserver overrides:
   void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
+  void DidFinishNavigation(content::NavigationHandle* handle) override;
 
   FrameUsbServices* GetFrameUsbService(
       content::RenderFrameHost* render_frame_host);
@@ -62,9 +63,8 @@ class UsbTabHelper : public content::WebContentsObserver,
   base::WeakPtr<device::usb::PermissionProvider> GetPermissionProvider(
       content::RenderFrameHost* render_frame_host);
 
-  void GetChooserService(
-      content::RenderFrameHost* render_frame_host,
-      mojo::InterfaceRequest<device::mojom::UsbChooserService> request);
+  base::WeakPtr<WebUsbChooser> GetUsbChooser(
+      content::RenderFrameHost* render_frame_host);
 
   void NotifyTabStateChanged() const;
 

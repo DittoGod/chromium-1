@@ -22,7 +22,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "ipc/ipc_message_macros.h"
 #include "net/base/net_errors.h"
-#include "third_party/WebKit/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
@@ -37,8 +37,6 @@ using content::WebContentsObserver;
 using error_page::DnsProbeStatus;
 using error_page::DnsProbeStatusToString;
 using ui::PageTransition;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(chrome_browser_net::NetErrorTabHelper);
 
 namespace chrome_browser_net {
 

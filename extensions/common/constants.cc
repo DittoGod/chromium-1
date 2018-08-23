@@ -88,12 +88,17 @@ const int kMainThreadId = 0;
 const char kMimeTypeJpeg[] = "image/jpeg";
 const char kMimeTypePng[] = "image/png";
 
-const int64_t kInvalidServiceWorkerVersionId = -1;
-
 }  // namespace extensions
 
 namespace extension_misc {
 
+#if defined(OS_CHROMEOS) || defined(IS_CHROMECAST)
+// The extension id for the built-in component extension.
+const char kChromeVoxExtensionId[] = "mndnfokpggljbaajbnioimlmbfngpief";
+#else
+// The extension id for the web store extension.
+const char kChromeVoxExtensionId[] = "kgejglhpjiefppelpmljglcjbhoiplfn";
+#endif
 const char kFeedbackExtensionId[] = "gfdkimpbcpahaombhbimeihdjnejgicl";
 const char kPdfExtensionId[] = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
 const char kQuickOfficeComponentExtensionId[] =
@@ -120,5 +125,7 @@ const char kPolicyBlockedScripting[] =
     "This page cannot be scripted due to an ExtensionsSettings policy.";
 
 const int kContentVerificationDefaultBlockSize = 4096;
+
+const logging::LogSeverity kMinimumSeverityToReportError = logging::LOG_WARNING;
 
 }  // namespace extension_misc

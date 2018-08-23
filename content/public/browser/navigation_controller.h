@@ -24,6 +24,7 @@
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/referrer.h"
 #include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
@@ -46,6 +47,9 @@ class WebContents;
 // exactly one NavigationController.
 class NavigationController {
  public:
+  typedef base::RepeatingCallback<bool(const content::NavigationEntry& entry)>
+      DeletionPredicate;
+
   // Load type used in LoadURLParams.
   //
   // A Java counterpart will be generated for this enum.
@@ -90,7 +94,7 @@ class NavigationController {
   };
 
   // Creates a navigation entry and translates the virtual url to a real one.
-  // This is a general call; prefer LoadURL[FromRenderer]/TransferURL below.
+  // This is a general call; prefer LoadURL[WithParams] below.
   // Extra headers are separated by \n.
   CONTENT_EXPORT static std::unique_ptr<NavigationEntry> CreateNavigationEntry(
       const GURL& url,
@@ -98,7 +102,8 @@ class NavigationController {
       ui::PageTransition transition,
       bool is_renderer_initiated,
       const std::string& extra_headers,
-      BrowserContext* browser_context);
+      BrowserContext* browser_context,
+      scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory);
 
   // Extra optional parameters for LoadURLWithParams.
   struct CONTENT_EXPORT LoadURLParams {
@@ -138,11 +143,6 @@ class NavigationController {
     // UserAgentOverrideOption definition.
     UserAgentOverrideOption override_user_agent;
 
-    // Marks the new navigation as being transferred from one RVH to another.
-    // In this case the browser can recycle the old request once the new
-    // renderer wants to navigate. Identifies the request ID of the old request.
-    GlobalRequestID transferred_global_request_id;
-
     // Used in LOAD_TYPE_DATA loads only. Used for specifying a base URL
     // for pages loaded via data URLs.
     GURL base_url_for_data_url;
@@ -175,13 +175,6 @@ class NavigationController {
     // navigated. This is currently only used in tests.
     std::string frame_name;
 
-#if defined(OS_ANDROID)
-    // On Android, for a load triggered by an intent, the time Chrome received
-    // the original intent that prompted the load (in milliseconds active time
-    // since boot).
-    int64_t intent_received_timestamp;
-#endif
-
     // Indicates that the navigation was triggered by a user gesture.
     bool has_user_gesture;
 
@@ -196,10 +189,8 @@ class NavigationController {
     // Indicates whether or not this navigation was initiated via context menu.
     bool started_from_context_menu;
 
-    // If this event was triggered by an anchor element with a download
-    // attribute, |suggested_filename| will contain the (possibly empty) value
-    // of that attribute.
-    base::Optional<std::string> suggested_filename;
+    // Optional URLLoaderFactory to facilitate navigation to a blob URL.
+    scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory;
 
     // This value should only be set for main frame navigations. Subframe
     // navigations will always get their NavigationUIData from
@@ -463,6 +454,13 @@ class NavigationController {
   // |CanPruneAllButLastCommitted| returns true before calling this, or it will
   // crash.
   virtual void PruneAllButLastCommitted() = 0;
+
+  // Removes all navigation entries matching |deletionPredicate| except the last
+  // commited entry.
+  // Callers must ensure |CanPruneAllButLastCommitted| returns true before
+  // calling this, or it will crash.
+  virtual void DeleteNavigationEntries(
+      const DeletionPredicate& deletionPredicate) = 0;
 
   // Clears all screenshots associated with navigation entries in this
   // controller. Useful to reduce memory consumption in low-memory situations.

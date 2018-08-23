@@ -18,6 +18,7 @@
 #include "net/base/proxy_server.h"
 #include "net/proxy_resolution/proxy_info.h"
 #include "net/proxy_resolution/proxy_resolver.h"
+#include "url/gurl.h"
 
 #if defined(OS_IOS)
 #include <CFNetwork/CFProxySupport.h>
@@ -183,25 +184,23 @@ void RunLoopObserverCallBackFunc(CFRunLoopObserverRef observer,
 #pragma mark - ProxyResolverMac
 class ProxyResolverMac : public ProxyResolver {
  public:
-  explicit ProxyResolverMac(
-      const scoped_refptr<ProxyResolverScriptData>& script_data);
+  explicit ProxyResolverMac(const scoped_refptr<PacFileData>& script_data);
   ~ProxyResolverMac() override;
 
   // ProxyResolver methods:
   int GetProxyForURL(const GURL& url,
                      ProxyInfo* results,
-                     const CompletionCallback& callback,
+                     CompletionOnceCallback callback,
                      std::unique_ptr<Request>* request,
                      const NetLogWithSource& net_log) override;
 
  private:
-  const scoped_refptr<ProxyResolverScriptData> script_data_;
+  const scoped_refptr<PacFileData> script_data_;
 };
 
 ProxyResolverMac::ProxyResolverMac(
-    const scoped_refptr<ProxyResolverScriptData>& script_data)
-    : script_data_(script_data) {
-}
+    const scoped_refptr<PacFileData>& script_data)
+    : script_data_(script_data) {}
 
 ProxyResolverMac::~ProxyResolverMac() {}
 
@@ -209,17 +208,27 @@ ProxyResolverMac::~ProxyResolverMac() {}
 // inspired by http://developer.apple.com/samplecode/CFProxySupportTool/
 int ProxyResolverMac::GetProxyForURL(const GURL& query_url,
                                      ProxyInfo* results,
-                                     const CompletionCallback& /*callback*/,
+                                     CompletionOnceCallback /*callback*/,
                                      std::unique_ptr<Request>* /*request*/,
                                      const NetLogWithSource& net_log) {
+  // OS X's system resolver does not support WebSocket URLs in proxy.pac, as of
+  // version 10.13.5. See https://crbug.com/862121.
+  GURL mutable_query_url = query_url;
+  if (query_url.SchemeIsWSOrWSS()) {
+    GURL::Replacements replacements;
+    replacements.SetSchemeStr(query_url.SchemeIsCryptographic() ? "https"
+                                                                : "http");
+    mutable_query_url = query_url.ReplaceComponents(replacements);
+  }
+
   base::ScopedCFTypeRef<CFStringRef> query_ref(
-      base::SysUTF8ToCFStringRef(query_url.spec()));
+      base::SysUTF8ToCFStringRef(mutable_query_url.spec()));
   base::ScopedCFTypeRef<CFURLRef> query_url_ref(
       CFURLCreateWithString(kCFAllocatorDefault, query_ref.get(), NULL));
   if (!query_url_ref.get())
     return ERR_FAILED;
   base::ScopedCFTypeRef<CFStringRef> pac_ref(base::SysUTF8ToCFStringRef(
-      script_data_->type() == ProxyResolverScriptData::TYPE_AUTO_DETECT
+      script_data_->type() == PacFileData::TYPE_AUTO_DETECT
           ? std::string()
           : script_data_->url().spec()));
   base::ScopedCFTypeRef<CFURLRef> pac_url_ref(
@@ -345,9 +354,9 @@ ProxyResolverFactoryMac::ProxyResolverFactoryMac()
 }
 
 int ProxyResolverFactoryMac::CreateProxyResolver(
-    const scoped_refptr<ProxyResolverScriptData>& pac_script,
+    const scoped_refptr<PacFileData>& pac_script,
     std::unique_ptr<ProxyResolver>* resolver,
-    const CompletionCallback& callback,
+    CompletionOnceCallback callback,
     std::unique_ptr<Request>* request) {
   resolver->reset(new ProxyResolverMac(pac_script));
   return OK;

@@ -22,10 +22,10 @@
 using content::WebContents;
 using extensions::ResultCatcher;
 
-class IncognitoApiTest : public ExtensionApiTest {
+class IncognitoApiTest : public extensions::ExtensionApiTest {
  public:
   void SetUpOnMainThread() override {
-    ExtensionApiTest::SetUpOnMainThread();
+    extensions::ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(StartEmbeddedTestServer());
   }
@@ -185,7 +185,7 @@ IN_PROC_BROWSER_TEST_F(IncognitoApiTest, DISABLED_IncognitoPopup) {
       embedded_test_server()->GetURL("/extensions/test_file.html"));
 
   // Simulate the incognito's browser action being clicked.
-  BrowserActionTestUtil(incognito_browser).Press(0);
+  BrowserActionTestUtil::Create(incognito_browser)->Press(0);
 
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }

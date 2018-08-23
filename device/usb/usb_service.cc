@@ -8,7 +8,7 @@
 #include "base/feature_list.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/device_event_log/device_event_log.h"
@@ -97,7 +97,7 @@ void UsbService::GetDevices(const GetDevicesCallback& callback) {
   for (const auto& map_entry : devices_)
     devices.push_back(map_entry.second);
   if (task_runner_)
-    task_runner_->PostTask(FROM_HERE, base::Bind(callback, devices));
+    task_runner_->PostTask(FROM_HERE, base::BindOnce(callback, devices));
   else
     callback.Run(devices);
 }

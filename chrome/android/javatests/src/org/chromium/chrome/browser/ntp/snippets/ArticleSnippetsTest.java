@@ -28,7 +28,6 @@ import org.junit.runner.RunWith;
 import org.chromium.base.Callback;
 import org.chromium.base.DiscardableReferencePool;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
@@ -61,7 +60,6 @@ import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
 import org.chromium.chrome.browser.widget.displaystyle.VerticalDisplayStyle;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.util.RenderTestRule;
 import org.chromium.chrome.test.util.browser.compositor.layouts.DisableChromeAnimations;
 import org.chromium.chrome.test.util.browser.suggestions.DummySuggestionsEventReporter;
@@ -78,7 +76,6 @@ import java.util.Locale;
  * Tests for the appearance of Article Snippets.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class ArticleSnippetsTest {
     @Rule
@@ -139,7 +136,7 @@ public class ArticleSnippetsTest {
 
             mRecyclerView = new SuggestionsRecyclerView(activity);
             mContextMenuManager = new ContextMenuManager(mUiDelegate.getNavigationDelegate(),
-                    mRecyclerView::setTouchEnabled, activity::closeContextMenu);
+                    mRecyclerView::setTouchEnabled, activity::closeContextMenu, false);
             mRecyclerView.init(mUiConfig, mContextMenuManager);
 
             mSuggestion = new SnippetArticleViewHolder(mRecyclerView, mContextMenuManager,

@@ -7,13 +7,14 @@
 #include <algorithm>
 #include <memory>
 
-#include "ash/ash_constants.h"
 #include "ash/focus_cycler.h"
 #include "ash/login/ui/lock_screen.h"
 #include "ash/login/ui/lock_window.h"
+#include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
+#include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/system/status_area_widget.h"
@@ -22,6 +23,7 @@
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_container.h"
 #include "ash/system/tray/tray_event_filter.h"
+#include "ash/window_factory.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/compositor/layer.h"
@@ -308,7 +310,7 @@ void TrayBackgroundView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   ActionableView::GetAccessibleNodeData(node_data);
   node_data->SetName(GetAccessibleNameForTray());
 
-  if (LockScreen::IsShown()) {
+  if (LockScreen::HasInstance()) {
     int next_id = views::AXAuraObjCache::GetInstance()->GetID(
         static_cast<views::Widget*>(LockScreen::Get()->window()));
     node_data->AddIntAttribute(ax::mojom::IntAttribute::kNextFocusId, next_id);
@@ -364,15 +366,16 @@ void TrayBackgroundView::PaintButtonContents(gfx::Canvas* canvas) {
   // underneath the items instead.
   const gfx::Rect local_bounds = GetLocalBounds();
   const SkColor color = SkColorSetA(SK_ColorWHITE, 0x4D);
+  const int shelf_size = ShelfConstants::shelf_size();
 
   if (shelf_->IsHorizontalAlignment()) {
     const gfx::PointF point(
         base::i18n::IsRTL() ? 0 : (local_bounds.width() - kSeparatorWidth),
-        (kShelfSize - kTrayItemSize) / 2);
+        (shelf_size - kTrayItemSize) / 2);
     const gfx::Vector2dF vector(0, kTrayItemSize);
     canvas->Draw1pxLine(point, point + vector, color);
   } else {
-    const gfx::PointF point((kShelfSize - kTrayItemSize) / 2,
+    const gfx::PointF point((shelf_size - kTrayItemSize) / 2,
                             local_bounds.height() - kSeparatorWidth);
     const gfx::Vector2dF vector(kTrayItemSize, 0);
     canvas->Draw1pxLine(point, point + vector, color);
@@ -394,6 +397,12 @@ void TrayBackgroundView::ShowBubble(bool show_by_click) {}
 
 void TrayBackgroundView::UpdateAfterShelfAlignmentChange() {
   tray_container_->UpdateAfterShelfAlignmentChange();
+}
+
+void TrayBackgroundView::UpdateAfterRootWindowBoundsChange(
+    const gfx::Rect& old_bounds,
+    const gfx::Rect& new_bounds) {
+  // Do nothing by default. Child class may do something.
 }
 
 void TrayBackgroundView::AnchorUpdated() {
@@ -495,7 +504,7 @@ aura::Window* TrayBackgroundView::GetBubbleWindowContainer() {
           ->IsTabletModeWindowManagerEnabled() &&
       drag_controller()) {
     if (!clipping_window_.get()) {
-      clipping_window_ = std::make_unique<aura::Window>(nullptr);
+      clipping_window_ = window_factory::NewWindow();
       clipping_window_->Init(ui::LAYER_NOT_DRAWN);
       clipping_window_->layer()->SetMasksToBounds(true);
       container->AddChild(clipping_window_.get());

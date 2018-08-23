@@ -13,7 +13,18 @@
 #include "ui/message_center/public/cpp/notification_types.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/public/interfaces/ash_message_center_controller.mojom.h"
 #include "chrome/browser/chromeos/printing/cups_printers_manager.h"
+#endif
+
+namespace message_center {
+class Notification;
+}
+
+#if defined(OS_CHROMEOS)
+namespace crostini {
+enum class ConciergeClientResult;
+}
 #endif
 
 namespace extensions {
@@ -184,11 +195,18 @@ class AutotestPrivateGetVisibleNotificationsFunction
   DECLARE_EXTENSION_FUNCTION("autotestPrivate.getVisibleNotifications",
                              AUTOTESTPRIVATE_GETVISIBLENOTIFICATIONS)
 
- private:
-  static std::string ConvertToString(message_center::NotificationType type);
+  AutotestPrivateGetVisibleNotificationsFunction();
 
-  ~AutotestPrivateGetVisibleNotificationsFunction() override {}
+ private:
+  ~AutotestPrivateGetVisibleNotificationsFunction() override;
   ResponseAction Run() override;
+
+#if defined(OS_CHROMEOS)
+  void OnGotNotifications(
+      const std::vector<message_center::Notification>& notifications);
+
+  ash::mojom::AshMessageCenterControllerPtr controller_;
+#endif
 };
 
 class AutotestPrivateGetPlayStoreStateFunction
@@ -213,6 +231,23 @@ class AutotestPrivateSetPlayStoreEnabledFunction
   ResponseAction Run() override;
 };
 
+class AutotestPrivateRunCrostiniInstallerFunction
+    : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateRunCrostiniInstallerFunction() = default;
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.runCrostiniInstaller",
+                             AUTOTESTPRIVATE_RUNCROSTINIINSTALLER)
+
+ private:
+  ~AutotestPrivateRunCrostiniInstallerFunction() override = default;
+  ResponseAction Run() override;
+#if defined(OS_CHROMEOS)
+  void CrostiniRestarted(crostini::ConciergeClientResult);
+#endif
+
+  DISALLOW_COPY_AND_ASSIGN(AutotestPrivateRunCrostiniInstallerFunction);
+};
+
 class AutotestPrivateGetPrinterListFunction : public UIThreadExtensionFunction {
  public:
   AutotestPrivateGetPrinterListFunction() = default;
@@ -228,6 +263,32 @@ class AutotestPrivateGetPrinterListFunction : public UIThreadExtensionFunction {
   ResponseAction Run() override;
 
   DISALLOW_COPY_AND_ASSIGN(AutotestPrivateGetPrinterListFunction);
+};
+
+class AutotestPrivateUpdatePrinterFunction : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateUpdatePrinterFunction();
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.updatePrinter",
+                             AUTOTESTPRIVATE_UPDATEPRINTER)
+
+ private:
+  ~AutotestPrivateUpdatePrinterFunction() override;
+  ResponseAction Run() override;
+
+  DISALLOW_COPY_AND_ASSIGN(AutotestPrivateUpdatePrinterFunction);
+};
+
+class AutotestPrivateRemovePrinterFunction : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateRemovePrinterFunction();
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.removePrinter",
+                             AUTOTESTPRIVATE_REMOVEPRINTER)
+
+ private:
+  ~AutotestPrivateRemovePrinterFunction() override;
+  ResponseAction Run() override;
+
+  DISALLOW_COPY_AND_ASSIGN(AutotestPrivateRemovePrinterFunction);
 };
 
 // Don't kill the browser when we're in a browser test.

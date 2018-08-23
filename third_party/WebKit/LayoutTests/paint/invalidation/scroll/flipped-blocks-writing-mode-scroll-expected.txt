@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -54,15 +55,9 @@
         {
           "object": "Horizontal Scrollbar Layer",
           "rect": [0, 0, 400, 15],
-          "reason": "full"
+          "reason": "full layer"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "style change"
     }
   ]
 }

@@ -9,12 +9,11 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "components/network_session_configurator/browser/network_session_configurator.h"
 #include "content/public/browser/browser_thread.h"
@@ -27,14 +26,13 @@
 #include "net/cert/cert_verifier.h"
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/ct_policy_status.h"
-#include "net/cert/do_nothing_ct_verifier.h"
 #include "net/cookies/cookie_store.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/mapped_host_resolver.h"
 #include "net/http/http_network_session.h"
-#include "net/net_features.h"
+#include "net/net_buildflags.h"
 #include "net/proxy_resolution/proxy_config_service.h"
-#include "net/proxy_resolution/proxy_service.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/default_channel_id_store.h"
 #include "net/url_request/url_request_context.h"
@@ -49,25 +47,6 @@
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
 namespace content {
-
-namespace {
-
-// TODO(rsleevi): Embedders should see https://crbug.com/700973 before using
-// this pattern.
-class IgnoresCTPolicyEnforcer : public net::CTPolicyEnforcer {
- public:
-  IgnoresCTPolicyEnforcer() = default;
-  ~IgnoresCTPolicyEnforcer() override = default;
-
-  net::ct::CTPolicyCompliance CheckCompliance(
-      net::X509Certificate* cert,
-      const net::SCTList& verified_scts,
-      const net::NetLogWithSource& net_log) override {
-    return net::ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-  }
-};
-
-}  // namespace
 
 ShellURLRequestContextGetter::ShellURLRequestContextGetter(
     bool ignore_certificate_errors,
@@ -104,9 +83,13 @@ void ShellURLRequestContextGetter::NotifyContextShuttingDown() {
   url_request_context_ = nullptr;  // deletes it
 }
 
+std::string ShellURLRequestContextGetter::GetAcceptLanguages() {
+  return "en-us,en";
+}
+
 std::unique_ptr<net::NetworkDelegate>
 ShellURLRequestContextGetter::CreateNetworkDelegate() {
-  return base::WrapUnique(new ShellNetworkDelegate);
+  return std::make_unique<ShellNetworkDelegate>();
 }
 
 std::unique_ptr<net::CertVerifier>
@@ -140,20 +123,17 @@ net::URLRequestContext* ShellURLRequestContextGetter::GetURLRequestContext() {
     builder.set_net_log(net_log_);
     builder.set_network_delegate(CreateNetworkDelegate());
     std::unique_ptr<net::CookieStore> cookie_store =
-        CreateCookieStore(CookieStoreConfig());
+        CreateCookieStore(CookieStoreConfig(), net_log_);
     std::unique_ptr<net::ChannelIDService> channel_id_service =
         std::make_unique<net::ChannelIDService>(
             new net::DefaultChannelIDStore(nullptr));
     cookie_store->SetChannelIDServiceID(channel_id_service->GetUniqueID());
     builder.SetCookieAndChannelIdStores(std::move(cookie_store),
                                         std::move(channel_id_service));
-    builder.set_accept_language("en-us,en");
+    builder.set_accept_language(GetAcceptLanguages());
     builder.set_user_agent(GetShellUserAgent());
 
     builder.SetCertVerifier(GetCertVerifier());
-    builder.set_ct_verifier(base::WrapUnique(new net::DoNothingCTVerifier));
-    builder.set_ct_policy_enforcer(
-        base::WrapUnique(new IgnoresCTPolicyEnforcer));
 
     std::unique_ptr<net::ProxyResolutionService> proxy_resolution_service =
         GetProxyService();
@@ -194,9 +174,8 @@ net::URLRequestContext* ShellURLRequestContextGetter::GetURLRequestContext() {
     // ShellContentBrowserClient::IsHandledURL().
 
     for (auto& protocol_handler : protocol_handlers_) {
-      builder.SetProtocolHandler(
-          protocol_handler.first,
-          base::WrapUnique(protocol_handler.second.release()));
+      builder.SetProtocolHandler(protocol_handler.first,
+                                 std::move(protocol_handler.second));
     }
     protocol_handlers_.clear();
 
@@ -212,13 +191,18 @@ net::URLRequestContext* ShellURLRequestContextGetter::GetURLRequestContext() {
 #if BUILDFLAG(ENABLE_REPORTING)
     if (base::FeatureList::IsEnabled(network::features::kReporting)) {
       std::unique_ptr<net::ReportingPolicy> reporting_policy =
-          std::make_unique<net::ReportingPolicy>();
-      if (command_line.HasSwitch(switches::kRunLayoutTest))
+          net::ReportingPolicy::Create();
+      if (command_line.HasSwitch(switches::kRunWebTests))
         reporting_policy->delivery_interval =
             base::TimeDelta::FromMilliseconds(100);
       builder.set_reporting_policy(std::move(reporting_policy));
     }
+
+    builder.set_network_error_logging_enabled(
+        base::FeatureList::IsEnabled(network::features::kNetworkErrorLogging));
 #endif  // BUILDFLAG(ENABLE_REPORTING)
+
+    builder.set_enable_brotli(true);
 
     url_request_context_ = builder.Build();
   }
@@ -229,10 +213,6 @@ net::URLRequestContext* ShellURLRequestContextGetter::GetURLRequestContext() {
 scoped_refptr<base::SingleThreadTaskRunner>
     ShellURLRequestContextGetter::GetNetworkTaskRunner() const {
   return BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
-}
-
-net::HostResolver* ShellURLRequestContextGetter::host_resolver() {
-  return url_request_context_->host_resolver();
 }
 
 }  // namespace content

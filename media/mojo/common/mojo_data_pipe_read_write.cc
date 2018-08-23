@@ -8,23 +8,20 @@
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "media/mojo/common/mojo_pipe_read_write_util.h"
+
+using media::mojo_pipe_read_write_util::IsPipeReadWriteError;
 
 namespace media {
-
-namespace {
-
-bool IsPipeReadWriteError(MojoResult result) {
-  return result != MOJO_RESULT_OK && result != MOJO_RESULT_SHOULD_WAIT;
-}
-
-}  // namespace
 
 // MojoDataPipeReader
 
 MojoDataPipeReader::MojoDataPipeReader(
     mojo::ScopedDataPipeConsumerHandle consumer_handle)
     : consumer_handle_(std::move(consumer_handle)),
-      pipe_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL) {
+      pipe_watcher_(FROM_HERE,
+                    mojo::SimpleWatcher::ArmingPolicy::MANUAL,
+                    base::SequencedTaskRunnerHandle::Get()) {
   DVLOG(1) << __func__;
 
   MojoResult result = pipe_watcher_.Watch(
@@ -137,7 +134,9 @@ void MojoDataPipeReader::Close() {
 MojoDataPipeWriter::MojoDataPipeWriter(
     mojo::ScopedDataPipeProducerHandle producer_handle)
     : producer_handle_(std::move(producer_handle)),
-      pipe_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL) {
+      pipe_watcher_(FROM_HERE,
+                    mojo::SimpleWatcher::ArmingPolicy::MANUAL,
+                    base::SequencedTaskRunnerHandle::Get()) {
   DVLOG(1) << __func__;
 
   MojoResult result =

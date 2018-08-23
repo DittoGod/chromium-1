@@ -6,7 +6,7 @@
 #define ASH_LOGIN_UI_LOGIN_BASE_BUBBLE_VIEW_H_
 
 #include "ash/ash_export.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/view.h"
 
 namespace ash {
@@ -20,10 +20,10 @@ class ASH_EXPORT LoginBaseBubbleView : public views::BubbleDialogDelegateView {
   // views::BubbleDialogDelegateView:
   int GetDialogButtons() const override;
 
- private:
   // views::View:
   gfx::Size CalculatePreferredSize() const override;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(LoginBaseBubbleView);
 };
 

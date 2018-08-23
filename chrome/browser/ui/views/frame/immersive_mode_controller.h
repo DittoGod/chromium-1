@@ -60,6 +60,9 @@ class ImmersiveModeController {
     // Called when the immersive mode controller has been destroyed.
     virtual void OnImmersiveModeControllerDestroyed() {}
 
+    // Called when immersive mode is exited.
+    virtual void OnImmersiveFullscreenExited() {}
+
    protected:
     virtual ~Observer() {}
   };
@@ -131,7 +134,7 @@ class ImmersiveModeController {
   virtual void RemoveObserver(Observer* observer);
 
  protected:
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
  private:
   const Type type_;

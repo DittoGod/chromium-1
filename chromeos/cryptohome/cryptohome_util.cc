@@ -13,6 +13,9 @@
 #include "components/device_event_log/device_event_log.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
+using chromeos::ChallengeResponseKey;
+using google::protobuf::RepeatedPtrField;
+
 namespace cryptohome {
 
 namespace {
@@ -23,6 +26,34 @@ bool IsEmpty(const base::Optional<BaseReply>& reply) {
     return true;
   }
   return false;
+}
+
+ChallengeSignatureAlgorithm ChallengeSignatureAlgorithmToProtoEnum(
+    ChallengeResponseKey::SignatureAlgorithm algorithm) {
+  using Algorithm = ChallengeResponseKey::SignatureAlgorithm;
+  switch (algorithm) {
+    case Algorithm::kRsassaPkcs1V15Sha1:
+      return CHALLENGE_RSASSA_PKCS1_V1_5_SHA1;
+    case Algorithm::kRsassaPkcs1V15Sha256:
+      return CHALLENGE_RSASSA_PKCS1_V1_5_SHA256;
+    case Algorithm::kRsassaPkcs1V15Sha384:
+      return CHALLENGE_RSASSA_PKCS1_V1_5_SHA384;
+    case Algorithm::kRsassaPkcs1V15Sha512:
+      return CHALLENGE_RSASSA_PKCS1_V1_5_SHA512;
+  }
+  NOTREACHED();
+}
+
+void ChallengeResponseKeyToPublicKeyInfo(
+    const ChallengeResponseKey& challenge_response_key,
+    ChallengePublicKeyInfo* public_key_info) {
+  public_key_info->set_public_key_spki_der(
+      challenge_response_key.public_key_spki_der());
+  for (ChallengeResponseKey::SignatureAlgorithm algorithm :
+       challenge_response_key.signature_algorithms()) {
+    public_key_info->add_signature_algorithm(
+        ChallengeSignatureAlgorithmToProtoEnum(algorithm));
+  }
 }
 
 void KeyDefPrivilegesToKeyPrivileges(int key_def_privileges,
@@ -92,6 +123,101 @@ MountError BaseReplyToMountError(const base::Optional<BaseReply>& reply) {
   return CryptohomeErrorToMountError(reply->error());
 }
 
+MountError GetKeyDataReplyToMountError(const base::Optional<BaseReply>& reply) {
+  if (IsEmpty(reply))
+    return MOUNT_ERROR_FATAL;
+
+  if (!reply->HasExtension(GetKeyDataReply::reply)) {
+    LOGIN_LOG(ERROR)
+        << "GetKeyDataEx failed with no GetKeyDataReply extension in reply.";
+    return MOUNT_ERROR_FATAL;
+  }
+  return CryptohomeErrorToMountError(reply->error());
+}
+
+// TODO(crbug.com/797848): Finish testing this method.
+std::vector<KeyDefinition> GetKeyDataReplyToKeyDefinitions(
+    const base::Optional<BaseReply>& reply) {
+  const RepeatedPtrField<KeyData>& key_data =
+      reply->GetExtension(GetKeyDataReply::reply).key_data();
+  std::vector<KeyDefinition> key_definitions;
+  for (RepeatedPtrField<KeyData>::const_iterator it = key_data.begin();
+       it != key_data.end(); ++it) {
+    // Extract |type|, |label| and |revision|.
+    KeyDefinition key_definition;
+    CHECK(it->has_type());
+    switch (it->type()) {
+      case KeyData::KEY_TYPE_PASSWORD:
+        key_definition.type = KeyDefinition::TYPE_PASSWORD;
+        break;
+      case KeyData::KEY_TYPE_CHALLENGE_RESPONSE:
+        key_definition.type = KeyDefinition::TYPE_CHALLENGE_RESPONSE;
+        break;
+    }
+    key_definition.label = it->label();
+    key_definition.revision = it->revision();
+
+    // Extract |privileges|.
+    const KeyPrivileges& privileges = it->privileges();
+    if (privileges.mount())
+      key_definition.privileges |= PRIV_MOUNT;
+    if (privileges.add())
+      key_definition.privileges |= PRIV_ADD;
+    if (privileges.remove())
+      key_definition.privileges |= PRIV_REMOVE;
+    if (privileges.update())
+      key_definition.privileges |= PRIV_MIGRATE;
+    if (privileges.authorized_update())
+      key_definition.privileges |= PRIV_AUTHORIZED_UPDATE;
+
+    // Extract |policy|.
+    key_definition.policy.low_entropy_credential =
+        it->policy().low_entropy_credential();
+    key_definition.policy.auth_locked = it->policy().auth_locked();
+
+    // Extract |authorization_data|.
+    for (RepeatedPtrField<KeyAuthorizationData>::const_iterator auth_it =
+             it->authorization_data().begin();
+         auth_it != it->authorization_data().end(); ++auth_it) {
+      key_definition.authorization_data.push_back(
+          KeyDefinition::AuthorizationData());
+      KeyAuthorizationDataToAuthorizationData(
+          *auth_it, &key_definition.authorization_data.back());
+    }
+
+    // Extract |provider_data|.
+    for (RepeatedPtrField<KeyProviderData::Entry>::const_iterator
+             provider_data_it = it->provider_data().entry().begin();
+         provider_data_it != it->provider_data().entry().end();
+         ++provider_data_it) {
+      // Extract |name|.
+      key_definition.provider_data.push_back(
+          KeyDefinition::ProviderData(provider_data_it->name()));
+      KeyDefinition::ProviderData& provider_data =
+          key_definition.provider_data.back();
+
+      int data_items = 0;
+
+      // Extract |number|.
+      if (provider_data_it->has_number()) {
+        provider_data.number.reset(new int64_t(provider_data_it->number()));
+        ++data_items;
+      }
+
+      // Extract |bytes|.
+      if (provider_data_it->has_bytes()) {
+        provider_data.bytes.reset(new std::string(provider_data_it->bytes()));
+        ++data_items;
+      }
+
+      DCHECK_EQ(1, data_items);
+    }
+
+    key_definitions.push_back(std::move(key_definition));
+  }
+  return key_definitions;
+}
+
 int64_t AccountDiskUsageReplyToUsageSize(
     const base::Optional<BaseReply>& reply) {
   if (IsEmpty(reply))
@@ -127,11 +253,24 @@ AuthorizationRequest CreateAuthorizationRequest(const std::string& label,
 
 // TODO(crbug.com/797848): Finish testing this method.
 void KeyDefinitionToKey(const KeyDefinition& key_def, Key* key) {
-  key->set_secret(key_def.secret);
   KeyData* data = key->mutable_data();
-  DCHECK_EQ(KeyDefinition::TYPE_PASSWORD, key_def.type);
-  data->set_type(KeyData::KEY_TYPE_PASSWORD);
   data->set_label(key_def.label);
+
+  switch (key_def.type) {
+    case KeyDefinition::TYPE_PASSWORD:
+      data->set_type(KeyData::KEY_TYPE_PASSWORD);
+      key->set_secret(key_def.secret);
+      break;
+
+    case KeyDefinition::TYPE_CHALLENGE_RESPONSE:
+      data->set_type(KeyData::KEY_TYPE_CHALLENGE_RESPONSE);
+      for (const auto& challenge_response_key :
+           key_def.challenge_response_keys) {
+        ChallengeResponseKeyToPublicKeyInfo(challenge_response_key,
+                                            data->add_challenge_response_key());
+      }
+      break;
+  }
 
   if (key_def.revision > 0)
     data->set_revision(key_def.revision);
@@ -170,6 +309,7 @@ MountError CryptohomeErrorToMountError(CryptohomeErrorCode code) {
       return MOUNT_ERROR_FATAL;
     case CRYPTOHOME_ERROR_AUTHORIZATION_KEY_NOT_FOUND:
     case CRYPTOHOME_ERROR_KEY_NOT_FOUND:
+    case CRYPTOHOME_ERROR_MIGRATE_KEY_FAILED:
     case CRYPTOHOME_ERROR_AUTHORIZATION_KEY_FAILED:
       return MOUNT_ERROR_KEY_FAILURE;
     case CRYPTOHOME_ERROR_TPM_COMM_ERROR:
@@ -188,6 +328,8 @@ MountError CryptohomeErrorToMountError(CryptohomeErrorCode code) {
       return MOUNT_ERROR_OLD_ENCRYPTION;
     case CRYPTOHOME_ERROR_MOUNT_PREVIOUS_MIGRATION_INCOMPLETE:
       return MOUNT_ERROR_PREVIOUS_MIGRATION_INCOMPLETE;
+    case CRYPTOHOME_ERROR_REMOVE_FAILED:
+      return MOUNT_ERROR_REMOVE_FAILED;
     // TODO(crbug.com/797563): Split the error space and/or handle everything.
     case CRYPTOHOME_ERROR_LOCKBOX_SIGNATURE_INVALID:
     case CRYPTOHOME_ERROR_LOCKBOX_CANNOT_SIGN:

@@ -12,7 +12,6 @@
 
 #include "base/command_line.h"
 #include "base/debug/activity_tracker.h"
-#include "base/debug/profiler.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -39,7 +38,9 @@
 #include "base/win/scoped_handle.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
+#include "sandbox/constants.h"
 #include "sandbox/win/src/app_container_profile.h"
+#include "sandbox/win/src/job.h"
 #include "sandbox/win/src/process_mitigations.h"
 #include "sandbox/win/src/sandbox.h"
 #include "sandbox/win/src/sandbox_nt_util.h"
@@ -53,6 +54,8 @@ namespace service_manager {
 namespace {
 
 sandbox::BrokerServices* g_broker_services = NULL;
+
+HANDLE g_job_object_handle = NULL;
 
 // The DLLs listed here are known (or under strong suspicion) of causing crashes
 // when they are loaded in the renderer. Note: at runtime we generate short
@@ -153,7 +156,7 @@ bool AddDirectory(int path,
                   sandbox::TargetPolicy::Semantics access,
                   sandbox::TargetPolicy* policy) {
   base::FilePath directory;
-  if (!PathService::Get(path, &directory))
+  if (!base::PathService::Get(path, &directory))
     return false;
 
   if (sub_dir)
@@ -343,7 +346,7 @@ sandbox::ResultCode AddGenericPolicy(sandbox::TargetPolicy* policy) {
 // Add the policy for debug message only in debug
 #ifndef NDEBUG
   base::FilePath app_dir;
-  if (!PathService::Get(base::DIR_MODULE, &app_dir))
+  if (!base::PathService::Get(base::DIR_MODULE, &app_dir))
     return sandbox::SBOX_ERROR_GENERIC;
 
   wchar_t long_path_buf[MAX_PATH];
@@ -364,7 +367,7 @@ sandbox::ResultCode AddGenericPolicy(sandbox::TargetPolicy* policy) {
 // Add the policy for read-only PDB file access for stack traces.
 #if !defined(OFFICIAL_BUILD)
   base::FilePath exe;
-  if (!PathService::Get(base::FILE_EXE, &exe))
+  if (!base::PathService::Get(base::FILE_EXE, &exe))
     return sandbox::SBOX_ERROR_GENERIC;
   base::FilePath pdb_path = exe.DirName().Append(L"*.pdb");
   result = policy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
@@ -563,13 +566,13 @@ sandbox::ResultCode SetJobMemoryLimit(const base::CommandLine& cmd_line,
   DCHECK_NE(policy->GetJobLevel(), sandbox::JOB_NONE);
 
 #ifdef _WIN64
-  int64_t GB = 1024 * 1024 * 1024;
-  size_t memory_limit = 4 * GB;
+  size_t memory_limit = static_cast<size_t>(sandbox::kDataSizeLimit);
 
   // Note that this command line flag hasn't been fetched by all
   // callers of SetJobLevel, only those in this file.
   if (service_manager::SandboxTypeFromCommandLine(cmd_line) ==
       service_manager::SANDBOX_TYPE_GPU) {
+    int64_t GB = 1024 * 1024 * 1024;
     // Allow the GPU process's sandbox to access more physical memory if
     // it's available on the system.
     int64_t physical_memory = base::SysInfo::AmountOfPhysicalMemory();
@@ -598,29 +601,12 @@ base::string16 GetAppContainerProfileName(
   return base::UTF8ToWide(profile_name);
 }
 
-sandbox::ResultCode GetAppContainerProfile(
+sandbox::ResultCode SetupAppContainerProfile(
+    sandbox::AppContainerProfile* profile,
     const base::CommandLine& command_line,
-    service_manager::SandboxType sandbox_type,
-    const std::string& appcontainer_id,
-    bool create_profile,
-    scoped_refptr<sandbox::AppContainerProfile>* profile_result) {
+    service_manager::SandboxType sandbox_type) {
   if (sandbox_type != service_manager::SANDBOX_TYPE_GPU)
     return sandbox::SBOX_ERROR_UNSUPPORTED;
-
-  base::string16 profile_name =
-      GetAppContainerProfileName(appcontainer_id, sandbox_type);
-  scoped_refptr<sandbox::AppContainerProfile> profile;
-  if (create_profile) {
-    profile = sandbox::AppContainerProfile::Create(
-        profile_name.c_str(), L"Chrome Sandbox", L"Profile for Chrome Sandbox");
-  } else {
-    profile = sandbox::AppContainerProfile::Open(profile_name.c_str());
-  }
-
-  if (!profile) {
-    DLOG(ERROR) << "Creating AppContainerProfile failed";
-    return sandbox::SBOX_ERROR_CREATE_APPCONTAINER_PROFILE;
-  }
 
   if (!profile->AddImpersonationCapability(L"chromeInstallFiles")) {
     DLOG(ERROR) << "AppContainerProfile::AddImpersonationCapability() failed";
@@ -648,7 +634,6 @@ sandbox::ResultCode GetAppContainerProfile(
     profile->SetEnableLowPrivilegeAppContainer(true);
   }
 
-  *profile_result = profile;
   return sandbox::SBOX_ALL_OK;
 }
 
@@ -734,9 +719,16 @@ sandbox::ResultCode SandboxWin::AddAppContainerProfileToPolicy(
     service_manager::SandboxType sandbox_type,
     const std::string& appcontainer_id,
     sandbox::TargetPolicy* policy) {
-  scoped_refptr<sandbox::AppContainerProfile> profile;
-  sandbox::ResultCode result = GetAppContainerProfile(
-      command_line, sandbox_type, appcontainer_id, true, &profile);
+  base::string16 profile_name =
+      GetAppContainerProfileName(appcontainer_id, sandbox_type);
+  sandbox::ResultCode result =
+      policy->AddAppContainerProfile(profile_name.c_str(), true);
+  if (result != sandbox::SBOX_ALL_OK)
+    return result;
+
+  scoped_refptr<sandbox::AppContainerProfile> profile =
+      policy->GetAppContainerProfile();
+  result = SetupAppContainerProfile(profile.get(), command_line, sandbox_type);
   if (result != sandbox::SBOX_ALL_OK)
     return result;
 
@@ -749,7 +741,8 @@ sandbox::ResultCode SandboxWin::AddAppContainerProfileToPolicy(
       granted_access_status;
   if (!access_check)
     return sandbox::SBOX_ERROR_CREATE_APPCONTAINER_PROFILE_ACCESS_CHECK;
-  return policy->SetAppContainerProfile(profile.get());
+
+  return sandbox::SBOX_ALL_OK;
 }
 
 // static
@@ -785,11 +778,7 @@ bool SandboxWin::InitBrokerServices(sandbox::BrokerServices* broker_services) {
 #if !defined(OFFICIAL_BUILD) && !defined(COMPONENT_BUILD)
   BOOL is_in_job = FALSE;
   CHECK(::IsProcessInJob(::GetCurrentProcess(), NULL, &is_in_job));
-  // In a Syzygy-profiled binary, instrumented for import profiling, this
-  // patch will end in infinite recursion on the attempted delegation to the
-  // original function.
-  if (!base::debug::IsBinaryInstrumented() && !is_in_job &&
-      !g_iat_patch_duplicate_handle.is_patched()) {
+  if (!is_in_job && !g_iat_patch_duplicate_handle.is_patched()) {
     HMODULE module = NULL;
     wchar_t module_name[MAX_PATH];
     CHECK(::GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
@@ -799,8 +788,9 @@ bool SandboxWin::InitBrokerServices(sandbox::BrokerServices* broker_services) {
     if (result && (result != MAX_PATH)) {
       ResolveNTFunctionPtr("NtQueryObject", &g_QueryObject);
       result = g_iat_patch_duplicate_handle.Patch(
-          module_name, "kernel32.dll", "DuplicateHandle", DuplicateHandlePatch);
-      CHECK(result == 0);
+          module_name, "kernel32.dll", "DuplicateHandle",
+          reinterpret_cast<void*>(DuplicateHandlePatch));
+      CHECK_EQ(0u, result);
       g_iat_orig_duplicate_handle =
           reinterpret_cast<DuplicateHandleFunctionPtr>(
               g_iat_patch_duplicate_handle.original_function());
@@ -841,6 +831,20 @@ sandbox::ResultCode SandboxWin::StartSandboxedProcess(
           service_manager::switches::kNoSandbox)) {
     base::LaunchOptions options;
     options.handles_to_inherit = handles_to_inherit;
+    if (sandbox_type == SANDBOX_TYPE_NETWORK) {
+      // Launch the process in a job to ensure that the network process doesn't
+      // outlive the browser. This could happen if there is a lot of I/O on
+      // process shutdown, in which case TerminateProcess would fail.
+      // https://crbug.com/820996
+      if (!g_job_object_handle) {
+        sandbox::Job job_obj;
+        DWORD result = job_obj.Init(sandbox::JOB_UNPROTECTED, nullptr, 0, 0);
+        if (result != ERROR_SUCCESS)
+          return sandbox::SBOX_ERROR_GENERIC;
+        g_job_object_handle = job_obj.Take().Take();
+      }
+      options.job_handle = g_job_object_handle;
+    }
     *process = base::LaunchProcess(*cmd_line, options);
     return sandbox::SBOX_ALL_OK;
   }
@@ -854,12 +858,16 @@ sandbox::ResultCode SandboxWin::StartSandboxedProcess(
 
   // Pre-startup mitigations.
   sandbox::MitigationFlags mitigations =
-      sandbox::MITIGATION_HEAP_TERMINATE | sandbox::MITIGATION_BOTTOM_UP_ASLR |
-      sandbox::MITIGATION_DEP | sandbox::MITIGATION_DEP_NO_ATL_THUNK |
-      sandbox::MITIGATION_EXTENSION_POINT_DISABLE | sandbox::MITIGATION_SEHOP |
+      sandbox::MITIGATION_HEAP_TERMINATE |
+      sandbox::MITIGATION_BOTTOM_UP_ASLR |
+      sandbox::MITIGATION_DEP |
+      sandbox::MITIGATION_DEP_NO_ATL_THUNK |
+      sandbox::MITIGATION_EXTENSION_POINT_DISABLE |
+      sandbox::MITIGATION_SEHOP |
       sandbox::MITIGATION_NONSYSTEM_FONT_DISABLE |
       sandbox::MITIGATION_IMAGE_LOAD_NO_REMOTE |
-      sandbox::MITIGATION_IMAGE_LOAD_NO_LOW_LABEL;
+      sandbox::MITIGATION_IMAGE_LOAD_NO_LOW_LABEL |
+      sandbox::MITIGATION_RESTRICT_INDIRECT_BRANCH_PREDICTION;
 
   sandbox::ResultCode result = policy->SetProcessMitigations(mitigations);
   if (result != sandbox::SBOX_ALL_OK)
@@ -877,11 +885,13 @@ sandbox::ResultCode SandboxWin::StartSandboxedProcess(
   // Post-startup mitigations.
   mitigations = sandbox::MITIGATION_STRICT_HANDLE_CHECKS |
                 sandbox::MITIGATION_DLL_SEARCH_ORDER;
-  if (base::FeatureList::IsEnabled(
-          service_manager::features::kWinSboxForceMsSigned) &&
-      !cmd_line->HasSwitch(switches::kAllowThirdPartyModules)) {
+  if (!cmd_line->HasSwitch(switches::kAllowThirdPartyModules))
     mitigations |= sandbox::MITIGATION_FORCE_MS_SIGNED_BINS;
+  if (sandbox_type == SANDBOX_TYPE_NETWORK ||
+      sandbox_type == SANDBOX_TYPE_AUDIO) {
+    mitigations |= sandbox::MITIGATION_DYNAMIC_CODE_DISABLE;
   }
+
   result = policy->SetDelayedProcessMitigations(mitigations);
   if (result != sandbox::SBOX_ALL_OK)
     return result;

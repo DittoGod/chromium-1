@@ -9,7 +9,10 @@
 
 #include "ash/ash_export.h"
 #include "ash/login/ui/login_display_style.h"
+#include "ash/login/ui/login_user_view.h"
 #include "ash/public/interfaces/login_user_info.mojom.h"
+#include "ash/wallpaper/wallpaper_controller_observer.h"
+#include "base/scoped_observer.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/views/controls/scroll_view.h"
 
@@ -21,13 +24,13 @@ class BoxLayout;
 namespace ash {
 
 class HoverNotifier;
-class LoginUserView;
-class ScrollBar;
+class WallpaperController;
 
 // Scrollable list of the users. Stores the list of login user views. Can be
 // styled with GradientParams that define gradient tinting at the top and at the
 // bottom. Can be styled with LayoutParams that define spacing and sizing.
-class ASH_EXPORT ScrollableUsersListView : public views::ScrollView {
+class ASH_EXPORT ScrollableUsersListView : public views::ScrollView,
+                                           public WallpaperControllerObserver {
  public:
   // TestApi is used for tests to get internal implementation details.
   class ASH_EXPORT TestApi {
@@ -41,63 +44,73 @@ class ASH_EXPORT ScrollableUsersListView : public views::ScrollView {
     ScrollableUsersListView* const view_;
   };
 
-  using OnUserViewTap = base::RepeatingCallback<void(int)>;
+  // TODO(jdufault): Pass AccountId or LoginUserView* instead of index.
+  using ActionWithUser = base::RepeatingCallback<void(int)>;
 
   // Initializes users list with rows for all |users|. The |display_style| is
   // used to determine layout and sizings. |on_user_view_tap| callback is
   // invoked whenever user row is tapped.
   ScrollableUsersListView(const std::vector<mojom::LoginUserInfoPtr>& users,
-                          const OnUserViewTap& on_user_view_tap,
+                          const ActionWithUser& on_tap_user,
                           LoginDisplayStyle display_style);
   ~ScrollableUsersListView() override;
 
   // Returns user view at |index| if it exists or nullptr otherwise.
-  LoginUserView* GetUserViewAtIndex(int index);
+  int user_count() const { return static_cast<int>(user_views_.size()); }
+  LoginUserView* user_view_at(int index) {
+    DCHECK_GE(index, 0);
+    DCHECK_LT(index, user_count());
+    return user_views_[index];
+  }
+
+  // Returns user view with |account_id| if it exists or nullptr otherwise.
+  LoginUserView* GetUserView(const AccountId& account_id);
 
   // views::View:
   void Layout() override;
   void OnPaintBackground(gfx::Canvas* canvas) override;
 
- private:
-  struct GradientParams {
-    // Start color for drawing linear gradient.
-    SkColor color_from;
-    // End color for drawing linear gradient.
-    SkColor color_to;
-    // Height of linear gradient.
-    SkScalar height;
-  };
+  // WallpaperControllerObserver:
+  void OnWallpaperColorsChanged() override;
+  void OnWallpaperBlurChanged() override;
 
-  struct LayoutParams {
-    // Display style to determine layout and sizing of users list.
-    LoginDisplayStyle display_style;
-    // Spacing between user entries on users list.
-    int between_child_spacing;
-    // Insets around users list used in landscape orientation.
-    gfx::Insets insets_landscape;
-    // Insets around users list used in portrait orientation.
-    gfx::Insets insets_portrait;
+ private:
+  class ScrollBar;
+
+  struct GradientParams {
+    static GradientParams BuildForStyle(LoginDisplayStyle style);
+
+    // Start color for drawing linear gradient.
+    SkColor color_from = SK_ColorTRANSPARENT;
+    // End color for drawing linear gradient.
+    SkColor color_to = SK_ColorTRANSPARENT;
+    // Height of linear gradient.
+    SkScalar height = 0;
   };
 
   // Updates visibility of scroll bar thumb. Called when hover state changes.
   void OnHover(bool has_hover);
 
-  // Returns parameters of the layout for given display |style|.
-  LayoutParams GetLayoutParams(LoginDisplayStyle style);
-  // Returns parameters of the gradient for given display |style|.
-  GradientParams GetGradientParams(LoginDisplayStyle style);
+  // Display style to determine layout and sizing of users list.
+  const LoginDisplayStyle display_style_;
 
-  views::BoxLayout* layout_ = nullptr;
+  // The view which contains all of the user views.
+  views::View* user_view_host_ = nullptr;
+
+  // Layout for |user_view_host_|.
+  views::BoxLayout* user_view_host_layout_ = nullptr;
 
   // Owned by ScrollView.
-  ScrollBar* scroll_bar_ = nullptr;
+  ScrollBar* vertical_scroll_bar_ = nullptr;
 
   std::vector<LoginUserView*> user_views_;
 
   std::unique_ptr<HoverNotifier> hover_notifier_;
 
   GradientParams gradient_params_;
-  LayoutParams layout_params_;
+
+  ScopedObserver<WallpaperController, WallpaperControllerObserver> observer_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(ScrollableUsersListView);
 };

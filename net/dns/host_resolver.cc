@@ -120,16 +120,17 @@ std::unique_ptr<base::Value> HostResolver::GetDnsConfigAsValue() const {
   return nullptr;
 }
 
-void HostResolver::InitializePersistence(
-    const PersistCallback& persist_callback,
-    std::unique_ptr<const base::Value> old_data) {}
-
 void HostResolver::SetNoIPv6OnWifi(bool no_ipv6_on_wifi) {
   NOTREACHED();
 }
 
 bool HostResolver::GetNoIPv6OnWifi() {
   return false;
+}
+
+const std::vector<DnsConfig::DnsOverHttpsServerConfig>*
+HostResolver::GetDnsOverHttpsServersForTesting() const {
+  return nullptr;
 }
 
 // static
@@ -157,6 +158,67 @@ std::unique_ptr<HostResolver> HostResolver::CreateDefaultResolver(
 std::unique_ptr<HostResolverImpl> HostResolver::CreateDefaultResolverImpl(
     NetLog* net_log) {
   return CreateSystemResolverImpl(Options(), net_log);
+}
+
+// static
+AddressFamily HostResolver::DnsQueryTypeToAddressFamily(
+    DnsQueryType dns_query_type) {
+  switch (dns_query_type) {
+    case DnsQueryType::UNSPECIFIED:
+      return ADDRESS_FAMILY_UNSPECIFIED;
+    case DnsQueryType::A:
+      return ADDRESS_FAMILY_IPV4;
+    case DnsQueryType::AAAA:
+      return ADDRESS_FAMILY_IPV6;
+    default:
+      // |dns_query_type| should be an address type (A or AAAA) or UNSPECIFIED.
+      NOTREACHED();
+      return ADDRESS_FAMILY_UNSPECIFIED;
+  }
+}
+
+// static
+HostResolver::DnsQueryType HostResolver::AddressFamilyToDnsQueryType(
+    AddressFamily address_family) {
+  switch (address_family) {
+    case ADDRESS_FAMILY_UNSPECIFIED:
+      return DnsQueryType::UNSPECIFIED;
+    case ADDRESS_FAMILY_IPV4:
+      return DnsQueryType::A;
+    case ADDRESS_FAMILY_IPV6:
+      return DnsQueryType::AAAA;
+    default:
+      NOTREACHED();
+      return DnsQueryType::UNSPECIFIED;
+  }
+}
+
+// static
+HostResolver::ResolveHostParameters
+HostResolver::RequestInfoToResolveHostParameters(
+    const HostResolver::RequestInfo& request_info,
+    RequestPriority priority) {
+  ResolveHostParameters parameters;
+
+  parameters.dns_query_type =
+      AddressFamilyToDnsQueryType(request_info.address_family());
+  parameters.initial_priority = priority;
+  parameters.is_speculative = request_info.is_speculative();
+
+  return parameters;
+}
+
+// static
+HostResolverFlags HostResolver::ParametersToHostResolverFlags(
+    const ResolveHostParameters& parameters) {
+  HostResolverFlags flags = 0;
+  if (parameters.include_canonical_name) {
+    flags |= HOST_RESOLVER_CANONNAME;
+  }
+  if (parameters.loopback_only) {
+    flags |= HOST_RESOLVER_LOOPBACK_ONLY;
+  }
+  return flags;
 }
 
 HostResolver::HostResolver() = default;

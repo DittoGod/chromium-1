@@ -4,6 +4,8 @@
 
 #include "components/domain_reliability/service.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
@@ -14,10 +16,10 @@
 #include "components/domain_reliability/context.h"
 #include "components/domain_reliability/monitor.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/permission_manager.h"
+#include "content/public/browser/permission_controller.h"
 #include "content/public/browser/permission_type.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
 #include "url/gurl.h"
 
 namespace domain_reliability {
@@ -63,7 +65,7 @@ class DomainReliabilityServiceImpl : public DomainReliabilityService {
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> network_task_runner)
       override {
-    DCHECK(!network_task_runner_.get());
+    DCHECK(!network_task_runner_);
 
     std::unique_ptr<DomainReliabilityMonitor> monitor(
         new DomainReliabilityMonitor(
@@ -84,17 +86,18 @@ class DomainReliabilityServiceImpl : public DomainReliabilityService {
       DomainReliabilityClearMode clear_mode,
       const base::Callback<bool(const GURL&)>& origin_filter,
       const base::Closure& callback) override {
-    DCHECK(network_task_runner_.get());
+    DCHECK(network_task_runner_);
 
     network_task_runner_->PostTaskAndReply(
-        FROM_HERE, base::Bind(&DomainReliabilityMonitor::ClearBrowsingData,
-                              monitor_, clear_mode, origin_filter),
+        FROM_HERE,
+        base::BindOnce(&DomainReliabilityMonitor::ClearBrowsingData, monitor_,
+                       clear_mode, origin_filter),
         callback);
   }
 
   void GetWebUIData(const base::Callback<void(std::unique_ptr<base::Value>)>&
                         callback) const override {
-    DCHECK(network_task_runner_.get());
+    DCHECK(network_task_runner_);
 
     PostTaskAndReplyWithResult(
         network_task_runner_.get(),
@@ -104,33 +107,29 @@ class DomainReliabilityServiceImpl : public DomainReliabilityService {
   }
 
   void SetDiscardUploadsForTesting(bool discard_uploads) override {
-    DCHECK(network_task_runner_.get());
+    DCHECK(network_task_runner_);
 
     network_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&DomainReliabilityMonitor::SetDiscardUploads,
-                   monitor_,
-                   discard_uploads));
+        FROM_HERE, base::BindOnce(&DomainReliabilityMonitor::SetDiscardUploads,
+                                  monitor_, discard_uploads));
   }
 
   void AddContextForTesting(
       std::unique_ptr<const DomainReliabilityConfig> config) override {
-    DCHECK(network_task_runner_.get());
+    DCHECK(network_task_runner_);
 
     network_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&AddContextForTestingOnNetworkTaskRunner,
-                   monitor_,
-                   base::Passed(&config)));
+        FROM_HERE, base::BindOnce(&AddContextForTestingOnNetworkTaskRunner,
+                                  monitor_, std::move(config)));
   }
 
   void ForceUploadsForTesting() override {
-    DCHECK(network_task_runner_.get());
+    DCHECK(network_task_runner_);
 
     network_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&DomainReliabilityMonitor::ForceUploadsForTesting,
-                   monitor_));
+        base::BindOnce(&DomainReliabilityMonitor::ForceUploadsForTesting,
+                       monitor_));
   }
 
  private:
@@ -145,24 +144,19 @@ class DomainReliabilityServiceImpl : public DomainReliabilityService {
         base::BindOnce(
             &DomainReliabilityServiceImpl::CheckUploadAllowedOnUIThread,
             service, base::RetainedRef(network_task_runner), origin,
-            base::Passed(&callback)));
+            std::move(callback)));
   }
 
   void CheckUploadAllowedOnUIThread(
       base::SingleThreadTaskRunner* network_task_runner,
       const GURL& origin,
       base::OnceCallback<void(bool)> callback) {
-    bool allowed = false;
-
-    content::PermissionManager* permission_manager =
-        browser_context_->GetPermissionManager();
-
-    if (permission_manager) {
-      allowed = permission_manager->GetPermissionStatus(
-                    content::PermissionType::BACKGROUND_SYNC, origin, origin) ==
-                blink::mojom::PermissionStatus::GRANTED;
-    }
-
+    content::PermissionController* permission_controller =
+        content::BrowserContext::GetPermissionController(browser_context_);
+    DCHECK(permission_controller);
+    bool allowed = permission_controller->GetPermissionStatus(
+                       content::PermissionType::BACKGROUND_SYNC, origin,
+                       origin) == blink::mojom::PermissionStatus::GRANTED;
     network_task_runner->PostTask(FROM_HERE,
                                   base::BindOnce(std::move(callback), allowed));
   }

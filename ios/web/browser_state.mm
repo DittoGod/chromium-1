@@ -14,14 +14,17 @@
 #include "base/memory/ref_counted.h"
 #include "base/process/process_handle.h"
 #include "ios/web/public/certificate_policy_cache.h"
+#include "ios/web/public/network_context_owner.h"
 #include "ios/web/public/service_manager_connection.h"
 #include "ios/web/public/service_names.mojom.h"
 #include "ios/web/public/web_client.h"
 #include "ios/web/public/web_thread.h"
 #include "ios/web/webui/url_data_manager_ios_backend.h"
+#include "mojo/public/cpp/bindings/interface_request.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "services/network/public/mojom/url_loader_factory.mojom.h"
-#include "services/network/url_loader.h"
+#include "net/url_request/url_request_context_getter_observer.h"
+#include "services/network/network_context.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/mojom/service.mojom.h"
 
@@ -106,52 +109,6 @@ class BrowserStateServiceManagerConnectionHolder
 
 }  // namespace
 
-class BrowserState::URLLoaderFactory : public network::mojom::URLLoaderFactory {
- public:
-  explicit URLLoaderFactory(net::URLRequestContextGetter* request_context)
-      : request_context_(request_context) {}
-
-  void CreateLoaderAndStart(network::mojom::URLLoaderRequest request,
-                            int32_t routing_id,
-                            int32_t request_id,
-                            uint32_t options,
-                            const network::ResourceRequest& resource_request,
-                            network::mojom::URLLoaderClientPtr client,
-                            const net::MutableNetworkTrafficAnnotationTag&
-                                traffic_annotation) override {
-    WebThread::PostTask(
-        web::WebThread::IO, FROM_HERE,
-        base::BindOnce(URLLoaderFactory::CreateLoaderAndStartOnIO,
-                       request_context_, std::move(request), routing_id,
-                       request_id, options, resource_request,
-                       client.PassInterface(), traffic_annotation));
-  }
-
-  void Clone(network::mojom::URLLoaderFactoryRequest request) override {
-    NOTREACHED() << "Clone shouldn't be called on iOS";
-  }
-
- private:
-  static void CreateLoaderAndStartOnIO(
-      scoped_refptr<net::URLRequestContextGetter> request_getter,
-      network::mojom::URLLoaderRequest request,
-      int32_t routing_id,
-      int32_t request_id,
-      uint32_t options,
-      const network::ResourceRequest& resource_request,
-      network::mojom::URLLoaderClientPtrInfo client_info,
-      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
-    // Object deletes itself when the pipe or the URLRequestContext goes away.
-    network::mojom::URLLoaderClientPtr client(std::move(client_info));
-    new network::URLLoader(
-        request_getter, nullptr, std::move(request), options, resource_request,
-        false, std::move(client),
-        static_cast<net::NetworkTrafficAnnotationTag>(traffic_annotation), 0,
-        nullptr, nullptr);
-  }
-  scoped_refptr<net::URLRequestContextGetter> request_context_;
-};
-
 // static
 scoped_refptr<CertificatePolicyCache> BrowserState::GetCertificatePolicyCache(
     BrowserState* browser_state) {
@@ -175,12 +132,24 @@ BrowserState::BrowserState() : url_data_manager_ios_backend_(nullptr) {
   // an empty object to this via a private key.
   SetUserData(kBrowserStateIdentifierKey,
               std::make_unique<SupportsUserData::Data>());
+
+  // Set up shared_url_loader_factory_ for lazy creation.
+  shared_url_loader_factory_ =
+      base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+          base::BindOnce(&BrowserState::GetURLLoaderFactory,
+                         base::Unretained(this) /* safe due to Detach call */));
 }
 
 BrowserState::~BrowserState() {
   CHECK(GetUserData(kMojoWasInitialized))
       << "Attempting to destroy a BrowserState that never called "
       << "Initialize()";
+  shared_url_loader_factory_->Detach();
+
+  if (network_context_) {
+    web::WebThread::DeleteSoon(web::WebThread::IO, FROM_HERE,
+                               network_context_owner_.release());
+  }
 
   RemoveBrowserStateFromUserIdMap(this);
 
@@ -199,11 +168,37 @@ BrowserState::~BrowserState() {
 
 network::mojom::URLLoaderFactory* BrowserState::GetURLLoaderFactory() {
   if (!url_loader_factory_) {
-    url_loader_factory_ =
-        std::make_unique<URLLoaderFactory>(GetRequestContext());
+    CreateNetworkContextIfNecessary();
+    auto url_loader_factory_params =
+        network::mojom::URLLoaderFactoryParams::New();
+    url_loader_factory_params->process_id = network::mojom::kBrowserProcessId;
+    url_loader_factory_params->is_corb_enabled = false;
+    network_context_->CreateURLLoaderFactory(
+        mojo::MakeRequest(&url_loader_factory_),
+        std::move(url_loader_factory_params));
   }
 
   return url_loader_factory_.get();
+}
+
+network::mojom::CookieManager* BrowserState::GetCookieManager() {
+  if (!cookie_manager_) {
+    CreateNetworkContextIfNecessary();
+    network_context_->GetCookieManager(mojo::MakeRequest(&cookie_manager_));
+  }
+  return cookie_manager_.get();
+}
+
+void BrowserState::GetProxyResolvingSocketFactory(
+    network::mojom::ProxyResolvingSocketFactoryRequest request) {
+  CreateNetworkContextIfNecessary();
+
+  network_context_->CreateProxyResolvingSocketFactory(std::move(request));
+}
+
+scoped_refptr<network::SharedURLLoaderFactory>
+BrowserState::GetSharedURLLoaderFactory() {
+  return shared_url_loader_factory_;
 }
 
 URLDataManagerIOSBackend*
@@ -212,6 +207,18 @@ BrowserState::GetURLDataManagerIOSBackendOnIOThread() {
   if (!url_data_manager_ios_backend_)
     url_data_manager_ios_backend_ = new URLDataManagerIOSBackend();
   return url_data_manager_ios_backend_;
+}
+
+void BrowserState::CreateNetworkContextIfNecessary() {
+  if (network_context_owner_)
+    return;
+
+  DCHECK(!network_context_);
+
+  net::URLRequestContextGetter* request_context = GetRequestContext();
+  DCHECK(request_context);
+  network_context_owner_ =
+      std::make_unique<NetworkContextOwner>(request_context, &network_context_);
 }
 
 // static

@@ -15,7 +15,6 @@ namespace crash_reporter {
 namespace {
 
 using FilePosition = uint32_t;
-const FilePosition kInvalidFilePos = static_cast<FilePosition>(-1);
 
 // This class is a helper to edit minidump files written by MiniDumpWriteDump.
 // It assumes the minidump file it operates on has a directory entry pointing to
@@ -139,9 +138,14 @@ bool MinidumpUpdater::AppendSimpleDictionary(
     return false;
 
   // Seek to the tail of the file, where we're going to extend it.
-  FilePosition next_available_byte = file_->Seek(base::File::FROM_END, 0);
-  if (next_available_byte == kInvalidFilePos)
+  int64_t seek_position = file_->Seek(base::File::FROM_END, 0);
+
+  if (seek_position == -1 ||
+      seek_position > std::numeric_limits<FilePosition>::max()) {
     return false;
+  }
+
+  FilePosition next_available_byte = static_cast<FilePosition>(seek_position);
 
   // Write the key/value pairs and collect their locations.
   std::vector<crashpad::MinidumpSimpleStringDictionaryEntry> entries;
@@ -236,7 +240,6 @@ bool MiniDumpWriteDumpWithCrashpadInfo(const base::Process& process,
                                        const crashpad::UUID& report_id,
                                        base::File* dump_file) {
   DCHECK(process.IsValid());
-  DCHECK(exc_info);
   DCHECK(dump_file && dump_file->IsValid());
 
   // The CrashpadInfo structure and its associated directory entry are injected
@@ -280,9 +283,9 @@ bool MiniDumpWriteDumpWithCrashpadInfo(const base::Process& process,
 
 // Appends the full contents of |source| to |dest| from the current position
 // of |dest|.
-bool AppendFileContents(base::File* source, base::PlatformFile dest) {
+bool AppendFileContents(base::File* source, crashpad::FileWriter* dest) {
   DCHECK(source && source->IsValid());
-  DCHECK_NE(base::kInvalidPlatformFile, dest);
+  DCHECK(dest);
 
   // Rewind the source.
   if (source->Seek(base::File::FROM_BEGIN, 0) == -1)
@@ -293,16 +296,12 @@ bool AppendFileContents(base::File* source, base::PlatformFile dest) {
   while (true) {
     int bytes_read =
         source->ReadAtCurrentPos(&buf[0], static_cast<int>(buf.size()));
-    if (bytes_read == -1)
+    if (bytes_read < 0)
       return false;
     if (bytes_read == 0)
       break;
 
-    DWORD bytes_written = 0;
-    // Due to handle instrumentation, the destination can't be wrapped in
-    // a base::File, so we go basic Win32 API here.
-    if (!WriteFile(dest, &buf[0], bytes_read, &bytes_written, nullptr) ||
-        static_cast<int>(bytes_written) != bytes_read) {
+    if (!dest->Write(&buf[0], static_cast<size_t>(bytes_read))) {
       return false;
     }
   }
@@ -324,15 +323,11 @@ bool DumpAndReportProcess(const base::Process& process,
   if (!database)
     return false;
 
-  crashpad::CrashReportDatabase::NewReport* report = nullptr;
+  std::unique_ptr<crashpad::CrashReportDatabase::NewReport> report;
   crashpad::CrashReportDatabase::OperationStatus status =
       database->PrepareNewCrashReport(&report);
   if (status != crashpad::CrashReportDatabase::kNoError)
     return false;
-
-  // Make sure we release the report on early exit.
-  crashpad::CrashReportDatabase::CallErrorWritingCrashReport on_error(
-      database.get(), report);
 
   crashpad::UUID client_id;
   crashpad::Settings* settings = database->GetSettings();
@@ -358,16 +353,14 @@ bool DumpAndReportProcess(const base::Process& process,
   // Write the minidump to the temp file, and then copy the data to the
   // Crashpad-provided handle, as the latter is only open for write.
   if (!MiniDumpWriteDumpWithCrashpadInfo(process, minidump_type, exc_info,
-                                         crash_keys, client_id, report->uuid,
-                                         &dump_file) ||
-      !AppendFileContents(&dump_file, report->handle)) {
+                                         crash_keys, client_id,
+                                         report->ReportID(), &dump_file) ||
+      !AppendFileContents(&dump_file, report->Writer())) {
     return false;
   }
 
-  on_error.Disarm();
-
   crashpad::UUID report_id = {};
-  status = database->FinishedWritingCrashReport(report, &report_id);
+  status = database->FinishedWritingCrashReport(std::move(report), &report_id);
   if (status != crashpad::CrashReportDatabase::kNoError)
     return false;
 

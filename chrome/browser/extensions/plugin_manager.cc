@@ -6,17 +6,18 @@
 
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
-#include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/common/pepper_plugin_info.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/mime_types_handler.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_NACL)
@@ -70,6 +71,7 @@ void PluginManager::OnExtensionLoaded(content::BrowserContext* browser_context,
     info.type = content::WebPluginInfo::PLUGIN_TYPE_BROWSER_PLUGIN;
     info.name = base::UTF8ToUTF16(extension->name());
     info.path = handler->GetPluginPath();
+    info.background_color = handler->GetBackgroundColor();
 
     for (std::set<std::string>::const_iterator mime_type =
          handler->mime_type_set().begin();
@@ -141,9 +143,7 @@ void PluginManager::UpdatePluginListWithNaClModules() {
   // there is a MIME type that module wants to handle, so we need to add that
   // MIME type to plugins which handle NaCl modules in order to allow the
   // individual modules to handle these types.
-  base::FilePath path;
-  if (!PathService::Get(chrome::FILE_NACL_PLUGIN, &path))
-    return;
+  static const base::FilePath path(ChromeContentClient::kNaClPluginFileName);
   const content::PepperPluginInfo* pepper_info =
       PluginService::GetInstance()->GetRegisteredPpapiPluginInfo(path);
   if (!pepper_info)

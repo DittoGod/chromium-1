@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -22,24 +23,6 @@
           "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutIFrame IFRAME id='iframe'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow HTML",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "appeared"
     }
   ]
 }

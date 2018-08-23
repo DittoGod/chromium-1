@@ -11,7 +11,64 @@ FakeAssistantManagerServiceImpl::FakeAssistantManagerServiceImpl() = default;
 
 FakeAssistantManagerServiceImpl::~FakeAssistantManagerServiceImpl() = default;
 
-void FakeAssistantManagerServiceImpl::Start() {}
+void FakeAssistantManagerServiceImpl::Start(const std::string& access_token,
+                                            base::OnceClosure callback) {
+  state_ = State::RUNNING;
+
+  if (callback)
+    std::move(callback).Run();
+}
+
+void FakeAssistantManagerServiceImpl::Stop() {
+  state_ = State::STOPPED;
+}
+
+void FakeAssistantManagerServiceImpl::SetAccessToken(
+    const std::string& access_token) {}
+
+void FakeAssistantManagerServiceImpl::EnableListening(bool enable) {}
+
+AssistantManagerService::State FakeAssistantManagerServiceImpl::GetState()
+    const {
+  return state_;
+}
+
+AssistantSettingsManager*
+FakeAssistantManagerServiceImpl::GetAssistantSettingsManager() {
+  return nullptr;
+}
+
+void FakeAssistantManagerServiceImpl::SendGetSettingsUiRequest(
+    const std::string& selector,
+    GetSettingsUiResponseCallback callback) {}
+
+void FakeAssistantManagerServiceImpl::SendUpdateSettingsUiRequest(
+    const std::string& update,
+    UpdateSettingsUiResponseCallback callback) {}
+
+void FakeAssistantManagerServiceImpl::RequestScreenContext(
+    const gfx::Rect& region,
+    bool from_user,
+    RequestScreenContextCallback callback) {}
+
+void FakeAssistantManagerServiceImpl::StartVoiceInteraction() {}
+
+void FakeAssistantManagerServiceImpl::StopActiveInteraction() {}
+
+void FakeAssistantManagerServiceImpl::SendTextQuery(const std::string& query) {}
+
+void FakeAssistantManagerServiceImpl::AddAssistantInteractionSubscriber(
+    mojom::AssistantInteractionSubscriberPtr subscriber) {}
+
+void FakeAssistantManagerServiceImpl::AddAssistantNotificationSubscriber(
+    mojom::AssistantNotificationSubscriberPtr subscriber) {}
+
+void FakeAssistantManagerServiceImpl::RetrieveNotification(
+    mojom::AssistantNotificationPtr notification,
+    int action_index) {}
+
+void FakeAssistantManagerServiceImpl::DismissNotification(
+    mojom::AssistantNotificationPtr notification) {}
 
 }  // namespace assistant
 }  // namespace chromeos

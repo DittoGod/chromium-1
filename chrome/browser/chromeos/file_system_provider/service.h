@@ -111,6 +111,11 @@ class Service : public KeyedService,
   // items are copied.
   std::vector<ProvidedFileSystemInfo> GetProvidedFileSystemInfoList();
 
+  // Returns a list of information of the currently provided file systems for
+  // |provider_id|. All items are copied.
+  std::vector<ProvidedFileSystemInfo> GetProvidedFileSystemInfoList(
+      const ProviderId& provider_id);
+
   // Returns an immutable map of all registered providers.
   const ProviderMap& GetProviders() const;
 
@@ -198,7 +203,7 @@ class Service : public KeyedService,
 
   Profile* profile_;
   extensions::ExtensionRegistry* extension_registry_;  // Not owned.
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
   std::map<FileSystemKey, std::unique_ptr<ProvidedFileSystemInterface>>
       file_system_map_;
   std::map<std::string, FileSystemKey> mount_point_name_to_key_map_;

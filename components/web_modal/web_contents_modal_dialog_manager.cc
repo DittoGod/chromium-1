@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "content/public/browser/navigation_handle.h"
@@ -17,8 +16,6 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 
 using content::WebContents;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(web_modal::WebContentsModalDialogManager);
 
 namespace web_modal {
 
@@ -47,11 +44,8 @@ void WebContentsModalDialogManager::ShowDialogWithManager(
 
   if (child_dialogs_.size() == 1) {
     BlockWebContentsInteraction(true);
-    if (delegate_ && delegate_->IsWebContentsVisible(web_contents())) {
-      LOG(ERROR) << "Initial show";
-      base::debug::StackTrace().Print();
+    if (delegate_ && delegate_->IsWebContentsVisible(web_contents()))
       child_dialogs_.back().manager->Show();
-    }
   }
 }
 
@@ -168,15 +162,10 @@ void WebContentsModalDialogManager::OnVisibilityChanged(
     return;
   }
 
-  if (web_contents_is_hidden_) {
-    LOG(ERROR) << "Hide";
-    base::debug::StackTrace().Print();
+  if (web_contents_is_hidden_)
     child_dialogs_.front().manager->Hide();
-  } else {
-    LOG(ERROR) << "Show";
-    base::debug::StackTrace().Print();
+  else
     child_dialogs_.front().manager->Show();
-  }
 }
 
 void WebContentsModalDialogManager::WebContentsDestroyed() {

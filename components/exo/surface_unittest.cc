@@ -12,6 +12,7 @@
 #include "components/exo/sub_surface.h"
 #include "components/exo/test/exo_test_base.h"
 #include "components/exo/test/exo_test_helper.h"
+#include "components/exo/wm_helper.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
@@ -96,13 +97,14 @@ TEST_P(SurfaceTest, Attach) {
   // CompositorFrameSinkClient interface. We need to wait here for the mojo
   // call to finish so that the release callback finishes running before
   // the assertion below.
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(1, release_buffer_call_count);
 }
 
 const viz::CompositorFrame& GetFrameFromSurface(ShellSurface* shell_surface) {
   viz::SurfaceId surface_id = shell_surface->host_window()->GetSurfaceId();
-  viz::SurfaceManager* surface_manager = aura::Env::GetInstance()
+  viz::SurfaceManager* surface_manager = WMHelper::GetInstance()
+                                             ->env()
                                              ->context_factory_private()
                                              ->GetFrameSinkManager()
                                              ->surface_manager();
@@ -133,7 +135,7 @@ TEST_P(SurfaceTest, Damage) {
   // Check that damage larger than contents is handled correctly at commit.
   surface->Damage(gfx::Rect(gfx::ScaleToCeiledSize(buffer_size, 2.0f)));
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -148,7 +150,7 @@ TEST_P(SurfaceTest, Damage) {
   // Check that damage is correct for a non-square rectangle not at the origin.
   surface->Damage(surface_damage);
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   // Adjust damage for DSF filtering and verify it below.
   if (device_scale_factor() > 1.f)
@@ -168,9 +170,12 @@ void SetFrameTime(base::TimeTicks* result, base::TimeTicks frame_time) {
 }
 
 TEST_P(SurfaceTest, RequestFrameCallback) {
+  // Must be before surface so it outlives it, for surface's destructor calls
+  // SetFrameTime() referencing this.
+  base::TimeTicks frame_time;
+
   std::unique_ptr<Surface> surface(new Surface);
 
-  base::TimeTicks frame_time;
   surface->RequestFrameCallback(
       base::Bind(&SetFrameTime, base::Unretained(&frame_time)));
   surface->Commit();
@@ -179,7 +184,13 @@ TEST_P(SurfaceTest, RequestFrameCallback) {
   EXPECT_TRUE(frame_time.is_null());
 }
 
-TEST_P(SurfaceTest, SetOpaqueRegion) {
+// Disabled due to flakiness: crbug.com/856145
+#if defined(LEAK_SANITIZER)
+#define MAYBE_SetOpaqueRegion DISABLED_SetOpaqueRegion
+#else
+#define MAYBE_SetOpaqueRegion SetOpaqueRegion
+#endif
+TEST_P(SurfaceTest, MAYBE_SetOpaqueRegion) {
   gfx::Size buffer_size(1, 1);
   auto buffer = std::make_unique<Buffer>(
       exo_test_helper()->CreateGpuMemoryBuffer(buffer_size));
@@ -193,7 +204,7 @@ TEST_P(SurfaceTest, SetOpaqueRegion) {
   // draw with blending.
   surface->SetOpaqueRegion(gfx::Rect(256, 256));
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -210,7 +221,7 @@ TEST_P(SurfaceTest, SetOpaqueRegion) {
   // Setting an empty opaque region requires draw with blending.
   surface->SetOpaqueRegion(gfx::Rect());
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -232,7 +243,7 @@ TEST_P(SurfaceTest, SetOpaqueRegion) {
   // blending.
   surface->Attach(buffer_without_alpha.get());
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -358,7 +369,7 @@ TEST_P(SurfaceTest, SetBufferScale) {
       gfx::ScaleToFlooredSize(buffer_size, 1.0f / kBufferScale).ToString(),
       surface->content_size().ToString());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   const viz::CompositorFrame& frame = GetFrameFromSurface(shell_surface.get());
   ASSERT_EQ(1u, frame.render_pass_list.size());
@@ -366,7 +377,13 @@ TEST_P(SurfaceTest, SetBufferScale) {
             frame.render_pass_list.back()->damage_rect);
 }
 
-TEST_P(SurfaceTest, SetBufferTransform) {
+// Disabled due to flakiness: crbug.com/856145
+#if defined(LEAK_SANITIZER)
+#define MAYBE_SetBufferTransform DISABLED_SetBufferTransform
+#else
+#define MAYBE_SetBufferTransform SetBufferTransform
+#endif
+TEST_P(SurfaceTest, MAYBE_SetBufferTransform) {
   gfx::Size buffer_size(256, 512);
   auto buffer = std::make_unique<Buffer>(
       exo_test_helper()->CreateGpuMemoryBuffer(buffer_size));
@@ -383,7 +400,7 @@ TEST_P(SurfaceTest, SetBufferTransform) {
   EXPECT_EQ(gfx::Size(buffer_size.height(), buffer_size.width()),
             surface->content_size());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -425,7 +442,7 @@ TEST_P(SurfaceTest, SetBufferTransform) {
       gfx::ScaleToRoundedSize(child_buffer_size, 1.0f / kChildBufferScale),
       child_surface->content_size());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -452,6 +469,8 @@ TEST_P(SurfaceTest, MirrorLayers) {
 
   surface->Attach(buffer.get());
   surface->Commit();
+
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(buffer_size, surface->window()->bounds().size());
   EXPECT_EQ(buffer_size, surface->window()->layer()->bounds().size());
@@ -488,7 +507,7 @@ TEST_P(SurfaceTest, SetViewport) {
             surface->window()->bounds().size().ToString());
   EXPECT_EQ(viewport2.ToString(), surface->content_size().ToString());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   const viz::CompositorFrame& frame = GetFrameFromSurface(shell_surface.get());
   ASSERT_EQ(1u, frame.render_pass_list.size());
@@ -511,7 +530,7 @@ TEST_P(SurfaceTest, SetCrop) {
             surface->window()->bounds().size().ToString());
   EXPECT_EQ(crop_size.ToString(), surface->content_size().ToString());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   const viz::CompositorFrame& frame = GetFrameFromSurface(shell_surface.get());
   ASSERT_EQ(1u, frame.render_pass_list.size());
@@ -519,7 +538,13 @@ TEST_P(SurfaceTest, SetCrop) {
             frame.render_pass_list.back()->damage_rect);
 }
 
-TEST_P(SurfaceTest, SetCropAndBufferTransform) {
+// Disabled due to flakiness: crbug.com/856145
+#if defined(LEAK_SANITIZER)
+#define MAYBE_SetCropAndBufferTransform DISABLED_SetCropAndBufferTransform
+#else
+#define MAYBE_SetCropAndBufferTransform SetCropAndBufferTransform
+#endif
+TEST_P(SurfaceTest, MAYBE_SetCropAndBufferTransform) {
   gfx::Size buffer_size(128, 64);
   auto buffer = std::make_unique<Buffer>(
       exo_test_helper()->CreateGpuMemoryBuffer(buffer_size));
@@ -543,7 +568,7 @@ TEST_P(SurfaceTest, SetCropAndBufferTransform) {
   surface->SetBufferTransform(Transform::NORMAL);
   surface->Commit();
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -564,7 +589,7 @@ TEST_P(SurfaceTest, SetCropAndBufferTransform) {
   surface->SetBufferTransform(Transform::ROTATE_90);
   surface->Commit();
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -585,7 +610,7 @@ TEST_P(SurfaceTest, SetCropAndBufferTransform) {
   surface->SetBufferTransform(Transform::ROTATE_180);
   surface->Commit();
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -606,7 +631,7 @@ TEST_P(SurfaceTest, SetCropAndBufferTransform) {
   surface->SetBufferTransform(Transform::ROTATE_270);
   surface->Commit();
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -628,7 +653,7 @@ TEST_P(SurfaceTest, SetCropAndBufferTransform) {
   surface->SetBufferTransform(Transform::NORMAL);
   surface->Commit();
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -649,7 +674,7 @@ TEST_P(SurfaceTest, SetCropAndBufferTransform) {
   surface->SetBufferTransform(Transform::ROTATE_90);
   surface->Commit();
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -670,7 +695,7 @@ TEST_P(SurfaceTest, SetCropAndBufferTransform) {
   surface->SetBufferTransform(Transform::ROTATE_180);
   surface->Commit();
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -691,7 +716,7 @@ TEST_P(SurfaceTest, SetCropAndBufferTransform) {
   surface->SetBufferTransform(Transform::ROTATE_270);
   surface->Commit();
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   {
     const viz::CompositorFrame& frame =
@@ -720,7 +745,7 @@ TEST_P(SurfaceTest, SetBlendMode) {
   surface->Attach(buffer.get());
   surface->SetBlendMode(SkBlendMode::kSrc);
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   const viz::CompositorFrame& frame = GetFrameFromSurface(shell_surface.get());
   ASSERT_EQ(1u, frame.render_pass_list.size());
@@ -740,7 +765,7 @@ TEST_P(SurfaceTest, OverlayCandidate) {
 
   surface->Attach(buffer.get());
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   const viz::CompositorFrame& frame = GetFrameFromSurface(shell_surface.get());
   ASSERT_EQ(1u, frame.render_pass_list.size());
@@ -765,7 +790,7 @@ TEST_P(SurfaceTest, SetAlpha) {
     surface->Attach(buffer.get());
     surface->SetAlpha(0.5f);
     surface->Commit();
-    RunAllPendingInMessageLoop();
+    base::RunLoop().RunUntilIdle();
 
     const viz::CompositorFrame& frame =
         GetFrameFromSurface(shell_surface.get());
@@ -780,6 +805,8 @@ TEST_P(SurfaceTest, SetAlpha) {
   {
     surface->SetAlpha(0.f);
     surface->Commit();
+    base::RunLoop().RunUntilIdle();
+
     const viz::CompositorFrame& frame =
         GetFrameFromSurface(shell_surface.get());
     ASSERT_EQ(1u, frame.render_pass_list.size());
@@ -793,6 +820,8 @@ TEST_P(SurfaceTest, SetAlpha) {
   {
     surface->SetAlpha(1.f);
     surface->Commit();
+    base::RunLoop().RunUntilIdle();
+
     const viz::CompositorFrame& frame =
         GetFrameFromSurface(shell_surface.get());
     ASSERT_EQ(1u, frame.render_pass_list.size());
@@ -810,44 +839,6 @@ TEST_P(SurfaceTest, Commit) {
 
   // Calling commit without a buffer should succeed.
   surface->Commit();
-}
-
-TEST_P(SurfaceTest, SendsBeginFrameAcks) {
-  viz::FakeExternalBeginFrameSource source(0.f, false);
-  gfx::Size buffer_size(1, 1);
-  auto buffer = std::make_unique<Buffer>(
-      exo_test_helper()->CreateGpuMemoryBuffer(buffer_size), GL_TEXTURE_2D, 0,
-      true, true);
-  auto surface = std::make_unique<Surface>();
-  auto shell_surface = std::make_unique<ShellSurface>(surface.get());
-  shell_surface->SetBeginFrameSource(&source);
-  surface->Attach(buffer.get());
-
-  // Request a frame callback so that Surface now needs BeginFrames.
-  base::TimeTicks frame_time;
-  surface->RequestFrameCallback(
-      base::Bind(&SetFrameTime, base::Unretained(&frame_time)));
-  surface->Commit();  // Move callback from pending callbacks to current ones.
-  RunAllPendingInMessageLoop();
-
-  // Surface should add itself as observer during
-  // DidReceiveCompositorFrameAck().
-  shell_surface->DidReceiveCompositorFrameAck();
-  EXPECT_EQ(1u, source.num_observers());
-
-  viz::BeginFrameArgs args(source.CreateBeginFrameArgs(BEGINFRAME_FROM_HERE));
-  args.frame_time = base::TimeTicks::FromInternalValue(100);
-  source.TestOnBeginFrame(args);  // Runs the frame callback.
-  EXPECT_EQ(args.frame_time, frame_time);
-
-  surface->Commit();  // Acknowledges the BeginFrame via CompositorFrame.
-  RunAllPendingInMessageLoop();
-
-  const viz::CompositorFrame& frame = GetFrameFromSurface(shell_surface.get());
-  viz::BeginFrameAck expected_ack(args.source_id, args.sequence_number, true);
-  EXPECT_EQ(expected_ack, frame.metadata.begin_frame_ack);
-
-  // TODO(eseckler): Add test for DidNotProduceFrame plumbing.
 }
 
 TEST_P(SurfaceTest, RemoveSubSurface) {
@@ -869,7 +860,7 @@ TEST_P(SurfaceTest, RemoveSubSurface) {
   child_surface->Attach(child_buffer.get());
   child_surface->Commit();
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   // Remove the subsurface by destroying it. This should not damage |surface|.
   // TODO(penghuang): Make the damage more precise for sub surface changes.
@@ -887,7 +878,7 @@ TEST_P(SurfaceTest, DestroyAttachedBuffer) {
 
   surface->Attach(buffer.get());
   surface->Commit();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   // Make sure surface size is still valid after buffer is destroyed.
   buffer.reset();

@@ -17,27 +17,11 @@ settings.FingerprintSetupStep = {
 (function() {
 
 /**
- * The duration in ms of a fingerprint icon flash when a user touches the
- * fingerprint sensor during an enroll session.
- * @type {number}
- */
-const FLASH_DURATION_MS = 300;
-
-/**
  * The amount of milliseconds after a successful but not completed scan before a
  * message shows up telling the user to scan their finger again.
  * @type {number}
  */
 const SHOW_TAP_SENSOR_MESSAGE_DELAY_MS = 2000;
-
-/**
- * The estimated amount of complete scans needed to enroll a fingerprint. Used
- * to help us estimate the progress of an enroll session.
- * TODO(xiaoyinh@): This will be replaced by percentage of completion in the
- * future.
- * @type {number}
- */
-const SUCCESSFUL_SCANS_TO_COMPLETE = 15;
 
 Polymer({
   is: 'settings-setup-fingerprint-dialog',
@@ -63,14 +47,6 @@ Polymer({
   },
 
   /**
-   * The number of scans that have been received during setup. This is used to
-   * approximate the progress of the setup.
-   * @type {number}
-   * @private
-   */
-  receivedScanCount_: 0,
-
-  /**
    * A message shows after the user has not scanned a finger during setup. This
    * is the set timeout id.
    * @type {number}
@@ -81,15 +57,22 @@ Polymer({
   /** @private {?settings.FingerprintBrowserProxy}*/
   browserProxy_: null,
 
+  /**
+   * The percentage of completion that has been received during setup.
+   * This is used to approximate the progress of the setup.
+   * The value within [0, 100] represents the percent of enrollment completion.
+   * @type {number}
+   * @private
+   */
+  percentComplete_: 0,
+
   /** @override */
   attached: function() {
     this.addWebUIListener(
         'on-fingerprint-scan-received', this.onScanReceived_.bind(this));
     this.browserProxy_ = settings.FingerprintBrowserProxyImpl.getInstance();
 
-    this.$.arc.clearCanvas();
-    this.$.arc.drawBackgroundCircle();
-    this.$.arc.drawShadow(10, 0, 0);
+    this.$.arc.reset();
     this.browserProxy_.startEnroll();
     this.$.dialog.showModal();
   },
@@ -126,8 +109,8 @@ Polymer({
    */
   reset_: function() {
     this.step_ = settings.FingerprintSetupStep.LOCATE_SCANNER;
-    this.receivedScanCount_ = 0;
-    this.$.arc.clearCanvas();
+    this.percentComplete_ = 0;
+    this.$.arc.reset();
     this.clearSensorMessageTimeout_();
   },
 
@@ -149,37 +132,27 @@ Polymer({
   onScanReceived_: function(scan) {
     switch (this.step_) {
       case settings.FingerprintSetupStep.LOCATE_SCANNER:
+        this.$.arc.reset();
+        this.step_ = settings.FingerprintSetupStep.MOVE_FINGER;
+        this.percentComplete_ = 0;
+        break;
       case settings.FingerprintSetupStep.MOVE_FINGER:
-        if (this.step_ == settings.FingerprintSetupStep.LOCATE_SCANNER) {
-          // Clear canvas because there will be shadows present at this step.
-          this.$.arc.clearCanvas();
-          this.$.arc.drawBackgroundCircle();
-
-          this.step_ = settings.FingerprintSetupStep.MOVE_FINGER;
-          this.receivedScanCount_ = 0;
-        }
-        const slice = 2 * Math.PI / SUCCESSFUL_SCANS_TO_COMPLETE;
         if (scan.isComplete) {
           this.problemMessage_ = '';
           this.step_ = settings.FingerprintSetupStep.READY;
-          this.$.arc.animate(this.receivedScanCount_ * slice, 2 * Math.PI);
+          this.$.arc.setProgress(
+              this.percentComplete_, 100 /*currPercentComplete*/,
+              true /*isComplete*/);
           this.clearSensorMessageTimeout_();
         } else {
           this.setProblem_(scan.result);
           if (scan.result == settings.FingerprintResultType.SUCCESS) {
-            this.problemMessage_ = '';
-            // Flash the fingerprint icon blue so that users get some feedback
-            // when a successful scan has been registered.
-            this.$.image.animate(
-                {
-                  fill: ['var(--google-blue-700)', 'var(--google-grey-500)'],
-                  opacity: [0.7, 1.0],
-                },
-                FLASH_DURATION_MS);
-            this.$.arc.animate(
-                this.receivedScanCount_ * slice,
-                (this.receivedScanCount_ + 1) * slice);
-            this.receivedScanCount_++;
+            if (scan.percentComplete > this.percentComplete_) {
+              this.$.arc.setProgress(
+                  this.percentComplete_, scan.percentComplete,
+                  false /*isComplete*/);
+              this.percentComplete_ = scan.percentComplete;
+            }
           }
         }
         break;
@@ -196,14 +169,15 @@ Polymer({
    * on.
    * @param {!settings.FingerprintSetupStep} step The current step the
    *     fingerprint setup is on.
+   * @param {string} problemMessage Message for the scan result.
    * @private
    */
-  getInstructionMessage_: function(step) {
+  getInstructionMessage_: function(step, problemMessage) {
     switch (step) {
       case settings.FingerprintSetupStep.LOCATE_SCANNER:
         return this.i18n('configureFingerprintInstructionLocateScannerStep');
       case settings.FingerprintSetupStep.MOVE_FINGER:
-        return this.i18n('configureFingerprintInstructionMoveFingerStep');
+        return problemMessage;
       case settings.FingerprintSetupStep.READY:
         return this.i18n('configureFingerprintInstructionReadyStep');
     }
@@ -226,20 +200,11 @@ Polymer({
         }, SHOW_TAP_SENSOR_MESSAGE_DELAY_MS);
         break;
       case settings.FingerprintResultType.PARTIAL:
-        this.problemMessage_ = this.i18n('configureFingerprintPartialData');
-        break;
       case settings.FingerprintResultType.INSUFFICIENT:
-        this.problemMessage_ =
-            this.i18n('configureFingerprintInsufficientData');
-        break;
       case settings.FingerprintResultType.SENSOR_DIRTY:
-        this.problemMessage_ = this.i18n('configureFingerprintSensorDirty');
-        break;
       case settings.FingerprintResultType.TOO_SLOW:
-        this.problemMessage_ = this.i18n('configureFingerprintTooSlow');
-        break;
       case settings.FingerprintResultType.TOO_FAST:
-        this.problemMessage_ = this.i18n('configureFingerprintTooFast');
+        this.problemMessage_ = this.i18n('configureFingerprintTryAgain');
         break;
       case settings.FingerprintResultType.IMMOBILE:
         this.problemMessage_ = this.i18n('configureFingerprintImmobile');
@@ -291,9 +256,26 @@ Polymer({
   onAddAnotherFingerprint_: function() {
     this.fire('add-fingerprint');
     this.reset_();
-    this.$.arc.drawBackgroundCircle();
-    this.$.arc.drawShadow(10, 0, 0);
+    this.$.arc.reset();
+    this.step_ = settings.FingerprintSetupStep.MOVE_FINGER;
     this.browserProxy_.startEnroll();
+  },
+
+  /**
+   * Whether scanner location should be shown at the current step.
+   * @private
+   */
+  showScannerLocation_: function() {
+    return this.step_ == settings.FingerprintSetupStep.LOCATE_SCANNER;
+  },
+
+  /**
+   * Whether fingerprint progress circle should be shown at the current step.
+   * @private
+   */
+  showArc_: function() {
+    return this.step_ == settings.FingerprintSetupStep.MOVE_FINGER ||
+        this.step_ == settings.FingerprintSetupStep.READY;
   },
 });
 })();

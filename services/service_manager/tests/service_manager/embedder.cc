@@ -7,7 +7,6 @@
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/service_manager/public/c/main.h"
@@ -80,7 +79,7 @@ class Embedder : public service_manager::Service,
   }
 
   bool OnServiceManagerConnectionLost() override {
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    context()->QuitNow();
     return true;
   }
 

@@ -21,8 +21,15 @@
 // The expected size of the file being downloaded in bytes.
 @property(nonatomic) int64_t countOfBytesExpectedToReceive;
 
+// Download progress. 1.0 if the download is complete.
+@property(nonatomic) float progress;
+
 // State of the download task. Default is kDownloadManagerStateNotStarted.
 @property(nonatomic) DownloadManagerState state;
+
+// Visible state of Install Google Drive button.
+@property(nonatomic, getter=isInstallDriveButtonVisible)
+    BOOL installDriveButtonVisible;
 
 @end
 

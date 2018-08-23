@@ -25,20 +25,18 @@ const CGFloat kBackgroundRGBComponents[] = {0.75f, 0.74f, 0.76f};
 
 }  // namespace
 
-@interface CRWWebViewContentView () {
-  // Backs up property of the same name if |_webView| is a WKWebView.
-  CGFloat _topContentPadding;
-}
+@interface CRWWebViewContentView ()
 
 // Changes web view frame to match |self.bounds| and optionally accommodates for
-// |_topContentPadding| (iff |_webView| is a WKWebView).
+// |contentInset|.
 - (void)updateWebViewFrame;
 
 @end
 
 @implementation CRWWebViewContentView
-
-@synthesize shouldUseInsetForTopPadding = _shouldUseInsetForTopPadding;
+@synthesize contentOffset = _contentOffset;
+@synthesize contentInset = _contentInset;
+@synthesize shouldUseViewContentInset = _shouldUseViewContentInset;
 @synthesize scrollView = _scrollView;
 @synthesize webView = _webView;
 
@@ -111,58 +109,70 @@ const CGFloat kBackgroundRGBComponents[] = {0.75f, 0.74f, 0.76f};
   return YES;
 }
 
-- (CGFloat)topContentPadding {
-  BOOL isSettingWebViewFrame = !self.shouldUseInsetForTopPadding;
-  return isSettingWebViewFrame ? _topContentPadding
-                               : [_scrollView contentInset].top;
+- (void)setContentOffset:(CGPoint)contentOffset {
+  if (CGPointEqualToPoint(_contentOffset, contentOffset))
+    return;
+  _contentOffset = contentOffset;
+  [self updateWebViewFrame];
 }
 
-- (void)setTopContentPadding:(CGFloat)newTopPadding {
-  CGFloat delta = std::fabs(_topContentPadding - newTopPadding);
+- (UIEdgeInsets)contentInset {
+  return self.shouldUseViewContentInset ? [_scrollView contentInset]
+                                        : _contentInset;
+}
+
+- (void)setContentInset:(UIEdgeInsets)contentInset {
+  UIEdgeInsets oldInsets = self.contentInset;
+  CGFloat delta = std::fabs(oldInsets.top - contentInset.top) +
+                  std::fabs(oldInsets.left - contentInset.left) +
+                  std::fabs(oldInsets.bottom - contentInset.bottom) +
+                  std::fabs(oldInsets.right - contentInset.right);
   if (delta <= std::numeric_limits<CGFloat>::epsilon())
     return;
-  if (self.shouldUseInsetForTopPadding) {
-    UIEdgeInsets inset = [_scrollView contentInset];
-    inset.top = newTopPadding;
-    [_scrollView setContentInset:inset];
+  _contentInset = contentInset;
+  if (self.shouldUseViewContentInset) {
+    [_scrollView setContentInset:contentInset];
   } else {
-    // Update the content offset of the scroll view to match the padding
-    // that will be included in the frame.
-    CGFloat paddingChange = newTopPadding - _topContentPadding;
-    CGPoint contentOffset = [_scrollView contentOffset];
-    contentOffset.y += paddingChange;
-    [_scrollView setContentOffset:contentOffset];
-    _topContentPadding = newTopPadding;
-    // Update web view frame immediately to make |topContentPadding|
-    // animatable.
-    [self updateWebViewFrame];
-    // Setting WKWebView frame can mistakenly reset contentOffset. Change it
-    // back to the initial value if necessary.
-    // TODO(crbug.com/645857): Remove this workaround once WebKit bug is
-    // fixed.
-    if ([_scrollView contentOffset].y != contentOffset.y) {
-      [_scrollView setContentOffset:contentOffset];
-    }
+    [self resizeViewportForContentInsetChangeFromInsets:oldInsets];
   }
 }
 
-- (void)setShouldUseInsetForTopPadding:(BOOL)shouldUseInsetForTopPadding {
-  if (_shouldUseInsetForTopPadding != shouldUseInsetForTopPadding) {
-    CGFloat oldTopContentPadding = self.topContentPadding;
-    self.topContentPadding = 0.0f;
-    _shouldUseInsetForTopPadding = shouldUseInsetForTopPadding;
-    self.topContentPadding = oldTopContentPadding;
+- (void)setShouldUseViewContentInset:(BOOL)shouldUseViewContentInset {
+  if (_shouldUseViewContentInset != shouldUseViewContentInset) {
+    UIEdgeInsets oldContentInset = self.contentInset;
+    self.contentInset = UIEdgeInsetsZero;
+    _shouldUseViewContentInset = shouldUseViewContentInset;
+    self.contentInset = oldContentInset;
   }
 }
 
 #pragma mark Private methods
 
-- (void)updateWebViewFrame {
-  CGRect webViewFrame = self.bounds;
-  webViewFrame.size.height -= _topContentPadding;
-  webViewFrame.origin.y += _topContentPadding;
+// Updates the viewport by updating the web view frame after self.contentInset
+// is changed to a new value from |oldInsets|.
+- (void)resizeViewportForContentInsetChangeFromInsets:(UIEdgeInsets)oldInsets {
+  // Update the content offset of the scroll view to match the padding
+  // that will be included in the frame.
+  CGFloat topPaddingChange = self.contentInset.top - oldInsets.top;
+  CGPoint contentOffset = [_scrollView contentOffset];
+  contentOffset.y += topPaddingChange;
+  [_scrollView setContentOffset:contentOffset];
+  // Update web view frame immediately to make |contentInset| animatable.
+  [self updateWebViewFrame];
+  // Setting WKWebView frame can mistakenly reset contentOffset. Change it
+  // back to the initial value if necessary.
+  // TODO(crbug.com/645857): Remove this workaround once WebKit bug is
+  // fixed.
+  if ([_scrollView contentOffset].y != contentOffset.y) {
+    [_scrollView setContentOffset:contentOffset];
+  }
+}
 
-  self.webView.frame = webViewFrame;
+- (void)updateWebViewFrame {
+  CGRect frame = self.bounds;
+  frame = UIEdgeInsetsInsetRect(frame, _contentInset);
+  frame = CGRectOffset(frame, _contentOffset.x, _contentOffset.y);
+  self.webView.frame = frame;
 }
 
 @end

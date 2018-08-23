@@ -67,7 +67,11 @@ public interface PasswordManagerHandler {
     /**
      * Trigger serializing the saved passwords in the background.
      *
-     * @param callback is called on completion, with the serialized passwords as argument.
+     * @param targetPath is the file to which the serialized passwords should be written.
+     * @param successCallback is called on successful completion, with the count of the serialized
+     * passwords as argument.
+     * @param errorCallback is called on failure, with the error message as argument.
      */
-    void serializePasswords(Callback<String> callback);
+    void serializePasswords(
+            String targetPath, Callback<Integer> successCallback, Callback<String> errorCallback);
 }

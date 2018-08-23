@@ -38,35 +38,43 @@ void TabActivitySimulator::TestWebContentsObserver::WebContentsDestroyed() {
 TabActivitySimulator::TabActivitySimulator() = default;
 TabActivitySimulator::~TabActivitySimulator() = default;
 
-void TabActivitySimulator::Navigate(
-    content::WebContents* web_contents,
-    const GURL& url,
-    ui::PageTransition page_transition = ui::PAGE_TRANSITION_LINK) {
+void TabActivitySimulator::Navigate(content::WebContents* web_contents,
+                                    const GURL& url,
+                                    ui::PageTransition page_transition) {
   std::unique_ptr<content::NavigationSimulator> navigation =
       content::NavigationSimulator::CreateBrowserInitiated(url, web_contents);
   navigation->SetTransition(page_transition);
   navigation->Commit();
 }
 
-content::WebContents* TabActivitySimulator::AddWebContentsAndNavigate(
-    TabStripModel* tab_strip_model,
-    const GURL& initial_url,
-    ui::PageTransition page_transition) {
-  content::WebContents::CreateParams params(tab_strip_model->profile(),
-                                            nullptr);
-  // Create as a background tab if there are other tabs in the tab strip.
-  params.initially_hidden = tab_strip_model->count() > 0;
-  content::WebContents* test_contents =
-      content::WebContentsTester::CreateTestWebContents(params);
+std::unique_ptr<content::WebContents> TabActivitySimulator::CreateWebContents(
+    content::BrowserContext* browser_context,
+    bool initially_visible) {
+  content::WebContents::CreateParams params(browser_context, nullptr);
+  params.initially_hidden = !initially_visible;
+  std::unique_ptr<content::WebContents> test_contents(
+      content::WebContentsTester::CreateTestWebContents(params));
 
   // Create the TestWebContentsObserver to observe |test_contents|. When the
   // WebContents is destroyed, the observer will be reset automatically.
   observers_.push_back(
-      std::make_unique<TestWebContentsObserver>(test_contents));
-
-  tab_strip_model->AppendWebContents(test_contents, false);
-  Navigate(test_contents, initial_url, page_transition);
+      std::make_unique<TestWebContentsObserver>(test_contents.get()));
   return test_contents;
+}
+
+content::WebContents* TabActivitySimulator::AddWebContentsAndNavigate(
+    TabStripModel* tab_strip_model,
+    const GURL& initial_url,
+    ui::PageTransition page_transition) {
+  // Create as a foreground tab if it's the only tab in the tab strip.
+  bool initially_visible = tab_strip_model->empty();
+  std::unique_ptr<content::WebContents> test_contents =
+      CreateWebContents(tab_strip_model->profile(), initially_visible);
+  content::WebContents* raw_test_contents = test_contents.get();
+  tab_strip_model->AppendWebContents(std::move(test_contents),
+                                     initially_visible /* foreground */);
+  Navigate(raw_test_contents, initial_url, page_transition);
+  return raw_test_contents;
 }
 
 void TabActivitySimulator::SwitchToTabAt(TabStripModel* tab_strip_model,

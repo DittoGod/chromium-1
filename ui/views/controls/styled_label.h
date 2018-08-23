@@ -37,6 +37,20 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   // Internal class name.
   static const char kViewClassName[];
 
+  // TestApi is used for tests to get internal implementation details.
+  class VIEWS_EXPORT TestApi {
+   public:
+    explicit TestApi(StyledLabel* view);
+    ~TestApi();
+
+    const std::map<View*, gfx::Range>& link_targets();
+
+   private:
+    StyledLabel* const view_;
+
+    DISALLOW_COPY_AND_ASSIGN(TestApi);
+  };
+
   // Parameters that define label style for a styled label's text range.
   struct VIEWS_EXPORT RangeStyleInfo {
     RangeStyleInfo();
@@ -127,6 +141,7 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   // View:
   const char* GetClassName() const override;
   gfx::Insets GetInsets() const override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   gfx::Size CalculatePreferredSize() const override;
   int GetHeightForWidth(int w) const override;
   void Layout() override;
@@ -137,6 +152,9 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
 
   // Sets the horizontal alignment; the argument value is mirrored in RTL UI.
   void SetHorizontalAlignment(gfx::HorizontalAlignment alignment);
+
+  // Clears all the styles applied to the label.
+  void ClearStyleRanges();
 
  private:
   struct StyleRange {
@@ -215,7 +233,7 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
 
   // The horizontal alignment. This value is flipped for RTL. The default
   // behavior is to align left in LTR UI and right in RTL UI.
-  gfx::HorizontalAlignment horizontal_alignment_;
+  gfx::HorizontalAlignment horizontal_alignment_ = gfx::ALIGN_LEFT;
 
   DISALLOW_COPY_AND_ASSIGN(StyledLabel);
 };

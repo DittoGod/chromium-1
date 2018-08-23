@@ -12,6 +12,9 @@
 #include "content/browser/devtools/protocol/network.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/resource_type.h"
+#include "net/cookies/canonical_cookie.h"
+#include "net/http/http_raw_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job.h"
 
@@ -34,7 +37,6 @@ class DevToolsURLInterceptorRequestJob : public net::URLRequestJob {
       net::NetworkDelegate* original_network_delegate,
       const base::UnguessableToken& devtools_token,
       DevToolsNetworkInterceptor::RequestInterceptedCallback callback,
-      bool is_redirect,
       ResourceType resource_type,
       DevToolsNetworkInterceptor::InterceptionStage stage_to_intercept);
 
@@ -56,6 +58,9 @@ class DevToolsURLInterceptorRequestJob : public net::URLRequestJob {
 
   void SetAuth(const net::AuthCredentials& credentials) override;
   void CancelAuth() override;
+  void SetRequestHeadersCallback(net::RequestHeadersCallback callback) override;
+  void SetResponseHeadersCallback(
+      net::ResponseHeadersCallback callback) override;
 
   // Must be called on IO thread.
   void StopIntercepting();
@@ -99,12 +104,15 @@ class DevToolsURLInterceptorRequestJob : public net::URLRequestJob {
     GURL url;
     std::string method;
     std::unique_ptr<net::UploadDataStream> post_data;
+    std::string cookie_line;
     net::HttpRequestHeaders extra_request_headers;
     std::string referrer;
     net::URLRequest::ReferrerPolicy referrer_policy;
     net::RequestPriority priority;
     const net::URLRequestContext* url_request_context;
   };
+
+  void StartWithCookies(const net::CookieList& cookies);
 
   // Callbacks from SubRequest.
   void OnSubRequestAuthRequired(net::AuthChallengeInfo* auth_info);
@@ -123,10 +131,10 @@ class DevToolsURLInterceptorRequestJob : public net::URLRequestJob {
   const net::HttpResponseHeaders* GetHttpResponseHeaders() const;
 
   void ProcessRedirect(int status_code, const std::string& new_url);
-  void ProcessInterceptionRespose(
+  void ProcessInterceptionResponse(
       std::unique_ptr<DevToolsNetworkInterceptor::Modifications> modification);
 
-  bool ProcessAuthRespose(
+  bool ProcessAuthResponse(
       std::unique_ptr<DevToolsNetworkInterceptor::Modifications> modification);
 
   enum class WaitingForUserResponse {
@@ -148,12 +156,13 @@ class DevToolsURLInterceptorRequestJob : public net::URLRequestJob {
   const intptr_t owning_entry_id_;
   const base::UnguessableToken devtools_token_;
   DevToolsNetworkInterceptor::RequestInterceptedCallback callback_;
-  const bool is_redirect_;
   const ResourceType resource_type_;
   InterceptionStage stage_to_intercept_;
   std::vector<std::unique_ptr<GetResponseBodyForInterceptionCallback>>
       pending_body_requests_;
 
+  net::RequestHeadersCallback request_headers_callback_;
+  net::ResponseHeadersCallback response_headers_callback_;
   base::WeakPtrFactory<DevToolsURLInterceptorRequestJob> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsURLInterceptorRequestJob);

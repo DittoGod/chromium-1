@@ -11,8 +11,14 @@
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/chromeos/printing/printer_event_tracker.h"
 #include "chromeos/printing/printer_configuration.h"
+#include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/pref_service.h"
 
 class Profile;
+
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
 
 namespace chromeos {
 
@@ -23,7 +29,7 @@ class SyncedPrintersManager;
 
 // Top level manager of available CUPS printers in ChromeOS.  All functions
 // in this class must be called from a sequenced context.
-class CupsPrintersManager {
+class CupsPrintersManager : public KeyedService {
  public:
   // Classes of printers tracked.  See doc/cups_printers_management.md for
   // details on what these mean.
@@ -53,9 +59,13 @@ class CupsPrintersManager {
       std::unique_ptr<PrinterDetector> usb_printer_detector,
       std::unique_ptr<PrinterDetector> zeroconf_printer_detector,
       scoped_refptr<PpdProvider> ppd_provider,
-      PrinterEventTracker* event_tracker);
+      PrinterEventTracker* event_tracker,
+      PrefService* pref_service);
 
-  virtual ~CupsPrintersManager() = default;
+  // Register the printing preferences with the |registry|.
+  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+
+  ~CupsPrintersManager() override = default;
 
   // Get the known printers in the given class.
   virtual std::vector<Printer> GetPrinters(
@@ -87,7 +97,10 @@ class CupsPrintersManager {
   // Record that the given printers has been installed in CUPS for usage.  If
   // |printer| is not a configured or enterprise printer, this will have the
   // side effect of moving |printer| into the configured class.
-  virtual void PrinterInstalled(const Printer& printer) = 0;
+  // Parameter |is_automatic| should be set to true if the printer was
+  // configured automatically (without requesting additional information
+  // from the user).
+  virtual void PrinterInstalled(const Printer& printer, bool is_automatic) = 0;
 
   // Returns true if |printer| is currently installed in CUPS with this
   // configuration.

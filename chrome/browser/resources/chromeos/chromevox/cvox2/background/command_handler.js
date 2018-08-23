@@ -233,17 +233,22 @@ CommandHandler.onCommand = function(command) {
       chrome.accessibilityPrivate.setNativeChromeVoxArcSupportForCurrentApp(
           false);
       break;
+    case 'showTtsSettings':
+      var ttsSettings = {url: 'chrome://settings/manageAccessibility/tts'};
+      chrome.windows.create(ttsSettings);
+      break;
     default:
       break;
   }
 
   // Require a current range.
-  if (!ChromeVoxState.instance.currentRange_) {
-    new Output().format('@warning_no_current_range').go();
+  if (!ChromeVoxState.instance.currentRange_)
     return true;
-  }
 
-  var current = ChromeVoxState.instance.currentRange_;
+  var current = ChromeVoxState.instance.currentRange;
+
+  // If true, will check if the predicate matches the current node.
+  var matchCurrent = false;
 
   // Allow edit commands first.
   if (!CommandHandler.onEditCommand_(command))
@@ -252,11 +257,12 @@ CommandHandler.onCommand = function(command) {
   var dir = Dir.FORWARD;
   var pred = null;
   var predErrorMsg = undefined;
-  var rootPred = AutomationPredicate.editableRoot;
+  var rootPred = AutomationPredicate.rootOrEditableRoot;
   var shouldWrap = true;
   var speechProps = {};
   var skipSync = false;
   var didNavigate = false;
+  var tryScrolling = true;
   switch (command) {
     case 'nextCharacter':
       didNavigate = true;
@@ -468,16 +474,33 @@ CommandHandler.onCommand = function(command) {
           current.start.node.root, Dir.FORWARD, AutomationPredicate.object);
       if (node)
         current = cursors.Range.fromNode(node);
+      tryScrolling = false;
       break;
     case 'jumpToBottom':
       var node = AutomationUtil.findLastNode(
           current.start.node.root, AutomationPredicate.object);
       if (node)
         current = cursors.Range.fromNode(node);
+      tryScrolling = false;
       break;
     case 'forceClickOnCurrentItem':
       if (ChromeVoxState.instance.currentRange) {
         var actionNode = ChromeVoxState.instance.currentRange.start.node;
+        // Scan for a clickable, which overrides the |actionNode|.
+        var clickable = actionNode;
+        while (clickable && !clickable.clickable)
+          clickable = clickable.parent;
+        if (clickable) {
+          clickable.doDefault();
+          return false;
+        }
+
+        if (EventSourceState.get() == EventSourceType.TOUCH_GESTURE &&
+            AutomationPredicate.editText(actionNode)) {
+          actionNode.focus();
+          return false;
+        }
+
         while (actionNode.role == RoleType.INLINE_TEXT_BOX ||
                actionNode.role == RoleType.STATIC_TEXT)
           actionNode = actionNode.parent;
@@ -485,25 +508,28 @@ CommandHandler.onCommand = function(command) {
           ChromeVoxState.instance.navigateToRange(
               cursors.Range.fromNode(actionNode.inPageLinkTarget));
         } else {
-          // Scan for a clickable, which overrides the |actionNode|.
-          var clickable = actionNode;
-          while (clickable && !clickable.clickable)
-            clickable = clickable.parent;
-          clickable ? clickable.doDefault() : actionNode.doDefault();
+          actionNode.doDefault();
         }
       }
       // Skip all other processing; if focus changes, we should get an event
       // for that.
       return false;
+    case 'jumpToDetails':
+      var node = current.start.node;
+      while (node && !node.details)
+        node = node.parent;
+      if (node)
+        current = cursors.Range.fromNode(node.details);
+      break;
     case 'readFromHere':
       ChromeVoxState.isReadingContinuously = true;
       var continueReading = function() {
         if (!ChromeVoxState.isReadingContinuously ||
-            !ChromeVoxState.instance.currentRange_)
+            !ChromeVoxState.instance.currentRange)
           return;
 
-        var prevRange = ChromeVoxState.instance.currentRange_;
-        var newRange = ChromeVoxState.instance.currentRange_.move(
+        var prevRange = ChromeVoxState.instance.currentRange;
+        var newRange = ChromeVoxState.instance.currentRange.move(
             cursors.Unit.NODE, Dir.FORWARD);
 
         // Stop if we've wrapped back to the document.
@@ -519,7 +545,7 @@ CommandHandler.onCommand = function(command) {
         new Output()
             .withoutHints()
             .withRichSpeechAndBraille(
-                ChromeVoxState.instance.currentRange_, prevRange,
+                ChromeVoxState.instance.currentRange, prevRange,
                 Output.EventType.NAVIGATE)
             .onSpeechEnd(continueReading)
             .go();
@@ -527,6 +553,7 @@ CommandHandler.onCommand = function(command) {
       var startNode = ChromeVoxState.instance.currentRange.start.node;
       var collapsedRange = cursors.Range.fromNode(startNode);
       new Output()
+          .withoutHints()
           .withRichSpeechAndBraille(
               collapsedRange, collapsedRange, Output.EventType.NAVIGATE)
           .onSpeechEnd(continueReading)
@@ -534,8 +561,8 @@ CommandHandler.onCommand = function(command) {
 
       return false;
     case 'contextMenu':
-      if (ChromeVoxState.instance.currentRange_) {
-        var actionNode = ChromeVoxState.instance.currentRange_.start.node;
+      if (ChromeVoxState.instance.currentRange) {
+        var actionNode = ChromeVoxState.instance.currentRange.start.node;
         if (actionNode.role == RoleType.INLINE_TEXT_BOX)
           actionNode = actionNode.parent;
         actionNode.showContextMenu();
@@ -544,6 +571,9 @@ CommandHandler.onCommand = function(command) {
       break;
     case 'toggleKeyboardHelp':
       (new PanelCommand(PanelCommandType.OPEN_MENUS)).send();
+      return false;
+    case 'showPanelMenuMostRecent':
+      (new PanelCommand(PanelCommandType.OPEN_MENUS_MOST_RECENT)).send();
       return false;
     case 'showHeadingsList':
       (new PanelCommand(PanelCommandType.OPEN_MENUS, 'role_heading')).send();
@@ -564,7 +594,7 @@ CommandHandler.onCommand = function(command) {
       (new PanelCommand(PanelCommandType.SEARCH)).send();
       return false;
     case 'readCurrentTitle':
-      var target = ChromeVoxState.instance.currentRange_.start.node;
+      var target = ChromeVoxState.instance.currentRange.start.node;
       var output = new Output();
       target = AutomationUtil.getTopLevelRoot(target) || target.parent;
 
@@ -582,14 +612,16 @@ CommandHandler.onCommand = function(command) {
       return false;
     case 'readCurrentURL':
       var output = new Output();
-      var target = ChromeVoxState.instance.currentRange_.start.node.root;
+      var target = ChromeVoxState.instance.currentRange.start.node.root;
       output.withString(target.docUrl || '').go();
       return false;
     case 'toggleSelection':
       if (!ChromeVoxState.instance.pageSel_) {
         ChromeVoxState.instance.pageSel_ = ChromeVoxState.instance.currentRange;
+        DesktopAutomationHandler.instance.ignoreDocumentSelectionFromAction(
+            true);
       } else {
-        var root = ChromeVoxState.instance.currentRange_.start.node.root;
+        var root = ChromeVoxState.instance.currentRange.start.node.root;
         if (root && root.anchorObject && root.focusObject) {
           var sel = new cursors.Range(
               new cursors.Cursor(root.anchorObject, root.anchorOffset),
@@ -598,6 +630,8 @@ CommandHandler.onCommand = function(command) {
                       .format('@end_selection')
                       .withSpeechAndBraille(sel, sel, Output.EventType.NAVIGATE)
                       .go();
+          DesktopAutomationHandler.instance.ignoreDocumentSelectionFromAction(
+              false);
         }
         ChromeVoxState.instance.pageSel_ = null;
         return false;
@@ -685,7 +719,16 @@ CommandHandler.onCommand = function(command) {
       var tableOpts = {col: true, dir: dir, end: true};
       pred = AutomationPredicate.makeTableCellPredicate(
           current.start.node, tableOpts);
-      current = cursors.Range.fromNode(node.lastChild);
+
+      // Try to start on the last cell of the table and allow
+      // matching that node.
+      var startNode = node.lastChild;
+      while (startNode.lastChild &&
+             !AutomationPredicate.cellLike(startNode.role))
+        startNode = startNode.lastChild;
+      current = cursors.Range.fromNode(startNode);
+      matchCurrent = true;
+
       // Should not be outputted.
       predErrorMsg = 'no_cell_below';
       rootPred = AutomationPredicate.table;
@@ -704,6 +747,68 @@ CommandHandler.onCommand = function(command) {
       if (end)
         current = cursors.Range.fromNode(end);
       break;
+    case 'scrollBackward':
+      var node = current.start.node;
+      while (node &&
+             !node.standardActions.includes(
+                 chrome.automation.ActionType.SCROLL_BACKWARD))
+        node = node.parent;
+
+      if (node)
+        node.scrollBackward();
+      break;
+    case 'scrollForward':
+      var node = current.start.node;
+      while (node &&
+             !node.standardActions.includes(
+                 chrome.automation.ActionType.SCROLL_FORWARD))
+        node = node.parent;
+
+      if (node)
+        node.scrollForward();
+      break;
+
+    // These commands are only available when invoked from touch.
+    case 'nextAtGranularity':
+    case 'previousAtGranularity':
+      var backwards = command == 'previousAtGranularity';
+      switch (GestureCommandHandler.granularity) {
+        case GestureGranularity.CHARACTER:
+          command = backwards ? 'previousCharacter' : 'nextCharacter';
+          break;
+        case GestureGranularity.WORD:
+          command = backwards ? 'previousWord' : 'nextWord';
+          break;
+        case GestureGranularity.LINE:
+          command = backwards ? 'previousLine' : 'nextLine';
+          break;
+      }
+      CommandHandler.onCommand(command);
+      return false;
+    case 'nextGranularity':
+    case 'previousGranularity':
+      var backwards = command == 'previousGranularity';
+      var gran = GestureCommandHandler.granularity;
+      var next = backwards ?
+          (--gran >= 0 ? gran : GestureGranularity.COUNT - 1) :
+          ++gran % GestureGranularity.COUNT;
+      GestureCommandHandler.granularity =
+          /** @type {GestureGranularity} */ (next);
+
+      var announce = '';
+      switch (GestureCommandHandler.granularity) {
+        case GestureGranularity.CHARACTER:
+          announce = Msgs.getMsg('character_granularity');
+          break;
+        case GestureGranularity.WORD:
+          announce = Msgs.getMsg('word_granularity');
+          break;
+        case GestureGranularity.LINE:
+          announce = Msgs.getMsg('line_granularity');
+          break;
+      }
+      cvox.ChromeVox.tts.speak(announce, cvox.QueueMode.FLUSH);
+      return false;
     default:
       return true;
   }
@@ -716,8 +821,15 @@ CommandHandler.onCommand = function(command) {
 
     var bound = current.getBound(dir).node;
     if (bound) {
-      var node = AutomationUtil.findNextNode(
-          bound, dir, pred, {skipInitialAncestry: true, root: rootPred});
+      var node = null;
+
+      if (matchCurrent && pred(bound))
+        node = bound;
+
+      if (!node) {
+        node = AutomationUtil.findNextNode(
+            bound, dir, pred, {skipInitialAncestry: true, root: rootPred});
+      }
 
       if (node && !skipSync) {
         node = AutomationUtil.findNodePre(
@@ -740,7 +852,7 @@ CommandHandler.onCommand = function(command) {
         }
 
         var root = bound;
-        while (root && !AutomationPredicate.editableRoot(root))
+        while (root && !AutomationPredicate.rootOrEditableRoot(root))
           root = root.parent;
 
         if (!root)
@@ -775,13 +887,13 @@ CommandHandler.onCommand = function(command) {
     }
   }
 
-  if (current && current.start && current.start.node &&
+  if (tryScrolling && current && current.start && current.start.node &&
       ChromeVoxState.instance.currentRange.start.node) {
     var exited = AutomationUtil.getUniqueAncestors(
         current.start.node, ChromeVoxState.instance.currentRange.start.node);
     var scrollable = null;
     for (var i = 0; i < exited.length; i++) {
-      if (exited[i].scrollable) {
+      if (AutomationPredicate.autoScrollable(exited[i])) {
         scrollable = exited[i];
         break;
       }
@@ -846,25 +958,6 @@ CommandHandler.onCommand = function(command) {
 CommandHandler.increaseOrDecreaseSpeechProperty_ = function(
     propertyName, increase) {
   cvox.ChromeVox.tts.increaseOrDecreaseProperty(propertyName, increase);
-  var announcement;
-  var valueAsPercent =
-      Math.round(cvox.ChromeVox.tts.propertyToPercentage(propertyName) * 100);
-  switch (propertyName) {
-    case cvox.AbstractTts.RATE:
-      announcement = Msgs.getMsg('announce_rate', [valueAsPercent]);
-      break;
-    case cvox.AbstractTts.PITCH:
-      announcement = Msgs.getMsg('announce_pitch', [valueAsPercent]);
-      break;
-    case cvox.AbstractTts.VOLUME:
-      announcement = Msgs.getMsg('announce_volume', [valueAsPercent]);
-      break;
-  }
-  if (announcement) {
-    cvox.ChromeVox.tts.speak(
-        announcement, cvox.QueueMode.FLUSH,
-        cvox.AbstractTts.PERSONALITY_ANNOTATION);
-  }
 };
 
 /**
@@ -902,7 +995,7 @@ CommandHandler.onImageFrameUpdated_ = function(event) {
 /**
  * Handle the command to view the first graphic within the current range
  * as braille.
- * @param {!AutomationNode} current The current range.
+ * @param {!cursors.Range} current The current range.
  * @private
  */
 CommandHandler.viewGraphicAsBraille_ = function(current) {
@@ -920,7 +1013,8 @@ CommandHandler.viewGraphicAsBraille_ = function(current) {
     return;
 
   imageNode.addEventListener(
-      EventType.IMAGE_FRAME_UPDATED, this.onImageFrameUpdated_, false);
+      EventType.IMAGE_FRAME_UPDATED, CommandHandler.onImageFrameUpdated_,
+      false);
   CommandHandler.imageNode_ = imageNode;
   if (imageNode.imageDataUrl) {
     var event = new CustomAutomationEvent(
@@ -944,6 +1038,20 @@ CommandHandler.onEditCommand_ = function(command) {
       !current.start.node || !current.start.node.state[StateType.EDITABLE])
     return true;
 
+  var textEditHandler = DesktopAutomationHandler.instance.textEditHandler;
+  if (!textEditHandler)
+    return true;
+
+  // Skip customized keys for read only text fields.
+  if (textEditHandler.node.restriction ==
+      chrome.automation.Restriction.READ_ONLY)
+    return true;
+
+  // Skips customized keys if they get suppressed in speech.
+  if (AutomationPredicate.shouldOnlyOutputSelectionChangeInBraille(
+          textEditHandler.node))
+    return true;
+
   var isMultiline = AutomationPredicate.multiline(current.start.node);
   switch (command) {
     case 'previousCharacter':
@@ -959,23 +1067,35 @@ CommandHandler.onEditCommand_ = function(command) {
       BackgroundKeyboardHandler.sendKeyPress(35, {shift: true, ctrl: true});
       break;
     case 'previousObject':
-      if (!isMultiline)
+      if (!isMultiline || textEditHandler.isSelectionOnFirstLine())
         return true;
       BackgroundKeyboardHandler.sendKeyPress(36);
       break;
     case 'nextObject':
       if (!isMultiline)
         return true;
+
+      if (textEditHandler.isSelectionOnLastLine()) {
+        textEditHandler.moveToAfterEditText();
+        return false;
+      }
+
       BackgroundKeyboardHandler.sendKeyPress(35);
       break;
     case 'previousLine':
-      if (!isMultiline)
+      if (!isMultiline || textEditHandler.isSelectionOnFirstLine())
         return true;
       BackgroundKeyboardHandler.sendKeyPress(33);
       break;
     case 'nextLine':
       if (!isMultiline)
         return true;
+
+      if (textEditHandler.isSelectionOnLastLine()) {
+        textEditHandler.moveToAfterEditText();
+        return false;
+      }
+
       BackgroundKeyboardHandler.sendKeyPress(34);
       break;
     case 'jumpToTop':

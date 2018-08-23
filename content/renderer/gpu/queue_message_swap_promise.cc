@@ -46,9 +46,7 @@ void QueueMessageSwapPromise::DidActivate() {
   // The OutputSurface will take care of the Drain+Send.
 }
 
-void QueueMessageSwapPromise::WillSwap(
-    viz::CompositorFrameMetadata* compositor_frame_metadata,
-    cc::RenderFrameMetadata* render_frame_metadata) {
+void QueueMessageSwapPromise::WillSwap(viz::CompositorFrameMetadata* metadata) {
 #if DCHECK_IS_ON()
   DCHECK(!completed_);
 #endif
@@ -60,16 +58,12 @@ void QueueMessageSwapPromise::WillSwap(
     std::vector<std::unique_ptr<IPC::Message>> messages;
     message_queue_->DrainMessages(&messages);
 
-    messages.push_back(std::make_unique<ViewHostMsg_OnRenderFrameSubmitted>(
-        message_queue_->routing_id(), *render_frame_metadata));
-
     std::vector<IPC::Message> messages_to_send;
     FrameSwapMessageQueue::TransferMessages(&messages, &messages_to_send);
     if (!messages_to_send.empty()) {
-      compositor_frame_metadata->frame_token =
-          message_queue_->AllocateFrameToken();
+      metadata->send_frame_token_to_embedder = true;
       message_sender_->Send(new ViewHostMsg_FrameSwapMessages(
-          message_queue_->routing_id(), compositor_frame_metadata->frame_token,
+          message_queue_->routing_id(), metadata->frame_token,
           messages_to_send));
     }
   }
@@ -79,8 +73,7 @@ void QueueMessageSwapPromise::WillSwap(
 
 void QueueMessageSwapPromise::DidSwap() {}
 
-cc::SwapPromise::DidNotSwapAction QueueMessageSwapPromise::DidNotSwap(
-    DidNotSwapReason reason) {
+void QueueMessageSwapPromise::DidNotSwap(DidNotSwapReason reason) {
 #if DCHECK_IS_ON()
   DCHECK(!completed_);
 #endif
@@ -92,7 +85,6 @@ cc::SwapPromise::DidNotSwapAction QueueMessageSwapPromise::DidNotSwap(
     message_sender_->Send(msg.release());
   }
   PromiseCompleted();
-  return DidNotSwapAction::BREAK_PROMISE;
 }
 
 void QueueMessageSwapPromise::PromiseCompleted() {

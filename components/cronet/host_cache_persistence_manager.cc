@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/values.h"
 #include "components/prefs/pref_service.h"
@@ -75,8 +74,8 @@ void HostCachePersistenceManager::ScheduleWrite() {
 
   net_log_.AddEvent(net::NetLogEventType::HOST_CACHE_PERSISTENCE_START_TIMER);
   timer_.Start(FROM_HERE, delay_,
-               base::Bind(&HostCachePersistenceManager::WriteToDisk,
-                          weak_factory_.GetWeakPtr()));
+               base::BindOnce(&HostCachePersistenceManager::WriteToDisk,
+                              weak_factory_.GetWeakPtr()));
 }
 
 void HostCachePersistenceManager::WriteToDisk() {

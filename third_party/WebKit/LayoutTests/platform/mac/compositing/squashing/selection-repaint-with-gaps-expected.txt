@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -32,7 +33,12 @@
       "bounds": [100, 210],
       "paintInvalidations": [
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'ipsum'",
+          "rect": [0, 80, 42, 36],
+          "reason": "geometry"
+        },
+        {
+          "object": "InlineTextBox 'lorem'",
           "rect": [0, 80, 42, 36],
           "reason": "geometry"
         }
@@ -50,20 +56,6 @@
       ],
       "flattenInheritedTransform": false
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'lorem'",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'ipsum'",
-      "reason": "geometry"
-    }
   ]
 }
 {
@@ -71,6 +63,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -100,12 +93,22 @@
       "bounds": [100, 210],
       "paintInvalidations": [
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'ipsum'",
           "rect": [0, 80, 44, 36],
           "reason": "geometry"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'lorem'",
+          "rect": [0, 80, 44, 36],
+          "reason": "geometry"
+        },
+        {
+          "object": "InlineTextBox 'ipsum'",
+          "rect": [0, 160, 42, 36],
+          "reason": "geometry"
+        },
+        {
+          "object": "InlineTextBox 'lorem'",
           "rect": [0, 160, 42, 36],
           "reason": "geometry"
         }
@@ -122,32 +125,6 @@
         [8, 8, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'lorem'",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'ipsum'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'lorem'",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'ipsum'",
-      "reason": "geometry"
     }
   ]
 }

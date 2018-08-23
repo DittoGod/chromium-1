@@ -10,14 +10,18 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/printing/cloud_print/privet_http.h"
 #include "components/cloud_devices/common/cloud_device_description.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "ui/gfx/geometry/size.h"
+
+namespace base {
+class RefCountedMemory;
+}
 
 namespace cloud_print {
 
@@ -69,6 +73,13 @@ class PrivetRegisterOperationImpl
                     bool has_error) override;
   void OnNeedPrivetToken(PrivetURLFetcher::TokenCallback callback) override;
 
+  // Used in test to skip delays when posting tasks for cancellation.
+  class RunTasksImmediatelyForTesting final {
+   public:
+    RunTasksImmediatelyForTesting();
+    ~RunTasksImmediatelyForTesting();
+  };
+
  private:
   class Cancelation : public PrivetURLFetcher::Delegate {
    public:
@@ -112,6 +123,8 @@ class PrivetRegisterOperationImpl
 
   std::unique_ptr<PrivetJSONOperation> info_operation_;
   std::string expected_id_;
+
+  static bool run_tasks_immediately_for_testing_;
 };
 
 class PrivetJSONOperationImpl : public PrivetJSONOperation,
@@ -154,7 +167,7 @@ class PrivetLocalPrintOperationImpl
 
   // PrivetLocalPrintOperation:
   void Start() override;
-  void SetData(const scoped_refptr<base::RefCountedBytes>& data) override;
+  void SetData(const scoped_refptr<base::RefCountedMemory>& data) override;
   void SetTicket(const std::string& ticket) override;
   void SetCapabilities(const std::string& capabilities) override;
   void SetUsername(const std::string& user) override;
@@ -171,6 +184,13 @@ class PrivetLocalPrintOperationImpl
                     const base::DictionaryValue& value,
                     bool has_error) override;
   void OnNeedPrivetToken(PrivetURLFetcher::TokenCallback callback) override;
+
+  // Used in test to skip delays when posting tasks for cancellation.
+  class RunTasksImmediatelyForTesting final {
+   public:
+    RunTasksImmediatelyForTesting();
+    ~RunTasksImmediatelyForTesting();
+  };
 
  private:
   using ResponseCallback =
@@ -189,7 +209,7 @@ class PrivetLocalPrintOperationImpl
                            const base::DictionaryValue* value);
   void OnCreatejobResponse(bool has_error,
                            const base::DictionaryValue* value);
-  void OnPWGRasterConverted(bool success, const base::FilePath& pwg_file_path);
+  void OnPWGRasterConverted(base::ReadOnlySharedMemoryRegion pwg_region);
 
   PrivetHTTPClient* const privet_client_;
   PrivetLocalPrintOperation::Delegate* const delegate_;
@@ -199,8 +219,7 @@ class PrivetLocalPrintOperationImpl
   cloud_devices::CloudDeviceDescription ticket_;
   cloud_devices::CloudDeviceDescription capabilities_;
 
-  scoped_refptr<base::RefCountedBytes> data_;
-  base::FilePath pwg_file_path_;
+  scoped_refptr<base::RefCountedMemory> data_;
 
   bool use_pdf_ = false;
   bool has_extended_workflow_ = false;
@@ -219,6 +238,8 @@ class PrivetLocalPrintOperationImpl
   std::unique_ptr<printing::PwgRasterConverter> pwg_raster_converter_;
 
   base::WeakPtrFactory<PrivetLocalPrintOperationImpl> weak_factory_;
+
+  static bool run_tasks_immediately_for_testing_;
 };
 #endif  // ENABLE_PRINT_PREVIEW
 

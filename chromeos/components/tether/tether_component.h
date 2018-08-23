@@ -32,7 +32,8 @@ class TetherComponent {
     PREF_DISABLED = 5,
     BLUETOOTH_DISABLED = 6,
     CELLULAR_DISABLED = 7,
-    BLUETOOTH_CONTROLLER_DISAPPEARED = 8
+    BLUETOOTH_CONTROLLER_DISAPPEARED = 8,
+    MULTIDEVICE_HOST_UNVERIFIED = 9
   };
 
   TetherComponent();
@@ -54,7 +55,7 @@ class TetherComponent {
 
  private:
   Status status_ = Status::ACTIVE;
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(TetherComponent);
 };

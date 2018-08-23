@@ -1,6 +1,7 @@
 <?xml version="1.0" ?>
 <!DOCTYPE translationbundle>
 <translationbundle lang="hu">
+<translation id="1012876632442809908">C típusú USB-vel kompatibilis eszköz (elülső port)</translation>
 <translation id="1023220960495960452">Átírás (vanakkam → வணக்கம்)</translation>
 <translation id="1045157690796831147">Átírás (namaskar → നമസ്കാരം)</translation>
 <translation id="1065449928621190041">Kanadai francia billentyűzet</translation>
@@ -10,24 +11,23 @@
 <translation id="1155759005174418845">katalán</translation>
 <translation id="1208421848177517699">Átírás (namaste → નમસ્તે)</translation>
 <translation id="1278813325885878377">Magyar QWERTY-billentyűzet</translation>
+<translation id="1293264513303784526">C típusú USB-vel kompatibilis eszköz (bal oldali port)</translation>
 <translation id="1310751437842832374">Átírás (mausam → ନମସ୍ତେ)</translation>
 <translation id="1337036551624197047">Cseh billentyűzet</translation>
 <translation id="1352103415082130575">Thai billentyűzet (Pattachote)</translation>
 <translation id="1358032944105037487">Japán billentyűzet</translation>
-<translation id="1383876407941801731">Keresés</translation>
 <translation id="1399648040768741453">Telugu billentyűzet (fonetikus)</translation>
 <translation id="1441841714100794440">Vietnami billentyűzet (Telex)</translation>
 <translation id="1455548678241328678">Norvég billentyűzet</translation>
 <translation id="148466539719134488">svájci</translation>
-<translation id="1510238584712386396">Indító</translation>
 <translation id="1547964879613821194">kanadai angol</translation>
 <translation id="158809615184981282">Feröer-szigeteki billentyűzet</translation>
 <translation id="1646136617204068573">Magyar billentyűzet</translation>
 <translation id="164729547906544836">Tamil billentyűzet (itrans)</translation>
 <translation id="164969095109328410">Chrome-eszköz</translation>
-<translation id="169515659049020177">Shift</translation>
 <translation id="1829129547161959350">Pingvin</translation>
 <translation id="184633654410729720">Thai billentyűzet (Kedmanee)</translation>
+<translation id="1864454756846565995">C típusú USB-vel kompatibilis eszköz (hátsó port)</translation>
 <translation id="1921986354447415460">Török (F-billentyűzet)</translation>
 <translation id="1931134289871235022">szlovák</translation>
 <translation id="1936717151811561466">finn</translation>
@@ -47,7 +47,6 @@
 <translation id="2468402215065996499">Tamagocsi</translation>
 <translation id="247772113373397749">Kanadai többnyelvű billentyűzet</translation>
 <translation id="2494837236724268445">Gudzsaráti billentyűzet (fonetikus)</translation>
-<translation id="2515586267016047495">Alt</translation>
 <translation id="2529133382850673012">USA billentyűzet</translation>
 <translation id="255937426064304553">USA nemzetközi</translation>
 <translation id="2563185590376525700">Béka</translation>
@@ -56,6 +55,7 @@
 <translation id="2771816809568414714">Sajt</translation>
 <translation id="2781645665747935084">belga</translation>
 <translation id="2790805296069989825">Orosz billentyűzet</translation>
+<translation id="2844169650293029770">C típusú USB-vel kompatibilis eszköz (bal első port)</translation>
 <translation id="2870836398458454343">Átírás (marhaban ← مرحبا)</translation>
 <translation id="288024221176729610">cseh</translation>
 <translation id="2894654529758326923">Információ</translation>
@@ -70,7 +70,6 @@
 <translation id="3064388234319122767">Átírás (zdravo → здраво)</translation>
 <translation id="3088034400796962477">Átírás (salam ← سلام)</translation>
 <translation id="3116361045094675131">Brit billentyűzet</translation>
-<translation id="3126026824346185272">Ctrl</translation>
 <translation id="3157729859914172001">USA nemzetközi billentyűzet (PC)</translation>
 <translation id="3187212781151025377">Héber billentyűzet</translation>
 <translation id="3197563288998582412">egyesült királyságbeli Dvorak</translation>
@@ -80,7 +79,9 @@
 <translation id="3280987981688031357">Bakelitlemez</translation>
 <translation id="3296763833017966289">grúz</translation>
 <translation id="3338239663705455570">Szlovén billentyűzet</translation>
+<translation id="3371140690572404006">C típusú USB-vel kompatibilis eszköz (jobb első port)</translation>
 <translation id="3399597614303179694">Macedón billentyűzet</translation>
+<translation id="3445925074670675829">C típusú USB-vel kompatibilis eszköz</translation>
 <translation id="3494768541638400973">Google japán beviteli mód (japán billentyűzetre)</translation>
 <translation id="3519867315646775981">Átírás (shalom ← שלום)</translation>
 <translation id="3522708245912499433">portugál</translation>
@@ -100,6 +101,7 @@
 <translation id="3910699493603749297">Khmer billentyűzet</translation>
 <translation id="391445228316373457">Nepáli billentyűzet (fonetikus)</translation>
 <translation id="3958548648197196644">Kiwi</translation>
+<translation id="3995138139523574647">C típusú USB-vel kompatibilis eszköz (jobb hátsó port)</translation>
 <translation id="4070370845051020638">Kantoni beviteli mód</translation>
 <translation id="4072248638558688893">Tamil billentyűzet (fonetikus)</translation>
 <translation id="4124935795427217608">Egyszarvú</translation>
@@ -146,6 +148,7 @@
 <translation id="5257456363153333584">Szitakötő</translation>
 <translation id="5319782540886810524">Lett billentyűzet</translation>
 <translation id="5323213332664049067">latin-amerikai</translation>
+<translation id="5331975486040154427">C típusú USB-vel kompatibilis eszköz (bal hátsó port)</translation>
 <translation id="5402367795255837559">Braille</translation>
 <translation id="5412637665001827670">Bolgár billentyűzet</translation>
 <translation id="5418923334382419584">Mianmari billentyűzet</translation>
@@ -182,6 +185,7 @@
 <translation id="6358884629796491903">Sárkány</translation>
 <translation id="6462109140674788769">Görög billentyűzet</translation>
 <translation id="6466492211071551451">Ír billentyűzet</translation>
+<translation id="6490471652906364588">C típusú USB-vel kompatibilis eszköz (jobb oldali port)</translation>
 <translation id="6503256918647795660">Svájci francia billentyűzet</translation>
 <translation id="6505918941256367791">Tamil billentyűzet (InScript)</translation>
 <translation id="6509122719576673235">norvég</translation>
@@ -200,7 +204,7 @@
 <translation id="6937152069980083337">Google japán beviteli mód (US billentyűzetre)</translation>
 <translation id="6939777852457331078">USA „Workman” billentyűzet</translation>
 <translation id="6970230597523682626">bolgár</translation>
-<translation id="6981982820502123353">Kisegítő lehetőségek</translation>
+<translation id="7098389117866926363">C típusú USB-vel kompatibilis eszköz (bal hátsó port)</translation>
 <translation id="714034171374937760">Chromebase</translation>
 <translation id="7170467426996704624">Átírás (salam → ሰላም)</translation>
 <translation id="7172053773111046550">Észt billentyűzet</translation>
@@ -261,6 +265,7 @@
 <translation id="8900820606136623064">magyar</translation>
 <translation id="8901822611024316615">Cseh QWERTY billentyűzet</translation>
 <translation id="8919081441417203123">dán</translation>
+<translation id="8938800817013097409">C típusú USB-vel kompatibilis eszköz (jobb hátsó port)</translation>
 <translation id="8960999352790021682">Bengáli billentyűzet (fonetikus)</translation>
 <translation id="9017798300203431059">orosz fonetikus</translation>
 <translation id="913758436357682283">Mianmari myansan billentyűzet</translation>

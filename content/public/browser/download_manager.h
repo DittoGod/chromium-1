@@ -40,18 +40,23 @@
 #include "components/download/public/common/download_item.h"
 #include "components/download/public/common/download_stream.mojom.h"
 #include "components/download/public/common/download_url_parameters.h"
+#include "components/download/public/common/input_stream.h"
 #include "content/common/content_export.h"
 #include "net/base/net_errors.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "storage/browser/blob/blob_data_handle.h"
 
 class GURL;
 
+namespace download {
+struct DownloadCreateInfo;
+class DownloadURLLoaderFactoryGetter;
+}  // namespace download
+
 namespace content {
 
 class BrowserContext;
-class ByteStreamReader;
 class DownloadManagerDelegate;
-struct DownloadCreateInfo;
 
 // Browser's download manager: manages all downloads and destination view.
 class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
@@ -88,6 +93,12 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
     virtual void OnDownloadCreated(DownloadManager* manager,
                                    download::DownloadItem* item) {}
 
+    // Called when the download manager intercepted a download navigation but
+    // didn't create the download item. Possible reasons:
+    // 1. |delegate| is null.
+    // 2. |delegate| doesn't allow the download.
+    virtual void OnDownloadDropped(DownloadManager* manager) {}
+
     // Called when the download manager has finished loading the data.
     virtual void OnManagerInitialized() {}
 
@@ -105,27 +116,16 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
   // clearing |downloads| first.
   virtual void GetAllDownloads(DownloadVector* downloads) = 0;
 
-  // InputStream to read after the download starts. Only one of them could be
-  // available at the same time.
-  struct CONTENT_EXPORT InputStream {
-    explicit InputStream(std::unique_ptr<ByteStreamReader> stream_reader);
-    explicit InputStream(
-        download::mojom::DownloadStreamHandlePtr stream_handle);
-    ~InputStream();
-
-    bool IsEmpty() const;
-
-    std::unique_ptr<ByteStreamReader> stream_reader_;
-    download::mojom::DownloadStreamHandlePtr stream_handle_;
-  };
-
   // Called by a download source (Currently DownloadResourceHandler)
   // to initiate the non-source portions of a download.
-  // Returns the id assigned to the download.  If the DownloadCreateInfo
-  // specifies an id, that id will be used.
+  // If the DownloadCreateInfo specifies an id, that id will be used.
+  // If |url_loader_factory_getter| is provided, it can be used to issue
+  // parallel download requests.
   virtual void StartDownload(
-      std::unique_ptr<DownloadCreateInfo> info,
-      std::unique_ptr<InputStream> stream,
+      std::unique_ptr<download::DownloadCreateInfo> info,
+      std::unique_ptr<download::InputStream> stream,
+      scoped_refptr<download::DownloadURLLoaderFactoryGetter>
+          url_loader_factory_getter,
       const download::DownloadUrlParameters::OnStartedCallback& on_started) = 0;
 
   // Remove downloads whose URLs match the |url_filter| and are within
@@ -150,7 +150,9 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
   // fail.
   virtual void DownloadUrl(
       std::unique_ptr<download::DownloadUrlParameters> parameters,
-      std::unique_ptr<storage::BlobDataHandle> blob_data_handle) = 0;
+      std::unique_ptr<storage::BlobDataHandle> blob_data_handle,
+      scoped_refptr<network::SharedURLLoaderFactory>
+          blob_url_loader_factory) = 0;
 
   // Allow objects to observe the download creation process.
   virtual void AddObserver(Observer* observer) = 0;
@@ -220,6 +222,11 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
   // that refer to removed files. The check runs in the background and may
   // finish asynchronously after this method returns.
   virtual void CheckForHistoryFilesRemoval() = 0;
+
+  // Called when download history query completes. Call
+  // |load_history_downloads_cb| to load all the history downloads.
+  virtual void OnHistoryQueryComplete(
+      base::OnceClosure load_history_downloads_cb) = 0;
 
   // Get the download item for |id| if present, no matter what type of download
   // it is or state it's in.

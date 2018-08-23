@@ -75,10 +75,9 @@ h2 {
     background-image: url(unchecked.png);
     background-position: center center;
     background-repeat: no-repeat;
-    border: 0;
     float: right;
-    height: 60px;
-    margin: 0;
+    height: 30px;
+    margin: 15px 0 15px 0;
     padding: 0;
     width: 40px;
 }
@@ -95,26 +94,6 @@ h2 {
     margin: 20px 0;
     min-height: 20px;
     padding: 0;
-}
-
-.option input {
-    background-color: #fff;
-    border-color: #ddd;
-    border-width: 0 0 2px 0;
-    outline: none;
-}
-
-.option input:focus {
-    border-color: rgb(0, 0, 255);
-}
-
-.option button {
-    background-color: #ddd;
-    border-width: 0;
-    font-weight: bold;
-    height: 30px;
-    margin-left: 20px;
-    padding: 0 20px;
 }
 
 label {
@@ -142,10 +121,34 @@ label {
 }
 
 .highlight {
-    opacity: .3;
-    z-index: 10;
-    top: -40px;
-    position: relative;
     height: 20px;
+    opacity: .3;
+    position: relative;
+    top: -40px;
     width: 100%;
+    z-index: 10;
+}
+
+.option button {
+  background-color: #fff;
+  border-color: rgb(210, 227, 252);
+  border-radius: 4px;
+  border-style: solid;
+  border-width: 1px;
+  color: rgb(26, 115, 232);
+  float: right;
+  font-weight: bold;
+  height: 30px;
+  margin-left: 20px;
+  margin-top: 15px;
+  padding: 0 20px;
+  vertical-align: middle;
+}
+
+.option button:hover {
+  background-color: rgba(66, 133, 244, 0.04);
+}
+
+.option button:active {
+  background-color: rgba(66, 133, 244, 0.15);
 }

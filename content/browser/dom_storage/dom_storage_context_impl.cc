@@ -28,6 +28,7 @@
 #include "content/browser/dom_storage/dom_storage_namespace.h"
 #include "content/browser/dom_storage/dom_storage_task_runner.h"
 #include "content/browser/dom_storage/session_storage_database.h"
+#include "content/common/dom_storage/dom_storage_namespace_ids.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "content/public/browser/dom_storage_context.h"
 #include "content/public/browser/local_storage_usage_info.h"
@@ -241,15 +242,6 @@ void DOMStorageContextImpl::NotifyAreaCleared(
     observer.OnDOMStorageAreaCleared(area, page_url);
 }
 
-std::string DOMStorageContextImpl::AllocateSessionId() {
-  constexpr const static size_t kSessionIdLength = 36;
-  std::string guid = base::GenerateGUID();
-  std::replace(guid.begin(), guid.end(), '-', '_');
-  // The database deserialization code makes assumptions based on this length.
-  DCHECK_EQ(guid.size(), kSessionIdLength);
-  return guid;
-}
-
 // Used to diagnose unknown namespace_ids given to the ipc message filter.
 base::Optional<bad_message::BadMessageReason>
 DOMStorageContextImpl::DiagnoseSessionNamespaceId(
@@ -422,7 +414,7 @@ bool DOMStorageContextImpl::OnMemoryDump(
     DOMStorageNamespace::UsageStatistics total_stats =
         GetTotalNamespaceStatistics(namespaces_);
     auto* mad = pmd->CreateAllocatorDump(base::StringPrintf(
-        "site_storage/session_storage_0x%" PRIXPTR "/cache_size",
+        "site_storage/session_storage/0x%" PRIXPTR "/cache_size",
         reinterpret_cast<uintptr_t>(this)));
     mad->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
                    base::trace_event::MemoryAllocatorDump::kUnitsBytes,

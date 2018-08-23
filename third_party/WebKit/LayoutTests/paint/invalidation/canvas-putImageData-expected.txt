@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -22,12 +23,6 @@
           "reason": "invalidate paint rectangle"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutHTMLCanvas CANVAS id='canvas'",
-      "reason": "invalidate paint rectangle"
     }
   ]
 }

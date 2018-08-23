@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -57,32 +58,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='left'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='content'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='left'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='content'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
     }
   ]
 }

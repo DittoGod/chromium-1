@@ -60,6 +60,7 @@ const char* GetDangerTypeString(download::DownloadDangerType danger_type) {
     case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
     case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
     case download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+    case download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY:
     case download::DOWNLOAD_DANGER_TYPE_MAX:
       break;
   }
@@ -209,7 +210,7 @@ DownloadsListTracker::CreateDownloadItemValue(
   file_value->SetString("id", base::NumberToString(download_item->GetId()));
 
   base::FilePath download_path(download_item->GetTargetFilePath());
-  file_value->Set("file_path", base::CreateFilePathValue(download_path));
+  file_value->SetKey("file_path", base::CreateFilePathValue(download_path));
   file_value->SetString("file_url",
                         net::FilePathToFileURL(download_path).spec());
 

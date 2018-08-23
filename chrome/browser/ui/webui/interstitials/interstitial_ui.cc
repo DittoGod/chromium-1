@@ -20,7 +20,7 @@
 #include "chrome/browser/ssl/mitm_software_blocking_page.h"
 #include "chrome/browser/ssl/ssl_blocking_page.h"
 #include "chrome/browser/supervised_user/supervised_user_interstitial.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/url_constants.h"
 #include "components/grit/components_resources.h"
 #include "components/safe_browsing/db/database_manager.h"
@@ -114,6 +114,7 @@ class CaptivePortalBlockingPageWithNetInfo : public CaptivePortalBlockingPage {
                                   login_url,
                                   nullptr,
                                   ssl_info,
+                                  net::ERR_CERT_COMMON_NAME_INVALID,
                                   callback),
         is_wifi_(is_wifi),
         wifi_ssid_(wifi_ssid) {}
@@ -279,6 +280,8 @@ safe_browsing::SafeBrowsingBlockingPage* CreateSafeBrowsingBlockingPage(
       threat_type = safe_browsing::SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE;
     } else if (type_param == "clientside_phishing") {
       threat_type = safe_browsing::SB_THREAT_TYPE_URL_CLIENT_SIDE_PHISHING;
+    } else if (type_param == "billing") {
+      threat_type = safe_browsing::SB_THREAT_TYPE_BILLING;
     }
   }
   safe_browsing::SafeBrowsingBlockingPage::UnsafeResource resource;

@@ -86,10 +86,10 @@ class Traversal {
   }
 
   /**
-   * @param {!Selection} selection
+   * @param {!Window} window
    * @return !SampleSelection
    */
-  fromDOMSelection(selection) {
+  fromDOMSelection(window) {
     throw new Error('You should implement fromDOMSelection');
   }
 
@@ -109,11 +109,11 @@ class DOMTreeTraversal extends Traversal {
   firstChildOf(node) { return node.firstChild; }
 
   /**
-   * @param {!Selection} selection
+   * @param {!Window} window
    * @return !SampleSelection
    */
-  fromDOMSelection(selection) {
-    return SampleSelection.fromDOMSelection(selection);
+  fromDOMSelection(window) {
+    return SampleSelection.fromDOMSelection(window.getSelection());
   }
 
   /**
@@ -129,23 +129,22 @@ class FlatTreeTraversal extends Traversal {
    * @param {!Node} node
    * @return {Node}
    */
-  firstChildOf(node) { return window.internals.firstChildInFlatTree(node); }
+  firstChildOf(node) { return internals.firstChildInFlatTree(node); }
 
   /**
-   * @param {!Selection} selection
+   * @param {!Window} window
    * @return !SampleSelection
    */
-  fromDOMSelection(selection) {
-    // TODO(yosin): We should return non-scoped selection rather than selection
-    // scoped in main tree.
-    return SampleSelection.fromDOMSelection(selection);
+  fromDOMSelection(window) {
+    return SampleSelection.fromDOMSelection(
+        internals.getSelectionInFlatTree(window));
   }
 
   /**
    * @param {!Node} node
    * @return {Node}
    */
-  nextSiblingOf(node) { return window.internals.nextSiblingInFlatTree(node); }
+  nextSiblingOf(node) { return internals.nextSiblingInFlatTree(node); }
 }
 
 /**
@@ -682,11 +681,27 @@ function computeLeft(element) {
  * @param {!HTMLElement} element
  * @return {number}
  */
+function computeRight(element) {
+  return this.computeLeft(element) + element.offsetWidth;
+}
+
+/**
+ * @param {!HTMLElement} element
+ * @return {number}
+ */
 function computeTop(element) {
   let top = kIFrameBorderSize + element.ownerDocument.offsetTop;
   for (let runner = element; runner; runner = runner.offsetParent)
     top += runner.offsetTop;
   return top;
+}
+
+/**
+ * @param {!HTMLElement} element
+ * @return {number}
+ */
+function computeBottom(element) {
+  return this.computeTop(element) + element.offsetHeight;
 }
 
 /**
@@ -722,10 +737,7 @@ class Sample {
    */
   constructor(sampleText) {
     /** @const @type {!HTMLIFrameElement} */
-    this.iframe_ = document.createElement('iframe');
-    if (!document.body)
-        document.body = document.createElement("body");
-    document.body.appendChild(this.iframe_);
+    this.iframe_ = Sample.getOrCreatePlayground();
     /** @const @type {!HTMLDocument} */
     this.document_ = this.iframe_.contentDocument;
 
@@ -739,7 +751,9 @@ class Sample {
     this.selection_.document.offsetTop = this.iframe_.offsetTop;
     this.selection_.setClipboardData = setClipboardData;
     this.selection_.computeLeft = computeLeft;
+    this.selection_.computeRight = computeRight;
     this.selection_.computeTop = computeTop;
+    this.selection_.computeBottom = computeBottom;
     this.load(sampleText);
   }
 
@@ -748,6 +762,17 @@ class Sample {
 
   /** @return {!Selection} */
   get selection() { return this.selection_; }
+
+  /** @return {string} */
+  static get playgroundId() { return 'playground'; }
+
+  /**
+   * @public
+   * Marks this sample not to be reused.
+   */
+  keep() {
+    this.iframe_.removeAttribute('id');
+  }
 
   /**
    * @private
@@ -817,13 +842,39 @@ class Sample {
 
   /**
    * @public
+   */
+  reset() {
+    if (window.internals && internals.isOverwriteModeEnabled(this.document_))
+      internals.toggleOverwriteModeEnabled(this.document_);
+    this.document_.documentElement.innerHTML = '<head></head><body></body>';
+    this.selection.removeAllRanges();
+    this.iframe_.style.display = 'none';
+  }
+
+  /** @return {HTMLIFrameElement} */
+  static getOrCreatePlayground() {
+    const present = document.getElementById(Sample.playgroundId);
+    if (present) {
+      present.style.display = 'block';
+      return present;
+    }
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('id', Sample.playgroundId);
+    if (!document.body)
+        document.body = document.createElement("body");
+    document.body.appendChild(iframe);
+    return iframe;
+  }
+
+  /**
+   * @public
    * @param {!Traversal} traversal
    * @param {boolean} dumpFromRoot
    * @return {string}
    */
   serialize(traversal, dumpFromRoot) {
     /** @type {!SampleSelection} */
-    const selection = traversal.fromDOMSelection(this.selection_);
+    const selection = traversal.fromDOMSelection(this.document_.defaultView);
     /** @type {!Serializer} */
     const serializer = new Serializer(selection, traversal);
     return serializer.serialize(this.document_, dumpFromRoot);
@@ -968,9 +1019,12 @@ function assertSelection(
   // case.
   if (actualText === expectedText) {
     if (removeSampleIfSucceeded)
-        sample.remove();
+        sample.reset();
+    else
+        sample.keep();
     return sample;
   }
+  sample.keep();
   throw new Error(`${description}\n` +
     `\t expected ${expectedText},\n` +
     `\t but got  ${actualText},\n` +
@@ -997,4 +1051,5 @@ function selectionTest(inputText, tester, expectedText, opt_options,
 window.Sample = Sample;
 window.assert_selection = assertSelection;
 window.selection_test = selectionTest;
+window.DOMTreeTraversal = DOMTreeTraversal;
 })();

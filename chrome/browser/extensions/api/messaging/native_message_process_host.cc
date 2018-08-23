@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/process/kill.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/messaging/native_messaging_host_manifest.h"
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
@@ -29,7 +29,7 @@ namespace {
 // Maximum message size in bytes for messages received from Native Messaging
 // hosts. Message size is limited mainly to prevent Chrome from crashing when
 // native application misbehaves (e.g. starts writing garbage to the pipe).
-const size_t kMaximumMessageSize = 1024 * 1024;
+const size_t kMaximumNativeMessageSize = 1024 * 1024;
 
 // Message header contains 4-byte integer size of the message.
 const size_t kMessageHeaderSize = 4;
@@ -66,12 +66,12 @@ NativeMessageProcessHost::~NativeMessageProcessHost() {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
   if (process_.IsValid()) {
-    // Kill the host process if necessary to make sure we don't leave zombies.
-    // On OSX and Fuchsia base::EnsureProcessTerminated() may block, so we have
-    // to post a task on the blocking pool.
-#if defined(OS_MACOSX) || defined(OS_FUCHSIA)
+// Kill the host process if necessary to make sure we don't leave zombies.
+// TODO(https://crbug.com/806451): On OSX EnsureProcessTerminated() may
+// block, so we have to post a task on the blocking pool.
+#if defined(OS_MACOSX)
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(&base::EnsureProcessTerminated, Passed(&process_)));
 #else
     base::EnsureProcessTerminated(std::move(process_));
@@ -226,8 +226,8 @@ void NativeMessageProcessHost::DoRead() {
     read_buffer_ = new net::IOBuffer(kReadBufferSize);
     int result =
         read_stream_->Read(read_buffer_.get(), kReadBufferSize,
-                           base::Bind(&NativeMessageProcessHost::OnRead,
-                                      weak_factory_.GetWeakPtr()));
+                           base::BindOnce(&NativeMessageProcessHost::OnRead,
+                                          weak_factory_.GetWeakPtr()));
     HandleReadResult(result);
   }
 }
@@ -273,7 +273,7 @@ void NativeMessageProcessHost::ProcessIncomingData(
     size_t message_size =
         *reinterpret_cast<const uint32_t*>(incoming_data_.data());
 
-    if (message_size > kMaximumMessageSize) {
+    if (message_size > kMaximumNativeMessageSize) {
       LOG(ERROR) << "Native Messaging host tried sending a message that is "
                  << message_size << " bytes long.";
       Close(kHostInputOutputError);
@@ -303,11 +303,10 @@ void NativeMessageProcessHost::DoWrite() {
       write_queue_.pop();
     }
 
-    int result =
-        write_stream_->Write(current_write_buffer_.get(),
-                             current_write_buffer_->BytesRemaining(),
-                             base::Bind(&NativeMessageProcessHost::OnWritten,
-                                        weak_factory_.GetWeakPtr()));
+    int result = write_stream_->Write(
+        current_write_buffer_.get(), current_write_buffer_->BytesRemaining(),
+        base::BindOnce(&NativeMessageProcessHost::OnWritten,
+                       weak_factory_.GetWeakPtr()));
     HandleWriteResult(result);
   }
 }

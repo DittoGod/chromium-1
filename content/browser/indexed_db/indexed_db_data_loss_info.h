@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBTypes.h"
+#include "third_party/blink/public/common/indexeddb/web_idb_types.h"
 
 namespace content {
 

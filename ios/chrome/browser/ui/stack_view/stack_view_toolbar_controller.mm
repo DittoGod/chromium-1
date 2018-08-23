@@ -12,9 +12,10 @@
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/ui/image_util/image_util.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
-#import "ios/chrome/browser/ui/toolbar/new_tab_button.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_constants.h"
-#import "ios/chrome/browser/ui/toolbar/toolbar_controller+protected.h"
+#import "ios/chrome/browser/ui/stack_view/new_tab_button.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_constants.h"
+#import "ios/chrome/browser/ui/toolbar/legacy/toolbar_controller+protected.h"
+#import "ios/chrome/browser/ui/toolbar/legacy/toolbar_controller_constants.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -97,8 +98,8 @@ const CGFloat kBackgroundViewColorAlpha = 0.95;
       [_openNewTabButton.superview convertPoint:_openNewTabButton.center
                                          toView:_openNewTabButton.window];
   OpenNewTabCommand* command =
-      [[OpenNewTabCommand alloc] initWithIncognito:_openNewTabButton.isIncognito
-                                       originPoint:center];
+      [OpenNewTabCommand commandWithIncognito:_openNewTabButton.isIncognito
+                                  originPoint:center];
   [_dispatcher openNewTab:command];
 }
 

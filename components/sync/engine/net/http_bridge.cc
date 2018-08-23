@@ -15,7 +15,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/sync/base/cancelation_signal.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
@@ -73,13 +72,17 @@ HttpBridgeFactory::HttpBridgeFactory(
   // This registration is happening on the Sync thread, while signalling occurs
   // on the UI thread. We must handle the possibility signalling has already
   // occurred.
-  if (!cancelation_signal_->TryRegisterHandler(this)) {
+  if (cancelation_signal_->TryRegisterHandler(this)) {
+    registered_for_cancelation_ = true;
+  } else {
     OnSignalReceived();
   }
 }
 
 HttpBridgeFactory::~HttpBridgeFactory() {
-  cancelation_signal_->UnregisterHandler(this);
+  if (registered_for_cancelation_) {
+    cancelation_signal_->UnregisterHandler(this);
+  }
 }
 
 void HttpBridgeFactory::Init(
@@ -96,7 +99,7 @@ HttpPostProviderInterface* HttpBridgeFactory::Create() {
   // and at pretty much any time), then we won't have a request_context_getter_.
   // Some external mechanism must ensure that this function is not called after
   // we've been asked to shut down.
-  DCHECK(request_context_getter_.get());
+  DCHECK(request_context_getter_);
 
   scoped_refptr<HttpBridge> http =
       new HttpBridge(user_agent_, request_context_getter_,
@@ -198,7 +201,8 @@ bool HttpBridge::MakeSynchronousPost(int* error_code, int* response_code) {
 #endif
 
   if (!network_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&HttpBridge::CallMakeAsynchronousPost, this))) {
+          FROM_HERE,
+          base::BindOnce(&HttpBridge::CallMakeAsynchronousPost, this))) {
     // This usually happens when we're in a unit test.
     LOG(WARNING) << "Could not post CallMakeAsynchronousPost task";
     return false;
@@ -225,14 +229,14 @@ void HttpBridge::MakeAsynchronousPost() {
 
   // Start the timer on the network thread (the same thread progress is made
   // on, and on which the url fetcher lives).
-  DCHECK(!fetch_state_.http_request_timeout_timer.get());
+  DCHECK(!fetch_state_.http_request_timeout_timer);
   fetch_state_.http_request_timeout_timer =
-      std::make_unique<base::Timer>(false, false);
+      std::make_unique<base::OneShotTimer>();
   fetch_state_.http_request_timeout_timer->Start(
       FROM_HERE, base::TimeDelta::FromSeconds(kMaxHttpRequestTimeSeconds),
-      base::Bind(&HttpBridge::OnURLFetchTimedOut, this));
+      base::BindOnce(&HttpBridge::OnURLFetchTimedOut, this));
 
-  DCHECK(request_context_getter_.get());
+  DCHECK(request_context_getter_);
   fetch_state_.start_time = base::Time::Now();
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("sync_http_bridge", R"(
@@ -325,9 +329,9 @@ void HttpBridge::Abort() {
   fetch_state_.aborted = true;
   if (!network_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(&HttpBridge::DestroyURLFetcherOnIOThread, this,
-                     fetch_state_.url_poster,
-                     fetch_state_.http_request_timeout_timer.release()))) {
+          base::BindOnce(&HttpBridge::DestroyURLFetcherOnIOThread, this,
+                         fetch_state_.url_poster,
+                         fetch_state_.http_request_timeout_timer.release()))) {
     // Madness ensues.
     NOTREACHED() << "Could not post task to delete URLFetcher";
   }
@@ -338,10 +342,10 @@ void HttpBridge::Abort() {
 }
 
 void HttpBridge::DestroyURLFetcherOnIOThread(net::URLFetcher* fetcher,
-                                             base::Timer* fetch_timer) {
+                                             base::OneShotTimer* fetch_timer) {
   DCHECK(network_task_runner_->BelongsToCurrentThread());
-  if (fetch_timer)
-    delete fetch_timer;
+
+  delete fetch_timer;
   delete fetcher;
 }
 
@@ -351,7 +355,7 @@ void HttpBridge::OnURLFetchComplete(const net::URLFetcher* source) {
   base::AutoLock lock(fetch_state_lock_);
 
   // Stop the request timer now that the request completed.
-  if (fetch_state_.http_request_timeout_timer.get())
+  if (fetch_state_.http_request_timeout_timer)
     fetch_state_.http_request_timeout_timer.reset();
 
   if (fetch_state_.aborted)
@@ -389,11 +393,11 @@ void HttpBridge::OnURLFetchComplete(const net::URLFetcher* source) {
   RecordSyncResponseContentLengthHistograms(compressed_content_length,
                                             original_content_length);
 
-  // End of the line for url_poster_. It lives only on the IO loop.
-  // We defer deletion because we're inside a callback from a component of the
-  // URLFetcher, so it seems most natural / "polite" to let the stack unwind.
-  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE,
-                                                  fetch_state_.url_poster);
+  // End of the line for |fetch_state_.url_poster|. It lives only on the IO
+  // loop. We defer deletion because we're inside a callback from a component of
+  // the URLFetcher, so it seems most natural / "polite" to let the stack
+  // unwind.
+  network_task_runner_->DeleteSoon(FROM_HERE, fetch_state_.url_poster);
   fetch_state_.url_poster = nullptr;
 
   // Wake the blocked syncer thread in MakeSynchronousPost.
@@ -408,7 +412,7 @@ void HttpBridge::OnURLFetchDownloadProgress(const net::URLFetcher* source,
   DCHECK(network_task_runner_->BelongsToCurrentThread());
   // Reset the delay when forward progress is made.
   base::AutoLock lock(fetch_state_lock_);
-  if (fetch_state_.http_request_timeout_timer.get())
+  if (fetch_state_.http_request_timeout_timer)
     fetch_state_.http_request_timeout_timer->Reset();
 }
 
@@ -418,7 +422,7 @@ void HttpBridge::OnURLFetchUploadProgress(const net::URLFetcher* source,
   DCHECK(network_task_runner_->BelongsToCurrentThread());
   // Reset the delay when forward progress is made.
   base::AutoLock lock(fetch_state_lock_);
-  if (fetch_state_.http_request_timeout_timer.get())
+  if (fetch_state_.http_request_timeout_timer)
     fetch_state_.http_request_timeout_timer->Reset();
 }
 

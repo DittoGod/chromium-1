@@ -8,6 +8,7 @@
 
 #include "base/atomic_sequence_num.h"
 #include "base/hash.h"
+#include "cc/paint/paint_image_builder.h"
 #include "cc/paint/paint_image_generator.h"
 #include "cc/paint/paint_record.h"
 #include "cc/paint/skia_paint_image_generator.h"
@@ -15,13 +16,14 @@
 
 namespace cc {
 namespace {
-base::AtomicSequenceNumber g_next_id_;
-base::AtomicSequenceNumber g_next_content_id_;
+base::AtomicSequenceNumber g_next_image_id;
+base::AtomicSequenceNumber g_next_image_content_id;
 }  // namespace
 
 const PaintImage::Id PaintImage::kNonLazyStableId = -1;
 const size_t PaintImage::kDefaultFrameIndex = 0u;
 const PaintImage::Id PaintImage::kInvalidId = -2;
+const PaintImage::ContentId PaintImage::kInvalidContentId = -1;
 
 PaintImage::PaintImage() = default;
 PaintImage::PaintImage(const PaintImage& other) = default;
@@ -50,8 +52,6 @@ bool PaintImage::operator==(const PaintImage& other) const {
     return false;
   if (subset_rect_ != other.subset_rect_)
     return false;
-  if (frame_index_ != other.frame_index_)
-    return false;
   if (is_multipart_ != other.is_multipart_)
     return false;
   return true;
@@ -73,12 +73,24 @@ PaintImage::DecodingMode PaintImage::GetConservative(DecodingMode one,
 
 // static
 PaintImage::Id PaintImage::GetNextId() {
-  return g_next_id_.GetNext();
+  return g_next_image_id.GetNext();
 }
 
 // static
 PaintImage::ContentId PaintImage::GetNextContentId() {
-  return g_next_content_id_.GetNext();
+  return g_next_image_content_id.GetNext();
+}
+
+// static
+PaintImage PaintImage::CreateFromBitmap(SkBitmap bitmap) {
+  if (bitmap.drawsNothing())
+    return PaintImage();
+
+  return PaintImageBuilder::WithDefault()
+      .set_id(PaintImage::GetNextId())
+      .set_image(SkImage::MakeFromBitmap(bitmap),
+                 PaintImage::GetNextContentId())
+      .TakePaintImage();
 }
 
 const sk_sp<SkImage>& PaintImage::GetSkImage() const {
@@ -122,7 +134,7 @@ void PaintImage::CreateSkImage() {
   } else if (paint_image_generator_) {
     cached_sk_image_ =
         SkImage::MakeFromGenerator(std::make_unique<SkiaPaintImageGenerator>(
-            paint_image_generator_, frame_index_));
+            paint_image_generator_, kDefaultFrameIndex));
   }
 
   if (!subset_rect_.IsEmpty() && cached_sk_image_) {
@@ -136,10 +148,8 @@ SkISize PaintImage::GetSupportedDecodeSize(
   // TODO(vmpstr): If this image is using subset_rect, then we don't support
   // decoding to any scale other than the original. See the comment in Decode()
   // explaining this in more detail.
-  // TODO(vmpstr): For now, always decode to the original size. This can be
-  // enabled with the following code, and should be done as a follow-up.
-  //  if (paint_image_generator_ && subset_rect_.IsEmpty())
-  //    return paint_image_generator_->GetSupportedDecodeSize(requested_size);
+  if (paint_image_generator_ && subset_rect_.IsEmpty())
+    return paint_image_generator_->GetSupportedDecodeSize(requested_size);
   return SkISize::Make(width(), height());
 }
 
@@ -216,8 +226,7 @@ bool PaintImage::DecodeFromSkImage(void* memory,
   auto image = GetSkImageForFrame(frame_index);
   DCHECK(image);
   if (color_space) {
-    image =
-        image->makeColorSpace(color_space, SkTransferFunctionBehavior::kIgnore);
+    image = image->makeColorSpace(color_space);
     if (!image)
       return false;
   }
@@ -267,7 +276,7 @@ size_t PaintImage::FrameCount() const {
 sk_sp<SkImage> PaintImage::GetSkImageForFrame(size_t index) const {
   DCHECK_LT(index, FrameCount());
 
-  if (index == frame_index_)
+  if (index == kDefaultFrameIndex)
     return GetSkImage();
 
   sk_sp<SkImage> image = SkImage::MakeFromGenerator(
@@ -286,7 +295,6 @@ std::string PaintImage::ToString() const {
       << " animation_type_: " << static_cast<int>(animation_type_)
       << " completion_state_: " << static_cast<int>(completion_state_)
       << " subset_rect_: " << subset_rect_.ToString()
-      << " frame_index_: " << frame_index_
       << " is_multipart_: " << is_multipart_;
   return str.str();
 }

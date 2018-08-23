@@ -10,9 +10,16 @@
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "content/public/common/media_stream_request.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
 
 namespace content {
+
+// Names for media stream source capture types.
+// These are values set via the "chromeMediaSource" constraint.
+CONTENT_EXPORT extern const char kMediaStreamSourceTab[];
+CONTENT_EXPORT extern const char kMediaStreamSourceScreen[]; /* video only */
+CONTENT_EXPORT extern const char kMediaStreamSourceDesktop[];
+CONTENT_EXPORT extern const char kMediaStreamSourceSystem[]; /* audio only */
 
 class CONTENT_EXPORT MediaStreamSource
     : public blink::WebMediaStreamSource::ExtraData {

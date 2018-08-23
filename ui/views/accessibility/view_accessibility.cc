@@ -5,6 +5,7 @@
 #include "ui/views/accessibility/view_accessibility.h"
 
 #include "base/strings/utf_string_conversions.h"
+#include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/base/ui_features.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
@@ -39,9 +40,10 @@ std::unique_ptr<ViewAccessibility> ViewAccessibility::Create(View* view) {
 }
 #endif
 
-ViewAccessibility::ViewAccessibility(View* view) : owner_view_(view) {}
+ViewAccessibility::ViewAccessibility(View* view)
+    : owner_view_(view), is_leaf_(false) {}
 
-ViewAccessibility::~ViewAccessibility() {}
+ViewAccessibility::~ViewAccessibility() = default;
 
 const ui::AXUniqueId& ViewAccessibility::GetUniqueId() const {
   return unique_id_;
@@ -60,19 +62,33 @@ void ViewAccessibility::GetAccessibleNodeData(ui::AXNodeData* data) const {
   owner_view_->GetAccessibleNodeData(data);
   if (custom_data_.role != ax::mojom::Role::kUnknown)
     data->role = custom_data_.role;
+
   if (custom_data_.HasStringAttribute(ax::mojom::StringAttribute::kName)) {
     data->SetName(
         custom_data_.GetStringAttribute(ax::mojom::StringAttribute::kName));
   }
 
-  data->location = gfx::RectF(owner_view_->GetBoundsInScreen());
-  if (!data->HasStringAttribute(ax::mojom::StringAttribute::kDescription)) {
-    base::string16 description;
-    owner_view_->GetTooltipText(gfx::Point(), &description);
-    data->AddStringAttribute(ax::mojom::StringAttribute::kDescription,
-                             base::UTF16ToUTF8(description));
+  if (custom_data_.HasStringAttribute(
+          ax::mojom::StringAttribute::kDescription)) {
+    data->SetDescription(custom_data_.GetStringAttribute(
+        ax::mojom::StringAttribute::kDescription));
   }
 
+  if (!data->HasStringAttribute(ax::mojom::StringAttribute::kDescription)) {
+    base::string16 tooltip;
+    owner_view_->GetTooltipText(gfx::Point(), &tooltip);
+    // Some screen readers announce the accessible description right after the
+    // accessible name. Only use the tooltip as the accessible description if
+    // it's different from the name, otherwise users might be puzzled as to why
+    // their screen reader is announcing the same thing twice.
+    if (tooltip !=
+        data->GetString16Attribute(ax::mojom::StringAttribute::kName)) {
+      data->AddStringAttribute(ax::mojom::StringAttribute::kDescription,
+                               base::UTF16ToUTF8(tooltip));
+    }
+  }
+
+  data->location = gfx::RectF(owner_view_->GetBoundsInScreen());
   data->AddStringAttribute(ax::mojom::StringAttribute::kClassName,
                            owner_view_->GetClassName());
 
@@ -82,11 +98,15 @@ void ViewAccessibility::GetAccessibleNodeData(ui::AXNodeData* data) const {
   if (!owner_view_->enabled())
     data->SetRestriction(ax::mojom::Restriction::kDisabled);
 
-  if (!owner_view_->visible())
+  if (!owner_view_->visible() && data->role != ax::mojom::Role::kAlert)
     data->AddState(ax::mojom::State::kInvisible);
 
   if (owner_view_->context_menu_controller())
     data->AddAction(ax::mojom::Action::kShowContextMenu);
+}
+
+bool ViewAccessibility::IsLeaf() const {
+  return is_leaf_;
 }
 
 void ViewAccessibility::OverrideRole(ax::mojom::Role role) {
@@ -108,6 +128,10 @@ void ViewAccessibility::OverrideDescription(const std::string& description) {
       ax::mojom::StringAttribute::kDescription));
   custom_data_.AddStringAttribute(ax::mojom::StringAttribute::kDescription,
                                   description);
+}
+
+void ViewAccessibility::OverrideIsLeaf() {
+  is_leaf_ = true;
 }
 
 gfx::NativeViewAccessible ViewAccessibility::GetNativeObject() {

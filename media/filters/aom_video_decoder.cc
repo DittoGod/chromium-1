@@ -14,6 +14,7 @@
 #include "media/base/decoder_buffer.h"
 #include "media/base/media_log.h"
 #include "media/base/media_switches.h"
+#include "media/base/video_util.h"
 #include "third_party/libyuv/include/libyuv/convert.h"
 
 // Include libaom header files.
@@ -26,7 +27,7 @@ extern "C" {
 namespace media {
 
 // Returns the number of threads.
-static int GetThreadCount(const VideoDecoderConfig& config) {
+static int GetAomVideoDecoderThreadCount(const VideoDecoderConfig& config) {
   // Always try to use at least two threads for video decoding. There is little
   // reason not to since current day CPUs tend to be multi-core and we measured
   // performance benefits on older machines such as P4s with hyperthreading.
@@ -96,13 +97,6 @@ static VideoPixelFormat AomImgFmtToVideoPixelFormat(const aom_image_t* img) {
           return PIXEL_FORMAT_UNKNOWN;
       }
 
-    case AOM_IMG_FMT_I440:
-    case AOM_IMG_FMT_I44016:
-      // TODO(dalecurtis): We'll need to add support for these to handle the
-      // full range of expected AOM content.
-      NOTIMPLEMENTED();
-      break;
-
     default:
       break;
   }
@@ -114,71 +108,22 @@ static VideoPixelFormat AomImgFmtToVideoPixelFormat(const aom_image_t* img) {
 static void SetColorSpaceForFrame(const aom_image_t* img,
                                   const VideoDecoderConfig& config,
                                   VideoFrame* frame) {
-  // Default to the color space from the config, but if the bistream specifies
-  // one, prefer that instead.
-  if (config.color_space_info() != VideoColorSpace()) {
-    // config_.color_space_info() comes from the color tag which is more
-    // expressive than the bitstream, so prefer it over the bitstream data
-    // below.
-    frame->set_color_space(config.color_space_info().ToGfxColorSpace());
-    return;
-  }
 
-  ColorSpace color_space = config.color_space();
-  gfx::ColorSpace::PrimaryID primaries = gfx::ColorSpace::PrimaryID::INVALID;
-  gfx::ColorSpace::TransferID transfer = gfx::ColorSpace::TransferID::INVALID;
-  gfx::ColorSpace::MatrixID matrix = gfx::ColorSpace::MatrixID::INVALID;
   gfx::ColorSpace::RangeID range = img->range == AOM_CR_FULL_RANGE
                                        ? gfx::ColorSpace::RangeID::FULL
                                        : gfx::ColorSpace::RangeID::LIMITED;
-  switch (img->cs) {
-    case AOM_CS_BT_601:
-    case AOM_CS_SMPTE_170:
-      primaries = gfx::ColorSpace::PrimaryID::SMPTE170M;
-      transfer = gfx::ColorSpace::TransferID::SMPTE170M;
-      matrix = gfx::ColorSpace::MatrixID::SMPTE170M;
-      color_space = COLOR_SPACE_SD_REC601;
-      break;
-    case AOM_CS_SMPTE_240:
-      primaries = gfx::ColorSpace::PrimaryID::SMPTE240M;
-      transfer = gfx::ColorSpace::TransferID::SMPTE240M;
-      matrix = gfx::ColorSpace::MatrixID::SMPTE240M;
-      break;
-    case AOM_CS_BT_709:
-      primaries = gfx::ColorSpace::PrimaryID::BT709;
-      transfer = gfx::ColorSpace::TransferID::BT709;
-      matrix = gfx::ColorSpace::MatrixID::BT709;
-      color_space = COLOR_SPACE_HD_REC709;
-      break;
-    case AOM_CS_BT_2020_NCL:
-    case AOM_CS_BT_2020_CL:
-      primaries = gfx::ColorSpace::PrimaryID::BT2020;
-      if (img->bit_depth >= 12) {
-        transfer = gfx::ColorSpace::TransferID::BT2020_12;
-      } else if (img->bit_depth >= 10) {
-        transfer = gfx::ColorSpace::TransferID::BT2020_10;
-      } else {
-        transfer = gfx::ColorSpace::TransferID::BT709;
-      }
-      matrix = img->cs == AOM_CS_BT_2020_NCL
-                   ? gfx::ColorSpace::MatrixID::BT2020_NCL
-                   : gfx::ColorSpace::MatrixID::BT2020_CL;
-      break;
-    case AOM_CS_SRGB:
-      primaries = gfx::ColorSpace::PrimaryID::BT709;
-      transfer = gfx::ColorSpace::TransferID::IEC61966_2_1;
-      matrix = gfx::ColorSpace::MatrixID::BT709;
-      break;
-    default:
-      NOTIMPLEMENTED() << "Unsupported color space encountered: " << img->cs;
-      break;
-  }
 
-  // TODO(ccameron): Set a color space even for unspecified values.
-  if (primaries != gfx::ColorSpace::PrimaryID::INVALID)
-    frame->set_color_space(gfx::ColorSpace(primaries, transfer, matrix, range));
+  // AOM color space defines match ISO 23001-8:2016 via ISO/IEC 23091-4/ITU-T
+  // H.273.
+  // http://av1-spec.argondesign.com/av1-spec/av1-spec.html#color-config-semantics
+  media::VideoColorSpace color_space(img->cp, img->tc, img->mc, range);
 
-  frame->metadata()->SetInteger(VideoFrameMetadata::COLOR_SPACE, color_space);
+  // If the bitstream doesn't specify a color space, use the one
+  // from the container.
+  if (!color_space.IsSpecified())
+    color_space = config.color_space_info();
+
+  frame->set_color_space(color_space.ToGfxColorSpace());
 }
 
 // Copies plane of 8-bit pixels out of a 16-bit values.
@@ -216,11 +161,13 @@ std::string AomVideoDecoder::GetDisplayName() const {
   return "AomVideoDecoder";
 }
 
-void AomVideoDecoder::Initialize(const VideoDecoderConfig& config,
-                                 bool /* low_delay */,
-                                 CdmContext* /* cdm_context */,
-                                 const InitCB& init_cb,
-                                 const OutputCB& output_cb) {
+void AomVideoDecoder::Initialize(
+    const VideoDecoderConfig& config,
+    bool /* low_delay */,
+    CdmContext* /* cdm_context */,
+    const InitCB& init_cb,
+    const OutputCB& output_cb,
+    const WaitingForDecryptionKeyCB& /* waiting_for_decryption_key_cb */) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(config.IsValidConfig());
 
@@ -236,7 +183,7 @@ void AomVideoDecoder::Initialize(const VideoDecoderConfig& config,
   aom_codec_dec_cfg_t aom_config = {0};
   aom_config.w = config.coded_size().width();
   aom_config.h = config.coded_size().height();
-  aom_config.threads = GetThreadCount(config);
+  aom_config.threads = GetAomVideoDecoderThreadCount(config);
 
   // TODO(dalecurtis): Refactor the MemoryPool and OffloadTaskRunner out of
   // VpxVideoDecoder so that they can be used here for zero copy decoding off
@@ -258,7 +205,7 @@ void AomVideoDecoder::Initialize(const VideoDecoderConfig& config,
   bound_init_cb.Run(true);
 }
 
-void AomVideoDecoder::Decode(const scoped_refptr<DecoderBuffer>& buffer,
+void AomVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                              const DecodeCB& decode_cb) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(buffer);
@@ -312,8 +259,8 @@ bool AomVideoDecoder::DecodeBuffer(const DecoderBuffer* buffer) {
 
   if (aom_codec_decode(
           aom_decoder_.get(), buffer->data(), buffer->data_size(),
-          reinterpret_cast<void*>(buffer->timestamp().InMicroseconds()),
-          0 /* deadline */) != AOM_CODEC_OK) {
+          reinterpret_cast<void*>(buffer->timestamp().InMicroseconds())) !=
+      AOM_CODEC_OK) {
     const char* detail = aom_codec_error_detail(aom_decoder_.get());
     MEDIA_LOG(ERROR, media_log_)
         << "aom_codec_decode() failed: " << aom_codec_error(aom_decoder_.get())
@@ -363,9 +310,11 @@ scoped_refptr<VideoFrame> AomVideoDecoder::CopyImageToVideoFrame(
   }
 
   // Since we're making a copy, only copy the visible area.
-  const gfx::Size size(img->d_w, img->d_h);
-  auto frame = frame_pool_.CreateFrame(pixel_format, size, gfx::Rect(size),
-                                       config_.natural_size(), kNoTimestamp);
+  const gfx::Rect visible_rect(img->d_w, img->d_h);
+  auto frame = frame_pool_.CreateFrame(
+      pixel_format, visible_rect.size(), visible_rect,
+      GetNaturalSize(visible_rect, config_.GetPixelAspectRatio()),
+      kNoTimestamp);
   if (!frame)
     return nullptr;
 
@@ -376,17 +325,11 @@ scoped_refptr<VideoFrame> AomVideoDecoder::CopyImageToVideoFrame(
     PackPlane(VideoFrame::kUPlane, img, frame.get());
     PackPlane(VideoFrame::kVPlane, img, frame.get());
   } else {
-    // Despite having I420 in the name this will copy any YUV format.
-    libyuv::I420Copy(img->planes[AOM_PLANE_Y], img->stride[AOM_PLANE_Y],
-                     img->planes[AOM_PLANE_U], img->stride[AOM_PLANE_U],
-                     img->planes[AOM_PLANE_V], img->stride[AOM_PLANE_V],
-                     frame->visible_data(VideoFrame::kYPlane),
-                     frame->stride(VideoFrame::kYPlane),
-                     frame->visible_data(VideoFrame::kUPlane),
-                     frame->stride(VideoFrame::kUPlane),
-                     frame->visible_data(VideoFrame::kVPlane),
-                     frame->stride(VideoFrame::kVPlane), size.width(),
-                     size.height());
+    for (int plane = 0; plane < 3; plane++) {
+      libyuv::CopyPlane(img->planes[plane], img->stride[plane],
+                        frame->visible_data(plane), frame->stride(plane),
+                        frame->row_bytes(plane), frame->rows(plane));
+    }
   }
 
   return frame;

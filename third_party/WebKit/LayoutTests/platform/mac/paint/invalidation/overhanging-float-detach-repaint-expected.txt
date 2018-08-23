@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,21 +18,11 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (floating) DIV class='float'",
+          "object": "LayoutBlockFlow HTML",
           "rect": [8, 62, 100, 100],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (floating) DIV class='float'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='floatContainer'",
-      "reason": "disappeared"
     }
   ]
 }

@@ -7,13 +7,13 @@
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
-#include "media/gpu/features.h"
+#include "media/gpu/buildflags.h"
 #include "media/gpu/gpu_video_accelerator_util.h"
 
 #if BUILDFLAG(USE_V4L2_CODEC)
 #include "media/gpu/v4l2/v4l2_video_encode_accelerator.h"
 #endif
-#if defined(OS_ANDROID) && BUILDFLAG(ENABLE_WEBRTC)
+#if defined(OS_ANDROID)
 #include "media/gpu/android/android_video_encode_accelerator.h"
 #endif
 #if defined(OS_MACOSX)
@@ -22,7 +22,7 @@
 #if defined(OS_WIN)
 #include "base/feature_list.h"
 #include "media/base/media_switches.h"
-#include "media/gpu/media_foundation_video_encode_accelerator_win.h"
+#include "media/gpu/windows/media_foundation_video_encode_accelerator_win.h"
 #endif
 #if BUILDFLAG(USE_VAAPI)
 #include "media/gpu/vaapi/vaapi_video_encode_accelerator.h"
@@ -48,7 +48,7 @@ std::unique_ptr<VideoEncodeAccelerator> CreateVaapiVEA() {
 }
 #endif
 
-#if defined(OS_ANDROID) && BUILDFLAG(ENABLE_WEBRTC)
+#if defined(OS_ANDROID)
 std::unique_ptr<VideoEncodeAccelerator> CreateAndroidVEA() {
   return base::WrapUnique<VideoEncodeAccelerator>(
       new AndroidVideoEncodeAccelerator());
@@ -92,7 +92,7 @@ std::vector<VEAFactoryFunction> GetVEAFactoryFunctions(
 #if BUILDFLAG(USE_VAAPI)
   vea_factory_functions.push_back(base::BindRepeating(&CreateVaapiVEA));
 #endif
-#if defined(OS_ANDROID) && BUILDFLAG(ENABLE_WEBRTC)
+#if defined(OS_ANDROID)
   vea_factory_functions.push_back(base::BindRepeating(&CreateAndroidVEA));
 #endif
 #if defined(OS_MACOSX)
@@ -113,21 +113,16 @@ std::vector<VEAFactoryFunction> GetVEAFactoryFunctions(
 // static
 MEDIA_GPU_EXPORT std::unique_ptr<VideoEncodeAccelerator>
 GpuVideoEncodeAcceleratorFactory::CreateVEA(
-    VideoPixelFormat input_format,
-    const gfx::Size& input_visible_size,
-    VideoCodecProfile output_profile,
-    uint32_t initial_bitrate,
+    const VideoEncodeAccelerator::Config& config,
     VideoEncodeAccelerator::Client* client,
     const gpu::GpuPreferences& gpu_preferences) {
   for (const auto& create_vea : GetVEAFactoryFunctions(gpu_preferences)) {
     auto vea = create_vea.Run();
     if (!vea)
       continue;
-    if (!vea->Initialize(input_format, input_visible_size, output_profile,
-                         initial_bitrate, client)) {
-      DLOG(ERROR) << "VEA initialize failed ("
-                  << VideoPixelFormatToString(input_format) << ", "
-                  << GetProfileName(output_profile) << ")";
+    if (!vea->Initialize(config, client)) {
+      DLOG(ERROR) << "VEA initialize failed (" << config.AsHumanReadableString()
+                  << ")";
       continue;
     }
     return vea;

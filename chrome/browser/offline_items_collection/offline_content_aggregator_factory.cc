@@ -10,8 +10,6 @@
 #include "components/offline_items_collection/core/offline_content_aggregator.h"
 #include "content/public/browser/browser_context.h"
 
-namespace offline_items_collection {
-
 // static
 OfflineContentAggregatorFactory*
 OfflineContentAggregatorFactory::GetInstance() {
@@ -19,9 +17,9 @@ OfflineContentAggregatorFactory::GetInstance() {
 }
 
 // static
-OfflineContentAggregator* OfflineContentAggregatorFactory::GetForBrowserContext(
+offline_items_collection::OfflineContentAggregator*
+OfflineContentAggregatorFactory::GetForBrowserContext(
     content::BrowserContext* context) {
-  DCHECK(!context->IsOffTheRecord());
   return static_cast<offline_items_collection::OfflineContentAggregator*>(
       GetInstance()->GetServiceForBrowserContext(context, true));
 }
@@ -35,6 +33,7 @@ OfflineContentAggregatorFactory::~OfflineContentAggregatorFactory() = default;
 
 KeyedService* OfflineContentAggregatorFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
+  DCHECK(!context->IsOffTheRecord());
   return new offline_items_collection::OfflineContentAggregator();
 }
 
@@ -43,5 +42,3 @@ OfflineContentAggregatorFactory::GetBrowserContextToUse(
     content::BrowserContext* context) const {
   return chrome::GetBrowserContextRedirectedInIncognito(context);
 }
-
-}  // namespace offline_items_collection

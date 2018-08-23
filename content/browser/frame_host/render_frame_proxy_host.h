@@ -14,7 +14,8 @@
 #include "content/browser/site_instance_impl.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
-#include "third_party/WebKit/public/platform/WebFocusType.h"
+#include "third_party/blink/public/platform/web_focus_type.h"
+#include "third_party/blink/public/platform/web_scroll_types.h"
 
 struct FrameHostMsg_OpenURL_Params;
 struct FrameMsg_PostMessage_Params;
@@ -94,12 +95,12 @@ class RenderFrameProxyHost
   FrameTreeNode* frame_tree_node() const { return frame_tree_node_; };
 
   // Associates the RenderWidgetHostViewChildFrame |view| with this
-  // RenderFrameProxyHost. If |initial_frame_rect| isn't specified at this time,
+  // RenderFrameProxyHost. If |initial_frame_size| isn't specified at this time,
   // the child frame will wait until the CrossProcessFrameConnector
   // receives its size from the parent via FrameHostMsg_UpdateResizeParams
   // before it begins parsing the content.
   void SetChildRWHView(RenderWidgetHostView* view,
-                       const gfx::Rect* initial_frame_rect);
+                       const gfx::Size* initial_frame_size);
 
   RenderViewHostImpl* GetRenderViewHost();
   RenderWidgetHostView* GetRenderWidgetHostView();
@@ -131,6 +132,11 @@ class RenderFrameProxyHost
   void ScrollRectToVisible(const gfx::Rect& rect_to_scroll,
                            const blink::WebScrollIntoViewParams& params);
 
+  // Continues to bubble a logical scroll from the frame's process. Bubbling
+  // continues from the frame owner element in the parent process.
+  void BubbleLogicalScroll(blink::WebScrollDirection direction,
+                           blink::WebScrollGranularity granularity);
+
   void set_render_frame_proxy_created(bool created) {
     render_frame_proxy_created_ = created;
   }
@@ -145,6 +151,7 @@ class RenderFrameProxyHost
   // IPC Message handlers.
   void OnDetach();
   void OnOpenURL(const FrameHostMsg_OpenURL_Params& params);
+  void OnCheckCompleted();
   void OnRouteMessageEvent(const FrameMsg_PostMessage_Params& params);
   void OnDidChangeOpener(int32_t opener_routing_id);
   void OnAdvanceFocus(blink::WebFocusType type, int32_t source_routing_id);

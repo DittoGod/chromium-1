@@ -8,11 +8,13 @@
 #include <string>
 #include <utility>
 
+#include "ash/public/cpp/app_menu_constants.h"
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/cpp/menu_utils.h"
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "ash/public/cpp/shelf_prefs.h"
 #include "ash/public/cpp/shelf_types.h"
+#include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/root_window_controller.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
@@ -23,7 +25,10 @@
 #include "base/numerics/safe_conversions.h"
 #include "components/prefs/pref_service.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/controls/menu/menu_config.h"
 
 using l10n_util::GetStringUTF16;
 using SubmenuList = std::vector<std::unique_ptr<ui::MenuModel>>;
@@ -56,24 +61,41 @@ void AddLocalMenuItems(MenuItemList* menu, int64_t display_id) {
   const bool is_tablet_mode = Shell::Get()
                                   ->tablet_mode_controller()
                                   ->IsTabletModeWindowManagerEnabled();
+
+  // When touchable app context menus are enabled in tablet mode, auto hide and
+  // shelf alignment options are not shown.
+  const bool skip_clamshell_only_options =
+      features::IsTouchableAppContextMenuEnabled() && is_tablet_mode;
+
+  const views::MenuConfig& menu_config = views::MenuConfig::instance();
+
   // In fullscreen, the shelf is either hidden or auto-hidden, depending on
   // the type of fullscreen. Do not show the auto-hide menu item while in
   // fullscreen because it is confusing when the preference appears not to
   // apply.
-  if (CanUserModifyShelfAutoHide(prefs) && !IsFullScreenMode(display_id)) {
+  if (CanUserModifyShelfAutoHide(prefs) && !IsFullScreenMode(display_id) &&
+      !skip_clamshell_only_options) {
     mojom::MenuItemPtr auto_hide(mojom::MenuItem::New());
-    auto_hide->type = ui::MenuModel::TYPE_CHECK;
+    if (features::IsTouchableAppContextMenuEnabled()) {
+      auto_hide->type = ui::MenuModel::TYPE_COMMAND;
+      auto_hide->image =
+          gfx::CreateVectorIcon(kAutoHideIcon, menu_config.touchable_icon_size,
+                                menu_config.touchable_icon_color);
+    } else {
+      auto_hide->type = ui::MenuModel::TYPE_CHECK;
+      auto_hide->checked = GetShelfAutoHideBehaviorPref(prefs, display_id) ==
+                           SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS;
+    }
     auto_hide->command_id = ShelfContextMenuModel::MENU_AUTO_HIDE;
     auto_hide->label = GetStringUTF16(IDS_ASH_SHELF_CONTEXT_MENU_AUTO_HIDE);
-    auto_hide->checked = GetShelfAutoHideBehaviorPref(prefs, display_id) ==
-                         SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS;
     auto_hide->enabled = !is_tablet_mode;
     menu->push_back(std::move(auto_hide));
   }
 
   // Only allow shelf alignment modifications by the owner or user.
   LoginStatus status = Shell::Get()->session_controller()->login_status();
-  if (status == LoginStatus::USER || status == LoginStatus::OWNER) {
+  if ((status == LoginStatus::USER || status == LoginStatus::OWNER) &&
+      !skip_clamshell_only_options) {
     const ShelfAlignment alignment = GetShelfAlignmentPref(prefs, display_id);
     mojom::MenuItemPtr alignment_menu(mojom::MenuItem::New());
     alignment_menu->type = ui::MenuModel::TYPE_SUBMENU;
@@ -81,6 +103,11 @@ void AddLocalMenuItems(MenuItemList* menu, int64_t display_id) {
     alignment_menu->label = GetStringUTF16(IDS_ASH_SHELF_CONTEXT_MENU_POSITION);
     alignment_menu->submenu = MenuItemList();
     alignment_menu->enabled = !is_tablet_mode;
+    if (features::IsTouchableAppContextMenuEnabled()) {
+      alignment_menu->image = gfx::CreateVectorIcon(
+          kShelfPositionIcon, menu_config.touchable_icon_size,
+          menu_config.touchable_icon_color);
+    }
 
     mojom::MenuItemPtr left(mojom::MenuItem::New());
     left->type = ui::MenuModel::TYPE_RADIO;
@@ -115,6 +142,11 @@ void AddLocalMenuItems(MenuItemList* menu, int64_t display_id) {
     wallpaper->command_id = ShelfContextMenuModel::MENU_CHANGE_WALLPAPER;
     wallpaper->label = GetStringUTF16(IDS_AURA_SET_DESKTOP_WALLPAPER);
     wallpaper->enabled = true;
+    if (features::IsTouchableAppContextMenuEnabled()) {
+      wallpaper->image =
+          gfx::CreateVectorIcon(kWallpaperIcon, menu_config.touchable_icon_size,
+                                menu_config.touchable_icon_color);
+    }
     menu->push_back(std::move(wallpaper));
   }
 }
@@ -128,8 +160,9 @@ ShelfContextMenuModel::ShelfContextMenuModel(MenuItemList menu_items,
       menu_items_(std::move(menu_items)),
       delegate_(delegate),
       display_id_(display_id) {
-  // Append some menu items that are handled locally by Ash.
-  AddLocalMenuItems(&menu_items_, display_id);
+  // Append shelf settings and wallpaper items if no shelf item was selected.
+  if (!features::IsTouchableAppContextMenuEnabled() || !delegate)
+    AddLocalMenuItems(&menu_items_, display_id);
   menu_utils::PopulateMenuFromMojoMenuItems(this, this, menu_items_,
                                             &submenus_);
 }
@@ -141,6 +174,12 @@ bool ShelfContextMenuModel::IsCommandIdChecked(int command_id) const {
 }
 
 bool ShelfContextMenuModel::IsCommandIdEnabled(int command_id) const {
+  // NOTIFICATION_CONTAINER is always enabled. It is added to this model by
+  // NotificationMenuController, but it is not added to |menu_items_|, so check
+  // for it first.
+  if (command_id == ash::NOTIFICATION_CONTAINER)
+    return true;
+
   return menu_utils::GetMenuItemByCommandId(menu_items_, command_id)->enabled;
 }
 
@@ -152,8 +191,13 @@ void ShelfContextMenuModel::ExecuteCommand(int command_id, int event_flags) {
     return;
 
   UserMetricsRecorder* metrics = Shell::Get()->metrics();
+  // Clamshell mode only options should not activate in tablet mode.
+  const bool is_tablet_mode = Shell::Get()
+                                  ->tablet_mode_controller()
+                                  ->IsTabletModeWindowManagerEnabled();
   switch (command_id) {
     case MENU_AUTO_HIDE:
+      DCHECK(!is_tablet_mode);
       SetShelfAutoHideBehaviorPref(
           prefs, display_id_,
           GetShelfAutoHideBehaviorPref(prefs, display_id_) ==
@@ -162,14 +206,17 @@ void ShelfContextMenuModel::ExecuteCommand(int command_id, int event_flags) {
               : SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
       break;
     case MENU_ALIGNMENT_LEFT:
+      DCHECK(!is_tablet_mode);
       metrics->RecordUserMetricsAction(UMA_SHELF_ALIGNMENT_SET_LEFT);
       SetShelfAlignmentPref(prefs, display_id_, SHELF_ALIGNMENT_LEFT);
       break;
     case MENU_ALIGNMENT_RIGHT:
+      DCHECK(!is_tablet_mode);
       metrics->RecordUserMetricsAction(UMA_SHELF_ALIGNMENT_SET_RIGHT);
       SetShelfAlignmentPref(prefs, display_id_, SHELF_ALIGNMENT_RIGHT);
       break;
     case MENU_ALIGNMENT_BOTTOM:
+      DCHECK(!is_tablet_mode);
       metrics->RecordUserMetricsAction(UMA_SHELF_ALIGNMENT_SET_BOTTOM);
       SetShelfAlignmentPref(prefs, display_id_, SHELF_ALIGNMENT_BOTTOM);
       break;

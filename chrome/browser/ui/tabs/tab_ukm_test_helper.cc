@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <sstream>
 
-#include "components/ukm/ukm_source.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "services/metrics/public/mojom/ukm_interface.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -81,8 +81,8 @@ UkmEntryChecker::~UkmEntryChecker() {
         ukm_recorder_.GetEntriesByName(entry_name)[first_unexpected_index];
 
     std::ostringstream entry_metrics;
-    for (const ukm::mojom::UkmMetricPtr& metric : ukm_entry->metrics)
-      entry_metrics << "\n" << metric->metric_hash << ": " << metric->value;
+    for (const auto& metric : ukm_entry->metrics)
+      entry_metrics << "\n" << metric.first << ": " << metric.second;
     LOG(ERROR) << "First unexpected entry: " << entry_metrics.str();
   }
 }
@@ -142,7 +142,7 @@ void UkmEntryChecker::ExpectNewEntriesBySource(
   const size_t num_entries = entries.size();
   num_entries_[entry_name] += num_new_entries;
 
-  ASSERT_LE(NumEntries(entry_name), entries.size());
+  ASSERT_LE(num_entries_[entry_name], entries.size());
   std::set<ukm::SourceId> found_source_ids;
 
   for (size_t i = 0; i < num_new_entries; ++i) {
@@ -169,16 +169,20 @@ void UkmEntryChecker::ExpectNewEntriesBySource(
 
 int UkmEntryChecker::NumNewEntriesRecorded(
     const std::string& entry_name) const {
-  const size_t current_ukm_entries =
-      ukm_recorder_.GetEntriesByName(entry_name).size();
-  const size_t previous_num_entries = NumEntries(entry_name);
+  const size_t current_ukm_entries = NumEntries(entry_name);
+
+  // If a value hasn't been inserted for |entry_name|, the test hasn't checked
+  // for these entries before, so they all count as new.
+  if (!num_entries_.count(entry_name))
+    return current_ukm_entries;
+
+  size_t previous_num_entries = num_entries_.at(entry_name);
   EXPECT_GE(current_ukm_entries, previous_num_entries);
   return current_ukm_entries - previous_num_entries;
 }
 
 size_t UkmEntryChecker::NumEntries(const std::string& entry_name) const {
-  const auto it = num_entries_.find(entry_name);
-  return it != num_entries_.end() ? it->second : 0;
+  return ukm_recorder_.GetEntriesByName(entry_name).size();
 }
 
 const ukm::mojom::UkmEntry* UkmEntryChecker::LastUkmEntry(
@@ -187,10 +191,4 @@ const ukm::mojom::UkmEntry* UkmEntryChecker::LastUkmEntry(
       ukm_recorder_.GetEntriesByName(entry_name);
   CHECK(!entries.empty());
   return entries.back();
-}
-
-ukm::SourceId UkmEntryChecker::GetSourceIdForUrl(const GURL& source_url) const {
-  const ukm::UkmSource* source = ukm_recorder_.GetSourceForUrl(source_url);
-  CHECK(source);
-  return source->id();
 }

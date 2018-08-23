@@ -4,14 +4,8 @@
 
 #include "chrome/browser/metrics/thread_watcher_report_hang.h"
 
-// We disable optimizations for the whole file so the compiler doesn't merge
-// them all together.
-MSVC_DISABLE_OPTIMIZE()
-MSVC_PUSH_DISABLE_WARNING(4748)
-
 #include "base/debug/debugger.h"
 #include "base/debug/dump_without_crashing.h"
-#include "build/build_config.h"
 
 namespace metrics {
 
@@ -28,7 +22,8 @@ NOINLINE void ReportThreadHang() {
 #endif
 }
 
-#if !defined(OS_ANDROID) || !defined(NDEBUG)
+#if !defined(OS_ANDROID)
+
 NOINLINE void StartupHang() {
   volatile int inhibit_comdat = __LINE__;
   ALLOW_UNUSED_LOCAL(inhibit_comdat);
@@ -36,7 +31,6 @@ NOINLINE void StartupHang() {
   // positive startup hang data.
   // ReportThreadHang();
 }
-#endif  // OS_ANDROID
 
 NOINLINE void ShutdownHang() {
   volatile int inhibit_comdat = __LINE__;
@@ -44,13 +38,9 @@ NOINLINE void ShutdownHang() {
   ReportThreadHang();
 }
 
-NOINLINE void ThreadUnresponsive_UI() {
-  volatile int inhibit_comdat = __LINE__;
-  ALLOW_UNUSED_LOCAL(inhibit_comdat);
-  ReportThreadHang();
-}
+#endif  // !defined(OS_ANDROID)
 
-NOINLINE void ThreadUnresponsive_PROCESS_LAUNCHER() {
+NOINLINE void ThreadUnresponsive_UI() {
   volatile int inhibit_comdat = __LINE__;
   ALLOW_UNUSED_LOCAL(inhibit_comdat);
   ReportThreadHang();
@@ -67,8 +57,6 @@ NOINLINE void CrashBecauseThreadWasUnresponsive(
   switch (thread_id) {
     case content::BrowserThread::UI:
       return ThreadUnresponsive_UI();
-    case content::BrowserThread::PROCESS_LAUNCHER:
-      return ThreadUnresponsive_PROCESS_LAUNCHER();
     case content::BrowserThread::IO:
       return ThreadUnresponsive_IO();
     case content::BrowserThread::ID_COUNT:
@@ -79,5 +67,3 @@ NOINLINE void CrashBecauseThreadWasUnresponsive(
 
 }  // namespace metrics
 
-MSVC_POP_WARNING()
-MSVC_ENABLE_OPTIMIZE();

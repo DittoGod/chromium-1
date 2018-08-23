@@ -13,7 +13,6 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
-#include "third_party/skia/include/core/SkColor.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -56,13 +55,13 @@ class ASH_EXPORT ScopedTransformOverviewWindow
     kPillarBoxed,
   };
 
+  using ScopedAnimationSettings =
+      std::vector<std::unique_ptr<ScopedOverviewAnimationSettings>>;
+
   // Windows whose aspect ratio surpass this (width twice as large as height or
   // vice versa) will be classified as too wide or too tall and will be handled
   // slightly differently in overview mode.
   static constexpr float kExtremeWindowRatioThreshold = 2.f;
-
-  using ScopedAnimationSettings =
-      std::vector<std::unique_ptr<ScopedOverviewAnimationSettings>>;
 
   // Calculates and returns an optimal scale ratio. This is only taking into
   // account |size.height()| as the width can vary.
@@ -86,12 +85,12 @@ class ASH_EXPORT ScopedTransformOverviewWindow
   //
   // Example:
   //  ScopedTransformOverviewWindow overview_window(window);
-  //  ScopedTransformOverviewWindow::ScopedAnimationSettings scoped_settings;
+  //  ScopedTransformOverviewWindow::ScopedAnimationSettings animation_settings;
   //  overview_window.BeginScopedAnimation(
-  //      OverviewAnimationType::OVERVIEW_ANIMATION_SELECTOR_ITEM_SCROLL_CANCEL,
+  //      OVERVIEW_ANIMATION_SELECTOR_ITEM_SCROLL_CANCEL,
   //      &animation_settings);
   //  // Calls to SetTransform & SetOpacity will use the same animation settings
-  //  // until scoped_settings is destroyed.
+  //  // until animation_settings is destroyed.
   //  overview_window.SetTransform(root_window, new_transform);
   //  overview_window.SetOpacity(1);
   void BeginScopedAnimation(OverviewAnimationType animation_type,
@@ -110,16 +109,15 @@ class ASH_EXPORT ScopedTransformOverviewWindow
   // the original |window_|'s header to be hidden.
   gfx::Rect GetTransformedBounds() const;
 
-  // Returns TOP_VIEW_COLOR property of |window_| unless there are transient
-  // ancestors, in which case returns SK_ColorTRANSPARENT.
-  SkColor GetTopColor() const;
-
-  // Returns TOP_VIEW_INSET property of |window_| unless there are transient
+  // Returns the kTopViewInset property of |window_| unless there are transient
   // ancestors, in which case returns 0.
   int GetTopInset() const;
 
   // Restores and animates the managed window to its non overview mode state.
-  void RestoreWindow();
+  // If |reset_transform| equals false, the window's transform will not be reset
+  // to identity transform when exiting the overview mode. See
+  // WindowSelectorItem::RestoreWindow() for details why we need this.
+  void RestoreWindow(bool reset_transform, bool use_slide_animation);
 
   // Informs the ScopedTransformOverviewWindow that the window being watched was
   // destroyed. This resets the internal window pointer.
@@ -156,6 +154,8 @@ class ASH_EXPORT ScopedTransformOverviewWindow
     return window_selector_bounds_;
   }
 
+  gfx::Rect GetMaskBoundsForTesting() const;
+
   // Closes the transient root of the window managed by |this|.
   void Close();
 
@@ -174,6 +174,13 @@ class ASH_EXPORT ScopedTransformOverviewWindow
   // change. Must be called before PositionWindows in WindowGrid.
   void UpdateWindowDimensionsType();
 
+  // Stop listening to any animations to finish.
+  void CancelAnimationsListener();
+
+  // If the original window is minimized, resize |minimized_widget_| to match
+  // the bounds of the |window_|.
+  void ResizeMinimizedWidgetIfNeeded();
+
   views::Widget* minimized_widget() { return minimized_widget_.get(); }
 
   // ui::ImplicitAnimationObserver:
@@ -189,6 +196,10 @@ class ASH_EXPORT ScopedTransformOverviewWindow
 
   void CreateMirrorWindowForMinimizedState();
 
+  // Creates and applys a mask which adds rounded edges to windows in overview
+  // mode.
+  void CreateAndApplyMaskAndShadow();
+
   // Makes Close() execute synchronously when used in tests.
   static void SetImmediateCloseForTests();
 
@@ -202,10 +213,7 @@ class ASH_EXPORT ScopedTransformOverviewWindow
   bool ignored_by_shelf_;
 
   // True if the window has been transformed for overview mode.
-  bool overview_started_;
-
-  // The original transform of the window before entering overview mode.
-  gfx::Transform original_transform_;
+  bool overview_started_ = false;
 
   // The original opacity of the window before entering overview mode.
   float original_opacity_;
@@ -232,8 +240,6 @@ class ASH_EXPORT ScopedTransformOverviewWindow
 
   // The original mask layer of the window before entering overview mode.
   ui::Layer* original_mask_layer_ = nullptr;
-
-  int original_shadow_elevation_ = 0;
 
   base::WeakPtrFactory<ScopedTransformOverviewWindow> weak_ptr_factory_;
 

@@ -10,11 +10,13 @@
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "jni/AndroidProxyConfigServiceTestUtil_jni.h"
-#include "net/proxy_resolution/proxy_config.h"
+#include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "net/proxy_resolution/proxy_info.h"
+#include "net/test/test_with_scoped_task_environment.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -27,7 +29,7 @@ class TestObserver : public ProxyConfigService::Observer {
 
   // ProxyConfigService::Observer:
   void OnProxyConfigChanged(
-      const ProxyConfig& config,
+      const ProxyConfigWithAnnotation& config,
       ProxyConfigService::ConfigAvailability availability) override {
     config_ = config;
     availability_ = availability;
@@ -37,12 +39,10 @@ class TestObserver : public ProxyConfigService::Observer {
     return availability_;
   }
 
-  const ProxyConfig& config() const {
-    return config_;
-  }
+  const ProxyConfigWithAnnotation& config() const { return config_; }
 
  private:
-  ProxyConfig config_;
+  ProxyConfigWithAnnotation config_;
   ProxyConfigService::ConfigAvailability availability_;
 };
 
@@ -59,15 +59,14 @@ class JavaLooperPreparer {
 
 typedef std::map<std::string, std::string> StringMap;
 
-class ProxyConfigServiceAndroidTestBase : public testing::Test {
+class ProxyConfigServiceAndroidTestBase : public TestWithScopedTaskEnvironment {
  protected:
   // Note that the current thread's message loop is initialized by the test
   // suite (see net/test/net_test_suite.cc).
   ProxyConfigServiceAndroidTestBase(const StringMap& initial_configuration)
       : configuration_(initial_configuration),
-        message_loop_(base::MessageLoop::current()),
-        service_(message_loop_->task_runner(),
-                 message_loop_->task_runner(),
+        service_(base::ThreadTaskRunnerHandle::Get(),
+                 base::ThreadTaskRunnerHandle::Get(),
                  base::Bind(&ProxyConfigServiceAndroidTestBase::GetProperty,
                             base::Unretained(this))) {}
 
@@ -103,17 +102,28 @@ class ProxyConfigServiceAndroidTestBase : public testing::Test {
 
   void TestMapping(const std::string& url, const std::string& expected) {
     ProxyConfigService::ConfigAvailability availability;
-    ProxyConfig proxy_config;
+    ProxyConfigWithAnnotation proxy_config;
     availability = service_.GetLatestProxyConfig(&proxy_config);
     EXPECT_EQ(ProxyConfigService::CONFIG_VALID, availability);
     ProxyInfo proxy_info;
-    proxy_config.proxy_rules().Apply(GURL(url), &proxy_info);
+    proxy_config.value().proxy_rules().Apply(GURL(url), &proxy_info);
     EXPECT_EQ(expected, proxy_info.ToPacString());
+  }
+
+  void SetProxyOverride(const std::string& host,
+                        int port,
+                        const std::vector<std::string>& exclusion_list) {
+    service_.SetProxyOverride(host, port, exclusion_list);
+    base::RunLoop().RunUntilIdle();
+  }
+
+  void ClearProxyOverride() {
+    service_.ClearProxyOverride();
+    base::RunLoop().RunUntilIdle();
   }
 
   StringMap configuration_;
   TestObserver observer_;
-  base::MessageLoop* const message_loop_;
   // |java_looper_preparer_| appears before |service_| so that Java's Looper is
   // prepared before constructing |service_| as it creates a ProxyChangeListener
   // which requires a Looper.
@@ -147,13 +157,13 @@ TEST_F(ProxyConfigServiceAndroidTest, TestChangePropertiesNotification) {
   AddProperty("http.proxyHost", "localhost");
   ProxySettingsChanged();
   EXPECT_EQ(ProxyConfigService::CONFIG_VALID, observer_.availability());
-  EXPECT_FALSE(observer_.config().proxy_rules().empty());
+  EXPECT_FALSE(observer_.config().value().proxy_rules().empty());
 
   // Set up an empty configuration
   ClearConfiguration();
   ProxySettingsChanged();
   EXPECT_EQ(ProxyConfigService::CONFIG_VALID, observer_.availability());
-  EXPECT_TRUE(observer_.config().proxy_rules().empty());
+  EXPECT_TRUE(observer_.config().value().proxy_rules().empty());
 }
 
 TEST_F(ProxyConfigServiceAndroidWithInitialConfigTest, TestInitialConfig) {
@@ -166,6 +176,124 @@ TEST_F(ProxyConfigServiceAndroidWithInitialConfigTest, TestInitialConfig) {
   AddProperty("http.proxyHost", "httpproxy.com");
   ProxySettingsChanged();
   TestMapping("http://example.com/", "PROXY httpproxy.com:80");
+}
+
+TEST_F(ProxyConfigServiceAndroidTest, TestOverrideNoProxy) {
+  std::vector<std::string> exclusion_list;
+
+  // Check that webview uses the default proxy
+  TestMapping("http://example.com/", "DIRECT");
+
+  // Check that webview uses the custom proxy
+  SetProxyOverride("httpoverrideproxy.com", 200, exclusion_list);
+  TestMapping("http://example.com/", "PROXY httpoverrideproxy.com:200");
+
+  // Check that webview uses the default proxy
+  ClearProxyOverride();
+  TestMapping("http://example.com/", "DIRECT");
+}
+
+TEST_F(ProxyConfigServiceAndroidTest, TestOverrideAndProxy) {
+  std::vector<std::string> exclusion_list;
+
+  // Check that webview uses the default proxy
+  TestMapping("http://example.com/", "DIRECT");
+
+  // Check that webview uses the custom proxy
+  SetProxyOverride("httpoverrideproxy.com", 200, exclusion_list);
+  TestMapping("http://example.com/", "PROXY httpoverrideproxy.com:200");
+
+  // Check that webview continues to use the custom proxy
+  AddProperty("http.proxyHost", "httpsomeproxy.com");
+  ProxySettingsChanged();
+  TestMapping("http://example.com/", "PROXY httpoverrideproxy.com:200");
+
+  // Check that webview uses the non default proxy
+  ClearProxyOverride();
+  TestMapping("http://example.com/", "PROXY httpsomeproxy.com:80");
+}
+
+TEST_F(ProxyConfigServiceAndroidTest, TestProxyAndOverride) {
+  std::vector<std::string> exclusion_list;
+
+  // Check that webview uses the default proxy
+  TestMapping("http://example.com/", "DIRECT");
+
+  // Check that webview uses the non default proxy
+  AddProperty("http.proxyHost", "httpsomeproxy.com");
+  ProxySettingsChanged();
+  TestMapping("http://example.com/", "PROXY httpsomeproxy.com:80");
+
+  // Check that webview uses the custom proxy
+  SetProxyOverride("httpoverrideproxy.com", 200, exclusion_list);
+  TestMapping("http://example.com/", "PROXY httpoverrideproxy.com:200");
+
+  // Check that webview uses the non default proxy
+  ClearProxyOverride();
+  TestMapping("http://example.com/", "PROXY httpsomeproxy.com:80");
+}
+
+TEST_F(ProxyConfigServiceAndroidTest, TestOverrideThenProxy) {
+  std::vector<std::string> exclusion_list;
+
+  // Check that webview uses the default proxy
+  TestMapping("http://example.com/", "DIRECT");
+
+  // Check that webview uses the custom proxy
+  SetProxyOverride("httpoverrideproxy.com", 200, exclusion_list);
+  TestMapping("http://example.com/", "PROXY httpoverrideproxy.com:200");
+
+  // Check that webview uses the default proxy
+  ClearProxyOverride();
+  TestMapping("http://example.com/", "DIRECT");
+
+  // Check that webview uses the non default proxy
+  AddProperty("http.proxyHost", "httpsomeproxy.com");
+  ProxySettingsChanged();
+  TestMapping("http://example.com/", "PROXY httpsomeproxy.com:80");
+}
+
+TEST_F(ProxyConfigServiceAndroidTest, TestClearOverride) {
+  std::vector<std::string> exclusion_list;
+
+  // Check that webview uses the default proxy
+  TestMapping("http://example.com/", "DIRECT");
+
+  // Check that webview uses the default proxy
+  ClearProxyOverride();
+  TestMapping("http://example.com/", "DIRECT");
+}
+
+TEST_F(ProxyConfigServiceAndroidTest, TestProxyAndClearOverride) {
+  std::vector<std::string> exclusion_list;
+
+  // Check that webview uses the non default proxy
+  AddProperty("http.proxyHost", "httpsomeproxy.com");
+  ProxySettingsChanged();
+  TestMapping("http://example.com/", "PROXY httpsomeproxy.com:80");
+
+  // Check that webview uses the non default proxy
+  ClearProxyOverride();
+  TestMapping("http://example.com/", "PROXY httpsomeproxy.com:80");
+}
+
+TEST_F(ProxyConfigServiceAndroidTest, TestOverrideExclusionList) {
+  std::vector<std::string> exclusion_list;
+  exclusion_list.push_back("excluded.com");
+
+  // Check that webview uses the default proxy
+  TestMapping("http://excluded.com/", "DIRECT");
+  TestMapping("http://example.com/", "DIRECT");
+
+  // Check that webview handles the exclusion list correctly
+  SetProxyOverride("httpoverrideproxy.com", 200, exclusion_list);
+  TestMapping("http://excluded.com/", "DIRECT");
+  TestMapping("http://example.com/", "PROXY httpoverrideproxy.com:200");
+
+  // Check that webview uses the default proxy
+  ClearProxyOverride();
+  TestMapping("http://excluded.com/", "DIRECT");
+  TestMapping("http://example.com/", "DIRECT");
 }
 
 // !! The following test cases are automatically generated from

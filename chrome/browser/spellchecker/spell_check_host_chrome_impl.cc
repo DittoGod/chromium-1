@@ -5,7 +5,6 @@
 #include "chrome/browser/spellchecker/spell_check_host_chrome_impl.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/spellchecker/spellcheck_custom_dictionary.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
@@ -16,18 +15,22 @@
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
+#if !defined(OS_MACOSX)
+// Mac needs different constructor and destructor for Mac-only members.
+
 SpellCheckHostChromeImpl::SpellCheckHostChromeImpl(
     const service_manager::Identity& renderer_identity)
     : renderer_identity_(renderer_identity), weak_factory_(this) {}
 
 SpellCheckHostChromeImpl::~SpellCheckHostChromeImpl() = default;
+#endif
 
 // static
 void SpellCheckHostChromeImpl::Create(
     spellcheck::mojom::SpellCheckHostRequest request,
     const service_manager::BindSourceInfo& source_info) {
   mojo::MakeStrongBinding(
-      base::MakeUnique<SpellCheckHostChromeImpl>(source_info.identity),
+      std::make_unique<SpellCheckHostChromeImpl>(source_info.identity),
       std::move(request));
 }
 
@@ -83,7 +86,7 @@ void SpellCheckHostChromeImpl::CallSpellingService(
   client_.RequestTextCheck(
       context, SpellingServiceClient::SPELLCHECK, text,
       base::BindOnce(&SpellCheckHostChromeImpl::CallSpellingServiceDone,
-                     weak_factory_.GetWeakPtr(), base::Passed(&callback)));
+                     weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void SpellCheckHostChromeImpl::CallSpellingServiceDone(

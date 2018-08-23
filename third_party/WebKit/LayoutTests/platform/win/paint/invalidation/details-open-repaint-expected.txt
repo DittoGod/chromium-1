@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -27,40 +28,6 @@
           "reason": "full"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutDetailsMarker DIV id='details-marker'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='details-content'",
-      "reason": "appeared"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutTextControl INPUT",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    },
-    {
-      "object": "HorizontalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "appeared"
     }
   ]
 }

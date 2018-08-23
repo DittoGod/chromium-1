@@ -8,11 +8,28 @@
 
 #include "content/common/ax_content_node_data.h"
 #include "content/renderer/accessibility/render_accessibility_impl.h"
+#include "third_party/blink/public/web/web_ax_enums.h"
 #include "ui/accessibility/ax_enum_util.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node.h"
 
 namespace {
+
+ax::mojom::BoolAttribute GetCorrespondingAXAttribute(
+    blink::WebAOMBoolAttribute attr) {
+  switch (attr) {
+    case blink::WebAOMBoolAttribute::AOM_ATTR_ATOMIC:
+      return ax::mojom::BoolAttribute::kLiveAtomic;
+    case blink::WebAOMBoolAttribute::AOM_ATTR_BUSY:
+      return ax::mojom::BoolAttribute::kBusy;
+    case blink::WebAOMBoolAttribute::AOM_ATTR_MODAL:
+      return ax::mojom::BoolAttribute::kModal;
+    case blink::WebAOMBoolAttribute::AOM_ATTR_SELECTED:
+      return ax::mojom::BoolAttribute::kSelected;
+    default:
+      return ax::mojom::BoolAttribute::kNone;
+  }
+}
 
 ax::mojom::IntAttribute GetCorrespondingAXAttribute(
     blink::WebAOMIntAttribute attr) {
@@ -40,6 +57,20 @@ ax::mojom::IntAttribute GetCorrespondingAXAttribute(
   }
 }
 
+ax::mojom::FloatAttribute GetCorrespondingAXAttribute(
+    blink::WebAOMFloatAttribute attr) {
+  switch (attr) {
+    case blink::WebAOMFloatAttribute::AOM_ATTR_VALUE_MIN:
+      return ax::mojom::FloatAttribute::kMinValueForRange;
+    case blink::WebAOMFloatAttribute::AOM_ATTR_VALUE_MAX:
+      return ax::mojom::FloatAttribute::kMaxValueForRange;
+    case blink::WebAOMFloatAttribute::AOM_ATTR_VALUE_NOW:
+      return ax::mojom::FloatAttribute::kValueForRange;
+    default:
+      return ax::mojom::FloatAttribute::kNone;
+  }
+}
+
 ax::mojom::StringAttribute GetCorrespondingAXAttribute(
     blink::WebAOMStringAttribute attr) {
   switch (attr) {
@@ -60,17 +91,30 @@ ax::mojom::StringAttribute GetCorrespondingAXAttribute(
   }
 }
 
-ax::mojom::BoolAttribute GetCorrespondingAXAttribute(
+ax::mojom::Restriction GetCorrespondingRestrictionFlag(
     blink::WebAOMBoolAttribute attr) {
   switch (attr) {
-    case blink::WebAOMBoolAttribute::AOM_ATTR_ATOMIC:
-      return ax::mojom::BoolAttribute::kLiveAtomic;
-    case blink::WebAOMBoolAttribute::AOM_ATTR_BUSY:
-      return ax::mojom::BoolAttribute::kBusy;
-    case blink::WebAOMBoolAttribute::AOM_ATTR_MODAL:
-      return ax::mojom::BoolAttribute::kModal;
+    case blink::WebAOMBoolAttribute::AOM_ATTR_DISABLED:
+      return ax::mojom::Restriction::kDisabled;
+    case blink::WebAOMBoolAttribute::AOM_ATTR_READONLY:
+      return ax::mojom::Restriction::kReadOnly;
     default:
-      return ax::mojom::BoolAttribute::kNone;
+      return ax::mojom::Restriction::kNone;
+  }
+}
+
+ax::mojom::State GetCorrespondingStateFlag(blink::WebAOMBoolAttribute attr) {
+  switch (attr) {
+    case blink::WebAOMBoolAttribute::AOM_ATTR_EXPANDED:
+      return ax::mojom::State::kExpanded;
+    case blink::WebAOMBoolAttribute::AOM_ATTR_MULTILINE:
+      return ax::mojom::State::kMultiline;
+    case blink::WebAOMBoolAttribute::AOM_ATTR_MULTISELECTABLE:
+      return ax::mojom::State::kMultiselectable;
+    case blink::WebAOMBoolAttribute::AOM_ATTR_REQUIRED:
+      return ax::mojom::State::kRequired;
+    default:
+      return ax::mojom::State::kNone;
   }
 }
 
@@ -83,8 +127,8 @@ AomContentAxTree::AomContentAxTree(RenderFrameImpl* render_frame)
 
 bool AomContentAxTree::ComputeAccessibilityTree() {
   AXContentTreeUpdate content_tree_update;
-  RenderAccessibilityImpl::SnapshotAccessibilityTree(render_frame_,
-                                                     &content_tree_update);
+  RenderAccessibilityImpl::SnapshotAccessibilityTree(
+      render_frame_, &content_tree_update, ui::kAXModeComplete);
 
   // Hack to convert between AXContentNodeData and AXContentTreeData to just
   // AXNodeData and AXTreeData to preserve content specific attributes while
@@ -100,12 +144,81 @@ bool AomContentAxTree::ComputeAccessibilityTree() {
   return tree_.Unserialize(tree_update);
 }
 
-bool AomContentAxTree::GetRoleForAXNode(int32_t ax_id,
-                                        blink::WebString* out_param) {
+bool AomContentAxTree::GetBoolAttributeForAXNode(
+    int32_t ax_id,
+    blink::WebAOMBoolAttribute attr,
+    bool* out_param) {
   ui::AXNode* node = tree_.GetFromId(ax_id);
   if (!node)
     return false;
-  *out_param = blink::WebString::FromUTF8(ui::ToString(node->data().role));
+  if (GetCorrespondingRestrictionFlag(attr) != ax::mojom::Restriction::kNone) {
+    return GetRestrictionAttributeForAXNode(ax_id, attr, out_param);
+  } else if (GetCorrespondingStateFlag(attr) != ax::mojom::State::kNone) {
+    return GetStateAttributeForAXNode(ax_id, attr, out_param);
+  }
+
+  ax::mojom::BoolAttribute ax_attr = GetCorrespondingAXAttribute(attr);
+  return node->data().GetBoolAttribute(ax_attr, out_param);
+}
+
+bool AomContentAxTree::GetCheckedStateForAXNode(int32_t ax_id,
+                                                blink::WebString* out_param) {
+  ui::AXNode* node = tree_.GetFromId(ax_id);
+  if (!node)
+    return false;
+  ax::mojom::CheckedState checked_state = static_cast<ax::mojom::CheckedState>(
+      node->data().GetIntAttribute(ax::mojom::IntAttribute::kCheckedState));
+  *out_param = blink::WebString::FromUTF8(ui::ToString(checked_state));
+  return true;
+}
+
+bool AomContentAxTree::GetIntAttributeForAXNode(int32_t ax_id,
+                                                blink::WebAOMIntAttribute attr,
+                                                int32_t* out_param) {
+  ui::AXNode* node = tree_.GetFromId(ax_id);
+  if (!node)
+    return false;
+  ax::mojom::IntAttribute ax_attr = GetCorrespondingAXAttribute(attr);
+  return node->data().GetIntAttribute(ax_attr, out_param);
+}
+
+bool AomContentAxTree::GetRestrictionAttributeForAXNode(
+    int32_t ax_id,
+    blink::WebAOMBoolAttribute attr,
+    bool* out_param) {
+  ui::AXNode* node = tree_.GetFromId(ax_id);
+  if (!node)
+    return false;
+
+  // Disabled and readOnly are stored on the node data as an int attribute,
+  // which indicates which type of kRestriction applies.
+  ax::mojom::Restriction restriction = static_cast<ax::mojom::Restriction>(
+      node->data().GetIntAttribute(ax::mojom::IntAttribute::kRestriction));
+  ax::mojom::Restriction ax_attr = GetCorrespondingRestrictionFlag(attr);
+  *out_param = (restriction == ax_attr);
+  return true;
+}
+
+bool AomContentAxTree::GetFloatAttributeForAXNode(
+    int32_t ax_id,
+    blink::WebAOMFloatAttribute attr,
+    float* out_param) {
+  ui::AXNode* node = tree_.GetFromId(ax_id);
+  if (!node)
+    return false;
+  ax::mojom::FloatAttribute ax_attr = GetCorrespondingAXAttribute(attr);
+  return node->data().GetFloatAttribute(ax_attr, out_param);
+}
+
+bool AomContentAxTree::GetStateAttributeForAXNode(
+    int32_t ax_id,
+    blink::WebAOMBoolAttribute attr,
+    bool* out_param) {
+  ui::AXNode* node = tree_.GetFromId(ax_id);
+  if (!node)
+    return false;
+
+  *out_param = node->data().HasState(GetCorrespondingStateFlag(attr));
   return true;
 }
 
@@ -125,14 +238,13 @@ bool AomContentAxTree::GetStringAttributeForAXNode(
   return false;
 }
 
-bool AomContentAxTree::GetIntAttributeForAXNode(int32_t ax_id,
-                                                blink::WebAOMIntAttribute attr,
-                                                int32_t* out_param) {
+bool AomContentAxTree::GetRoleForAXNode(int32_t ax_id,
+                                        blink::WebString* out_param) {
   ui::AXNode* node = tree_.GetFromId(ax_id);
   if (!node)
     return false;
-  ax::mojom::IntAttribute ax_attr = GetCorrespondingAXAttribute(attr);
-  return node->data().GetIntAttribute(ax_attr, out_param);
+  *out_param = blink::WebString::FromUTF8(ui::ToString(node->data().role));
+  return true;
 }
 
 bool AomContentAxTree::GetParentIdForAXNode(int32_t ax_id, int32_t* out_param) {
@@ -201,17 +313,6 @@ bool AomContentAxTree::GetNextSiblingIdForAXNode(int32_t ax_id,
   DCHECK(sibling);
   *out_param = sibling->id();
   return true;
-}
-
-bool AomContentAxTree::GetBoolAttributeForAXNode(
-    int32_t ax_id,
-    blink::WebAOMBoolAttribute attr,
-    bool* out_param) {
-  ui::AXNode* node = tree_.GetFromId(ax_id);
-  if (!node)
-    return false;
-  ax::mojom::BoolAttribute ax_attr = GetCorrespondingAXAttribute(attr);
-  return node->data().GetBoolAttribute(ax_attr, out_param);
 }
 
 }  // namespace content

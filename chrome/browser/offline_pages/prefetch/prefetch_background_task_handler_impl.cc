@@ -4,7 +4,6 @@
 
 #include "chrome/browser/offline_pages/prefetch/prefetch_background_task_handler_impl.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "chrome/browser/offline_pages/prefetch/prefetch_background_task_scheduler.h"
 #include "chrome/common/pref_names.h"
@@ -27,6 +26,12 @@ const net::BackoffEntry::Policy kPrefetchBackoffPolicy = {
     false              // Don't use initial delay unless the last was an error.
 };
 }  // namespace
+
+// static
+void PrefetchBackgroundTaskHandlerImpl::RegisterPrefs(
+    PrefRegistrySimple* registry) {
+  registry->RegisterListPref(prefs::kOfflinePrefetchBackoff);
+}
 
 PrefetchBackgroundTaskHandlerImpl::PrefetchBackgroundTaskHandlerImpl(
     PrefService* prefs)
@@ -62,7 +67,7 @@ PrefetchBackgroundTaskHandlerImpl::GetCurrentBackoff() const {
         *value, &kPrefetchBackoffPolicy, clock_, base::Time::Now());
   }
   if (!result)
-    return base::MakeUnique<net::BackoffEntry>(&kPrefetchBackoffPolicy, clock_);
+    return std::make_unique<net::BackoffEntry>(&kPrefetchBackoffPolicy, clock_);
   return result;
 }
 
@@ -109,7 +114,7 @@ void PrefetchBackgroundTaskHandlerImpl::RemoveSuspension() {
 }
 
 void PrefetchBackgroundTaskHandlerImpl::SetTickClockForTesting(
-    base::TickClock* clock) {
+    const base::TickClock* clock) {
   clock_ = clock;
 }
 
@@ -119,10 +124,6 @@ void PrefetchBackgroundTaskHandlerImpl::UpdateBackoff(
       net::BackoffEntrySerializer::SerializeToValue(*backoff,
                                                     base::Time::Now());
   prefs_->Set(prefs::kOfflinePrefetchBackoff, *value);
-}
-
-void RegisterPrefetchBackgroundTaskPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterListPref(prefs::kOfflinePrefetchBackoff);
 }
 
 }  // namespace offline_pages

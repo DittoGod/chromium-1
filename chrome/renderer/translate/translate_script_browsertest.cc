@@ -8,8 +8,8 @@
 #include "chrome/test/base/chrome_render_view_test.h"
 #include "components/grit/components_resources.h"
 #include "components/translate/core/common/translate_errors.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebScriptSource.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_script_source.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "v8/include/v8.h"
 
@@ -123,7 +123,7 @@ class TranslateScriptBrowserTest : public ChromeRenderViewTest {
       // TranslateHelper::ExecuteScriptAndGetDoubleResult().
       return 0.0;
     }
-    return result->NumberValue();
+    return result.As<v8::Number>()->Value();
   }
 
   bool ExecuteScriptAndGetBoolResult(const std::string& script) {
@@ -136,7 +136,7 @@ class TranslateScriptBrowserTest : public ChromeRenderViewTest {
       NOTREACHED();
       return false;
     }
-    return result->BooleanValue();
+    return result.As<v8::Boolean>()->Value();
   }
 
   DISALLOW_COPY_AND_ASSIGN(TranslateScriptBrowserTest);

@@ -24,8 +24,8 @@ CompositorFrameSinkImpl::CompositorFrameSinkImpl(
           false /* is_root */,
           true /* needs_sync_points */)) {
   compositor_frame_sink_binding_.set_connection_error_handler(
-      base::Bind(&CompositorFrameSinkImpl::OnClientConnectionLost,
-                 base::Unretained(this)));
+      base::BindOnce(&CompositorFrameSinkImpl::OnClientConnectionLost,
+                     base::Unretained(this)));
 }
 
 CompositorFrameSinkImpl::~CompositorFrameSinkImpl() = default;
@@ -41,11 +41,34 @@ void CompositorFrameSinkImpl::SetWantsAnimateOnlyBeginFrames() {
 void CompositorFrameSinkImpl::SubmitCompositorFrame(
     const LocalSurfaceId& local_surface_id,
     CompositorFrame frame,
-    mojom::HitTestRegionListPtr hit_test_region_list,
+    base::Optional<HitTestRegionList> hit_test_region_list,
     uint64_t submit_time) {
+  SubmitCompositorFrameInternal(local_surface_id, std::move(frame),
+                                std::move(hit_test_region_list), submit_time,
+                                SubmitCompositorFrameSyncCallback());
+}
+
+void CompositorFrameSinkImpl::SubmitCompositorFrameSync(
+    const LocalSurfaceId& local_surface_id,
+    CompositorFrame frame,
+    base::Optional<HitTestRegionList> hit_test_region_list,
+    uint64_t submit_time,
+    SubmitCompositorFrameSyncCallback callback) {
+  SubmitCompositorFrameInternal(local_surface_id, std::move(frame),
+                                std::move(hit_test_region_list), submit_time,
+                                std::move(callback));
+}
+
+void CompositorFrameSinkImpl::SubmitCompositorFrameInternal(
+    const LocalSurfaceId& local_surface_id,
+    CompositorFrame frame,
+    base::Optional<HitTestRegionList> hit_test_region_list,
+    uint64_t submit_time,
+    mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback callback) {
   const auto result = support_->MaybeSubmitCompositorFrame(
-      local_surface_id, std::move(frame), std::move(hit_test_region_list));
-  if (result == CompositorFrameSinkSupport::ACCEPTED)
+      local_surface_id, std::move(frame), std::move(hit_test_region_list),
+      submit_time, std::move(callback));
+  if (result == SubmitResult::ACCEPTED)
     return;
 
   const char* reason =
@@ -62,9 +85,28 @@ void CompositorFrameSinkImpl::DidNotProduceFrame(
   support_->DidNotProduceFrame(begin_frame_ack);
 }
 
+void CompositorFrameSinkImpl::DidAllocateSharedBitmap(
+    mojo::ScopedSharedBufferHandle buffer,
+    const SharedBitmapId& id) {
+  if (!support_->DidAllocateSharedBitmap(std::move(buffer), id)) {
+    DLOG(ERROR) << "DidAllocateSharedBitmap failed for duplicate "
+                << "SharedBitmapId";
+    compositor_frame_sink_binding_.Close();
+    OnClientConnectionLost();
+  }
+}
+
+void CompositorFrameSinkImpl::DidDeleteSharedBitmap(const SharedBitmapId& id) {
+  support_->DidDeleteSharedBitmap(id);
+}
+
 void CompositorFrameSinkImpl::OnClientConnectionLost() {
-  support_->frame_sink_manager()->OnClientConnectionLost(
-      support_->frame_sink_id());
+  // The client that owns this CompositorFrameSink is either shutting down or
+  // has done something invalid and the connection to the client was terminated.
+  // Destroy |this| to free up resources as it's no longer useful.
+  FrameSinkId frame_sink_id = support_->frame_sink_id();
+  support_->frame_sink_manager()->DestroyCompositorFrameSink(frame_sink_id,
+                                                             base::DoNothing());
 }
 
 }  // namespace viz

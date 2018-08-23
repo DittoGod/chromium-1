@@ -32,7 +32,8 @@ using extensions::ContextMenuMatcher;
 using extensions::MenuItem;
 using ui::MenuModel;
 
-class ExtensionContextMenuBrowserTest : public ExtensionBrowserTest {
+class ExtensionContextMenuBrowserTest
+    : public extensions::ExtensionBrowserTest {
  public:
   // Helper to load an extension from context_menus/|subdirectory| in the
   // extensions test data dir.
@@ -570,28 +571,20 @@ static void VerifyMenuForSeparatorsTest(const MenuModel& menu) {
   // We expect to see the following items in the menu:
   //  radio1
   //  radio2
-  //  --separator-- (automatically added)
   //  normal1
-  //  --separator--
   //  normal2
-  //  --separator--
   //  radio3
   //  radio4
-  //  --separator--
   //  normal3
 
   int index = 0;
-  ASSERT_EQ(11, menu.GetItemCount());
+  ASSERT_EQ(7, menu.GetItemCount());
   ExpectLabelAndType("radio1", MenuModel::TYPE_RADIO, menu, index++);
   ExpectLabelAndType("radio2", MenuModel::TYPE_RADIO, menu, index++);
-  EXPECT_EQ(MenuModel::TYPE_SEPARATOR, menu.GetTypeAt(index++));
   ExpectLabelAndType("normal1", MenuModel::TYPE_COMMAND, menu, index++);
-  EXPECT_EQ(MenuModel::TYPE_SEPARATOR, menu.GetTypeAt(index++));
   ExpectLabelAndType("normal2", MenuModel::TYPE_COMMAND, menu, index++);
-  EXPECT_EQ(MenuModel::TYPE_SEPARATOR, menu.GetTypeAt(index++));
   ExpectLabelAndType("radio3", MenuModel::TYPE_RADIO, menu, index++);
   ExpectLabelAndType("radio4", MenuModel::TYPE_RADIO, menu, index++);
-  EXPECT_EQ(MenuModel::TYPE_SEPARATOR, menu.GetTypeAt(index++));
   ExpectLabelAndType("normal3", MenuModel::TYPE_COMMAND, menu, index++);
 }
 
@@ -614,7 +607,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionContextMenuBrowserTest, Separators) {
   ExtensionTestMessageListener listener1("test1 create finished", false);
   ui_test_utils::NavigateToURL(browser(),
                                GURL(extension->GetResourceURL("test1.html")));
-  listener1.WaitUntilSatisfied();
+  EXPECT_TRUE(listener1.WaitUntilSatisfied());
 
   GURL url("http://www.google.com/");
   std::unique_ptr<TestRenderViewContextMenu> menu(
@@ -642,7 +635,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionContextMenuBrowserTest, Separators) {
   ExtensionTestMessageListener listener2("test2 create finished", false);
   ui_test_utils::NavigateToURL(browser(),
                                GURL(extension->GetResourceURL("test2.html")));
-  listener2.WaitUntilSatisfied();
+  EXPECT_TRUE(listener2.WaitUntilSatisfied());
   menu =
       TestRenderViewContextMenu::Create(GetWebContents(), url, GURL(), GURL());
   ASSERT_TRUE(menu->GetMenuModelAndItemIndex(

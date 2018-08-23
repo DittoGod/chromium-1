@@ -32,7 +32,7 @@
 #include "content/public/browser/web_contents.h"
 #include "jni/GeolocationHeader_jni.h"
 #include "jni/SearchGeolocationDisclosureTabHelper_jni.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
 #include "url/origin.h"
 
 namespace {
@@ -48,8 +48,6 @@ base::Time GetTimeNow() {
 }
 
 }  // namespace
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(SearchGeolocationDisclosureTabHelper);
 
 SearchGeolocationDisclosureTabHelper::SearchGeolocationDisclosureTabHelper(
     content::WebContents* contents)

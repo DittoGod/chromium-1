@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -19,22 +20,7 @@
         {
           "object": "LayoutBlockFlow (positioned) UL id='submenu'",
           "rect": [48, 92, 40, 18],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) UL id='submenu'",
-          "rect": [48, -158, 40, 18],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutListMarker (anonymous)",
-          "rect": [71, 92, 7, 18],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutListMarker (anonymous)",
-          "rect": [71, -158, 7, 18],
-          "reason": "geometry"
+          "reason": "chunk disappeared"
         }
       ]
     },
@@ -60,28 +46,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutListMarker (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) UL id='submenu'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutListItem LI",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutListMarker (anonymous)",
-      "reason": "geometry"
     }
   ]
 }

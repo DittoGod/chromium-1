@@ -5,7 +5,6 @@
 package com.android.webview.chromium;
 
 import android.app.ActivityManager;
-import android.content.ComponentCallbacks2;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -17,8 +16,9 @@ import org.chromium.android_webview.AwDevToolsServer;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.command_line.CommandLineUtil;
 import org.chromium.base.Callback;
-import org.chromium.base.MemoryPressureListener;
+import org.chromium.base.MemoryPressureLevel;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.memory.MemoryPressureMonitor;
 
 import java.util.List;
 
@@ -71,8 +71,11 @@ public class SharedStatics {
 
     public void freeMemoryForTests() {
         if (ActivityManager.isRunningInTestHarness()) {
-            MemoryPressureListener.maybeNotifyMemoryPresure(
-                    ComponentCallbacks2.TRIM_MEMORY_COMPLETE);
+            ThreadUtils.postOnUiThread(() -> {
+                // This variable is needed to prevent weird formatting by "git cl format".
+                MemoryPressureMonitor pressureMonitor = MemoryPressureMonitor.INSTANCE;
+                pressureMonitor.notifyPressure(MemoryPressureLevel.CRITICAL);
+            });
         }
     }
 
@@ -111,6 +114,16 @@ public class SharedStatics {
      * to users.
      */
     public Uri getSafeBrowsingPrivacyPolicyUrl() {
-        return AwContentsStatics.getSafeBrowsingPrivacyPolicyUrl();
+        return ThreadUtils.runOnUiThreadBlockingNoException(
+                () -> AwContentsStatics.getSafeBrowsingPrivacyPolicyUrl());
+    }
+
+    public void setProxyOverride(String host, int port, String[] exclusionList) {
+        ThreadUtils.runOnUiThread(
+                () -> AwContentsStatics.setProxyOverride(host, port, exclusionList));
+    }
+
+    public void clearProxyOverride() {
+        ThreadUtils.runOnUiThread(() -> AwContentsStatics.clearProxyOverride());
     }
 }

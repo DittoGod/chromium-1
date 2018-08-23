@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/values.h"
@@ -24,9 +23,12 @@ namespace {
 
 class PersistentPrefStoreMock : public InMemoryPrefStore {
  public:
-  void CommitPendingWrite(base::OnceClosure callback) override {
+  void CommitPendingWrite(
+      base::OnceClosure reply_callback,
+      base::OnceClosure synchronous_done_callback) override {
     CommitPendingWriteMock();
-    InMemoryPrefStore::CommitPendingWrite(std::move(callback));
+    InMemoryPrefStore::CommitPendingWrite(std::move(reply_callback),
+                                          std::move(synchronous_done_callback));
   }
 
   MOCK_METHOD0(CommitPendingWriteMock, void());

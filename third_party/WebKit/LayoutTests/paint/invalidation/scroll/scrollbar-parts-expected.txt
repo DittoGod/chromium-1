@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -27,16 +28,6 @@
           "reason": "scroll control"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "HorizontalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
     }
   ]
 }

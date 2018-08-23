@@ -42,6 +42,17 @@ cr.define('discards', function() {
   }
 
   /**
+   * Determines if the provided state is related to discarding.
+   * @param {state} The discard state.
+   * @return {boolean} True if the state is related to discarding, false
+   *     otherwise.
+   */
+  function isDiscardRelatedState(state) {
+    return state == mojom.LifecycleUnitState.PENDING_DISCARD ||
+        state == mojom.LifecycleUnitState.DISCARDED;
+  }
+
+  /**
    * Compares two TabDiscardsInfos based on the data in the provided sort-key.
    * @param {string} sortKey The key of the sort. See the "data-sort-key"
    *     attribute of the table headers for valid sort-keys.
@@ -64,15 +75,35 @@ cr.define('discards', function() {
     }
 
     // Compares boolean fields.
-    if (['isMedia', 'isDiscarded', 'isAutoDiscardable'].includes(sortKey)) {
+    if (['canFreeze', 'canDiscard', 'isAutoDiscardable'].includes(sortKey)) {
       if (val1 == val2)
         return 0;
       return val1 ? 1 : -1;
     }
 
+    // Compare lifecycle state. This is actually a compound key.
+    if (sortKey == 'state') {
+      // If the keys are discarding state, then break ties using the discard
+      // reason.
+      if (val1 == val2 && isDiscardRelatedState(val1)) {
+        val1 = a['discardReason'];
+        val2 = b['discardReason'];
+      }
+      return val1 - val2;
+    }
+
     // Compares numeric fields.
-    if (['discardCount', 'utilityRank', 'lastActiveSeconds'].includes(
-            sortKey)) {
+    // NOTE: visibility, loadingState and state are represented as a numeric
+    // value.
+    if ([
+          'visibility',
+          'loadingState',
+          'discardCount',
+          'utilityRank',
+          'reactivationScore',
+          'lastActiveSeconds',
+          'siteEngagementScore',
+        ].includes(sortKey)) {
       return val1 - val2;
     }
 
@@ -175,7 +206,88 @@ cr.define('discards', function() {
    * @return {string} A string representing the bool.
    */
   function boolToString(bool) {
-    return bool ? '✔' : '\xa0';
+    return bool ? '✔' : '✘️';
+  }
+
+  /**
+   * Returns a string representation of a visibility enum value for display in
+   * a table.
+   * @param {int} visibility A value in LifecycleUnitVisibility.
+   * @return {string} A string representation of the visibility.
+   */
+  function visibilityToString(visibility) {
+    switch (visibility) {
+      case 0:
+        return 'hidden';
+      case 1:
+        return 'occluded';
+      case 2:
+        return 'visible';
+    }
+    assertNotReached('Unknown visibility: ' + visibility);
+  }
+
+  /**
+   * Returns a string representation of a loading state enum value for display
+   * in a table.
+   * @param {int} loadingState A value in LifecycleUnitLoadingState enum.
+   * @return {string} A string representation of the loading state.
+   */
+  function loadingStateToString(loadingState) {
+    switch (loadingState) {
+      case 0:
+        return 'unloaded';
+      case 1:
+        return 'loading';
+      case 2:
+        return 'loaded';
+    }
+    assertNotReached('Unknown loadingState: ' + loadingState);
+  }
+
+  /**
+   * Returns a string representation of a discard reason.
+   * @param {mojom.LifecycleUnitDiscardReason} reason The discard reason.
+   * @param {string} A string representation of the discarding reason.
+   */
+  function discardReasonToString(reason) {
+    switch (reason) {
+      case mojom.LifecycleUnitDiscardReason.EXTERNAL:
+        return 'external';
+      case mojom.LifecycleUnitDiscardReason.PROACTIVE:
+        return 'proactive';
+      case mojom.LifecycleUnitDiscardReason.URGENT:
+        return 'urgent';
+    }
+    assertNotReached('Unknown discard reason: ' + reason);
+  }
+
+  /**
+   * Returns a string representation of a lifecycle state.
+   * @param {mojom.LifecycleUnitState} state The lifecycle state.
+   * @param {mojom.LifecycleUnitDiscardReason} reason The discard reason. This
+   *     is only used if the state is discard related.
+   * @param {string} A string representation of the lifecycle state, augmented
+   *     with the discard reason if appropriate.
+   */
+  function lifecycleStateToString(state, reason) {
+    switch (state) {
+      case mojom.LifecycleUnitState.ACTIVE:
+        return 'active';
+      case mojom.LifecycleUnitState.THROTTLED:
+        return 'throttled';
+      case mojom.LifecycleUnitState.PENDING_FREEZE:
+        return 'pending frozen';
+      case mojom.LifecycleUnitState.FROZEN:
+        return 'frozen';
+      case mojom.LifecycleUnitState.PENDING_DISCARD:
+        return 'pending discard (' + discardReasonToString(reason) + ')';
+      case mojom.LifecycleUnitState.DISCARDED:
+        return 'discarded (' + discardReasonToString(reason) + ')';
+      case mojom.LifecycleUnitState.PENDING_UNFREEZE:
+        return 'pending unfreeze';
+    }
+    assertNotReached('Unknown lifecycle state: ' + state);
   }
 
   /**
@@ -210,6 +322,25 @@ cr.define('discards', function() {
           .then(stableUpdateTabDiscardsInfoTable());
     });
 
+    let loadListener = function(e) {
+      // Get the info backing this row.
+      let info = infos[getRowIndex(e.target)];
+      // Perform the action.
+      uiHandler.loadById(info.id);
+    };
+    let loadLink = row.querySelector('.load-link');
+    loadLink.addEventListener('click', loadListener);
+
+    // Set up the listeners for freeze links.
+    let freezeListener = function(e) {
+      // Get the info backing this row.
+      let info = infos[getRowIndex(e.target)];
+      // Perform the action.
+      uiHandler.freezeById(info.id);
+    };
+    let freezeLink = row.querySelector('.freeze-link');
+    freezeLink.addEventListener('click', freezeListener);
+
     // Set up the listeners for discard links.
     let discardListener = function(e) {
       // Get the info backing this row.
@@ -233,6 +364,16 @@ cr.define('discards', function() {
   }
 
   /**
+   * Given an "action-link" element, enables or disables it.
+   */
+  function setActionLinkEnabled(element, enabled) {
+    if (enabled)
+      element.removeAttribute('disabled');
+    else
+      element.setAttribute('disabled', '');
+  }
+
+  /**
    * Updates a tab discards info table row in place. Sets/unsets 'disabled'
    * attributes on action-links as necessary, and populates all contents.
    */
@@ -240,14 +381,28 @@ cr.define('discards', function() {
     // Update the content.
     row.querySelector('.utility-rank-cell').textContent =
         info.utilityRank.toString();
-    row.querySelector('.favicon').src =
-        info.faviconUrl ? info.faviconUrl : 'chrome://favicon';
+    row.querySelector('.reactivation-score-cell').textContent =
+        info.hasReactivationScore ? info.reactivationScore.toFixed(4) : 'N/A';
+    row.querySelector('.site-engagement-score-cell').textContent =
+        info.siteEngagementScore.toFixed(1);
+    row.querySelector('.favicon-div').style.backgroundImage =
+        cr.icon.getFavicon(info.tabUrl);
     row.querySelector('.title-div').textContent = info.title;
     row.querySelector('.tab-url-cell').textContent = info.tabUrl;
-    row.querySelector('.is-media-cell').textContent =
-        boolToString(info.isMedia);
-    row.querySelector('.is-discarded-cell').textContent =
-        boolToString(info.isDiscarded);
+    row.querySelector('.visibility-cell').textContent =
+        visibilityToString(info.visibility);
+    row.querySelector('.loading-state-cell').textContent =
+        loadingStateToString(info.loadingState);
+    row.querySelector('.can-freeze-div').textContent =
+        boolToString(info.canFreeze);
+    row.querySelector('.can-discard-div').textContent =
+        boolToString(info.canDiscard);
+    // The lifecycle state is meaningless for tabs that have never been loaded.
+    row.querySelector('.state-cell').textContent =
+        (info.loadingState != mojom.LifecycleUnitLoadingState.UNLOADED ||
+         info.discardCount > 0) ?
+        lifecycleStateToString(info.state, info.discardReason) :
+        '';
     row.querySelector('.discard-count-cell').textContent =
         info.discardCount.toString();
     row.querySelector('.is-auto-discardable-div').textContent =
@@ -255,17 +410,60 @@ cr.define('discards', function() {
     row.querySelector('.last-active-cell').textContent =
         lastActiveToString(info.lastActiveSeconds);
 
-    // Enable/disable action links as appropriate.
+    // Update the tooltips with 'Can Freeze/Discard?' reasons.
+    row.querySelector('.can-freeze-tooltip').innerHTML =
+        info.cannotFreezeReasons.join('<br />');
+    row.querySelector('.can-discard-tooltip').innerHTML =
+        info.cannotDiscardReasons.join('<br />');
+
     row.querySelector('.is-auto-discardable-link').removeAttribute('disabled');
+    setActionLinkEnabled(
+        row.querySelector('.can-freeze-link'),
+        (!info.canFreeze && info.cannotFreezeReasons.length > 0));
+    setActionLinkEnabled(
+        row.querySelector('.can-discard-link'),
+        (!info.canDiscard && info.cannotDiscardReasons.length > 0));
+    let loadLink = row.querySelector('.load-link');
+    let freezeLink = row.querySelector('.freeze-link');
     let discardLink = row.querySelector('.discard-link');
     let discardUrgentLink = row.querySelector('.discard-urgent-link');
-    if (info.isDiscarded) {
-      discardLink.setAttribute('disabled', '');
-      discardUrgentLink.setAttribute('disabled', '');
-    } else {
-      discardLink.removeAttribute('disabled');
-      discardUrgentLink.removeAttribute('disabled');
+
+    // Determine which action links should be enabled/disabled. By default
+    // everything is disabled and links are selectively enabled depending on the
+    // tab state.
+    let loadEnabled = false;
+    let freezeEnabled = false;
+    let discardEnabled = false;
+    let discardUrgentEnabled = false;
+    if (info.loadingState == mojom.LifecycleUnitLoadingState.UNLOADED) {
+      loadEnabled = true;
+    } else if (info.visibility == 0) {
+      // Only tabs that aren't visible can be frozen or discarded for now.
+      freezeEnabled = true;
+      discardEnabled = true;
+      discardUrgentEnabled = true;
+      switch (info.state) {
+        case mojom.LifecycleUnitState.DISCARDED:
+        case mojom.LifecycleUnitState.PENDING_DISCARD:
+          discardUrgentEnabled = false;
+          discardEnabled = false;
+        // Deliberately fall through.
+
+        case mojom.LifecycleUnitState.FROZEN:
+        case mojom.LifecycleUnitState.PENDING_FREEZE:
+          freezeEnabled = false;
+        // Deliberately fall through.
+
+        case mojom.LifecycleUnitState.THROTTLED:
+        case mojom.LifecycleUnitState.ACTIVE:
+          // Everything stays enabled,
+      }
     }
+
+    setActionLinkEnabled(loadLink, loadEnabled);
+    setActionLinkEnabled(freezeLink, freezeEnabled);
+    setActionLinkEnabled(discardLink, discardEnabled);
+    setActionLinkEnabled(discardUrgentLink, discardUrgentEnabled);
   }
 
   /**

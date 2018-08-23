@@ -29,6 +29,8 @@ namespace content {
 
 typedef AccessibilityTreeFormatter::Filter Filter;
 
+// See content/test/data/accessibility/readme.md for an overview.
+//
 // Tests that the right platform-specific accessibility events are fired
 // in response to things that happen in a web document.
 //
@@ -62,6 +64,9 @@ typedef AccessibilityTreeFormatter::Filter Filter;
 class DumpAccessibilityEventsTest : public DumpAccessibilityTestBase {
  public:
   void AddDefaultFilters(std::vector<Filter>* filters) override {
+    // Suppress spurious focus events on the document object.
+    filters->push_back(Filter(
+        base::ASCIIToUTF16("EVENT_OBJECT_FOCUS*DOCUMENT*"), Filter::DENY));
   }
 
   std::vector<std::string> Dump() override;
@@ -78,9 +83,9 @@ std::vector<std::string> DumpAccessibilityEventsTest::Dump() {
   WebContentsImpl* web_contents = static_cast<WebContentsImpl*>(
       shell()->web_contents());
   base::ProcessId pid = base::GetCurrentProcId();
-  std::unique_ptr<AccessibilityEventRecorder> event_recorder(
-      AccessibilityEventRecorder::Create(
-          web_contents->GetRootBrowserAccessibilityManager(), pid));
+  auto& event_recorder = AccessibilityEventRecorder::GetInstance(
+      web_contents->GetRootBrowserAccessibilityManager(), pid);
+  event_recorder.set_only_web_events(true);
 
   // Save a copy of the accessibility tree (as a text dump); we'll
   // log this for the user later if the test fails.
@@ -118,7 +123,7 @@ std::vector<std::string> DumpAccessibilityEventsTest::Dump() {
 
   // Dump the event logs, running them through any filters specified
   // in the HTML file.
-  std::vector<std::string> event_logs = event_recorder->event_logs();
+  std::vector<std::string> event_logs = event_recorder.event_logs();
   std::vector<std::string> result;
   for (size_t i = 0; i < event_logs.size(); ++i) {
     if (AccessibilityTreeFormatter::MatchesFilters(
@@ -126,6 +131,12 @@ std::vector<std::string> DumpAccessibilityEventsTest::Dump() {
       result.push_back(event_logs[i]);
     }
   }
+
+  // Sort the logs so that results are predictable. There are too many
+  // nondeterministic things that affect the exact order of events fired,
+  // so these tests shouldn't be used to make assertions about event order.
+  std::sort(result.begin(), result.end());
+
   return result;
 }
 
@@ -144,7 +155,7 @@ void DumpAccessibilityEventsTest::RunEventTest(
   base::FilePath test_path = GetTestFilePath("accessibility", "event");
 
   {
-    base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_verification;
+    base::ScopedAllowBlockingForTesting allow_blocking;
     ASSERT_TRUE(base::PathExists(test_path)) << test_path.LossyDisplayName();
   }
 
@@ -177,10 +188,19 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
   RunEventTest(FILE_PATH_LITERAL("aria-treeitem-focus.html"));
 }
 
-// http:/crbug.com/791268
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
-                       DISABLED_AccessibilityEventsAriaComboBoxFocus) {
+                       AccessibilityEventsAriaComboBoxFocus) {
   RunEventTest(FILE_PATH_LITERAL("aria-combo-box-focus.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+                       AccessibilityEventsAriaComboBoxDelayAddList) {
+  RunEventTest(FILE_PATH_LITERAL("aria-combo-box-delay-add-list.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+                       AccessibilityEventsAriaComboBoxDelayShowList) {
+  RunEventTest(FILE_PATH_LITERAL("aria-combo-box-delay-show-list.html"));
 }
 
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
@@ -319,6 +339,11 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+                       AccessibilityEventsLiveRegionElemReparent) {
+  RunEventTest(FILE_PATH_LITERAL("live-region-elem-reparent.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
                        AccessibilityEventsLiveRegionIgnoresClick) {
   RunEventTest(FILE_PATH_LITERAL("live-region-ignores-click.html"));
 }
@@ -332,6 +357,11 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
                        AccessibilityEventsMenuListCollapse) {
   RunEventTest(FILE_PATH_LITERAL("menulist-collapse.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+                       AccessibilityEventsMenuListCollapseNext) {
+  RunEventTest(FILE_PATH_LITERAL("menulist-collapse-next.html"));
 }
 
 // https://crbug.com/719030

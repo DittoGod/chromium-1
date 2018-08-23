@@ -9,7 +9,6 @@
 #include <memory>
 
 #include "base/bit_cast.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/win/registry.h"
@@ -32,7 +31,7 @@ class TriggeredProfileResetterTest : public testing::Test {
 
     // Activate the triggered reset field trial for these tests.
     field_trial_list_.reset(new base::FieldTrialList(
-        base::MakeUnique<variations::SHA1EntropyProvider>("foo")));
+        std::make_unique<variations::SHA1EntropyProvider>("foo")));
     base::FieldTrial* trial = base::FieldTrialList::CreateFieldTrial(
         "TriggeredResetFieldTrial", "On");
     trial->group();

@@ -3,9 +3,6 @@
 <translationbundle lang="et">
 <translation id="1002108253973310084">Leiti protokolli ühildumatu versioon. Veenduge, et mõlemas arvutis oleks installitud tarkvara uusim versioon, ja proovige uuesti.</translation>
 <translation id="1050693411695664090">Halb</translation>
-<translation id="1059802506829356230">• Uus välimus ja tunnetus.
-• Täiustatud toimivus, reageerimine ja usaldusväärsus.
-• Tugi heli esitamiseks Windowsi või Linuxi arvutites.</translation>
 <translation id="1152528166145813711">Valige ...</translation>
 <translation id="1199593201721843963">Keela kaugühendused</translation>
 <translation id="1291443878853470558">Kui soovite rakendusega Chromoting arvuti juurde pääseda, siis lubage kaugühendused.</translation>
@@ -125,7 +122,6 @@ Lisateavet privaatsuse kohta vaadake Google'i privaatsuseeskirjadest (http://goo
 <translation id="369442766917958684">Võrguühenduseta.</translation>
 <translation id="3695446226812920698">Lisateave</translation>
 <translation id="3718805989288361841">Chrome Remote Desktopi reegli seadetes on viga. Abi saamiseks võtke ühendust süsteemiadministraatoriga.</translation>
-<translation id="3759645055923345178">Kui seadistus on lõpule viidud, pääsete arvutile juurde sellelt lehelt, kui sisestate PIN- või pääsukoodi</translation>
 <translation id="3776024066357219166">Teie Chrome Remote Desktopi seanss on lõppenud.</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
 <translation id="3884839335308961732">Chrome Remote Desktopi abil juurdepääsu lubamiseks kinnitage allpool oma konto ja PIN-kood.</translation>
@@ -140,13 +136,16 @@ Lisateavet privaatsuse kohta vaadake Google'i privaatsuseeskirjadest (http://goo
 <translation id="405887016757208221">Kaugarvutil ei õnnestunud seanssi lähtestada. Kui probleem püsib, proovige hosti uuesti seadistada.</translation>
 <translation id="4068946408131579958">Kõik ühendused</translation>
 <translation id="409800995205263688">MÄRKUS: reegli seaded lubavad luua ühenduse ainult teie võrku kuuluvate arvutite vahel.</translation>
+<translation id="4126409073460786861">Kui seadistus on lõpule viidud, tuleb teil arvutile juurdepääsemiseks valida seade ja sisestada PIN-kood</translation>
 <translation id="4145029455188493639">Sisse logitud kasutajana <ph name="EMAIL_ADDRESS" />.</translation>
 <translation id="4155497795971509630">Mõned vajalikud komponendid on puudu. Veenduge, et installitud oleks tarkvara uusim versioon, ja proovige uuesti.</translation>
 <translation id="4156740505453712750">Arvuti kaitsmiseks valige PIN-kood, mis koosneb <ph name="BOLD_START" />vähemalt kuuest numbrist<ph name="BOLD_END" />. PIN-kood tuleb sisestada muust asukohast ühenduse loomisel.</translation>
+<translation id="4169432154993690151">Profiilipildi valimiseks lubage Chrome Remote Desktopi jaoks juurdepääs kaamerale</translation>
 <translation id="4176825807642096119">Pääsukood</translation>
 <translation id="4207623512727273241">Enne jätkamist käitage installerit.</translation>
 <translation id="4227991223508142681">Hosti ettevalmistamise utiliit</translation>
 <translation id="4240294130679914010">Chromootimise hosti desinstaller</translation>
+<translation id="4249741460382919890">Üldised parandused ja stabiilsuse täiustused.</translation>
 <translation id="4277463233460010382">Arvuti on seadistatud nii, et see lubab ühel või mitmel kliendil luua ühenduse ilma PIN-koodi sisestamata.</translation>
 <translation id="4277736576214464567">Pääsukood on kehtetu. Proovige uuesti.</translation>
 <translation id="4361728918881830843">Muu arvutiga kaugühenduse lubamiseks installige sinna Chrome Remote Desktop ja klõpsake nupul „<ph name="BUTTON_NAME" />”.</translation>
@@ -192,6 +191,7 @@ Lauaarvuti</translation>
 <translation id="5064360042339518108"><ph name="HOSTNAME" /> (võrguühenduseta)</translation>
 <translation id="5070121137485264635">Kaughost vajab autentimist kolmanda osapoole veebisaidil. Jätkamiseks peate andma Chrome Remote Desktopile täiendavad load juurdepääsuks sellele aadressile:</translation>
 <translation id="507204348399810022">Kas soovite kindlasti keelata kaugühendused hostiga <ph name="HOSTNAME" />?</translation>
+<translation id="5081343395220691640">Serveriga ei saanud ühendust: <ph name="ERROR" /></translation>
 <translation id="5156271271724754543">Sisestage mõlemale väljale sama PIN-kood.</translation>
 <translation id="5170982930780719864">Sobimatu hosti ID.</translation>
 <translation id="518094545883702183">Seda teavet kasutatakse ainult teavitatud probleemi diagnoosimiseks, see on saadaval ainult probleemiga tegelejale ja seda ei säilitata üle 30 päeva.</translation>
@@ -242,6 +242,7 @@ Lauaarvuti</translation>
 <translation id="6381670701864002291">Midagi muud.</translation>
 <translation id="6398765197997659313">Välju täisekraanilt</translation>
 <translation id="6441316101718669559">Sellel platvormil ei toetata töölaua integreerimist. Saate rakendust kasutada, kuid kasutuskogemus on kehvem.</translation>
+<translation id="6502629188777329097">Turvaline juurdepääs arvutile</translation>
 <translation id="652218476070540101">Selle arvuti PIN-koodi värskendatakse ...</translation>
 <translation id="6527303717912515753">Jaga</translation>
 <translation id="6541219117979389420">Rakenduse logid võivad sisaldada privaatset teavet, sh teie identiteeti (e-posti aadress) ja Google Drive'is olevate failide ning kaustade atribuute ja nimesid.</translation>
@@ -259,6 +260,7 @@ Lauaarvuti</translation>
 <translation id="6748108480210050150">Kellelt</translation>
 <translation id="677755392401385740">Kasutajale käivitati host: <ph name="HOST_USERNAME" />.</translation>
 <translation id="6865175692670882333">Kuvamine/muutmine</translation>
+<translation id="6913710942997637770">Profiilipildi valimiseks lubage Chrome Remote Desktopi jaoks juurdepääs fotodele</translation>
 <translation id="6930242544192836755">Kestus</translation>
 <translation id="6939719207673461467">Kuva/peida klaviatuur.</translation>
 <translation id="6944854424004126054">Akna taastamine</translation>
@@ -269,6 +271,7 @@ Lauaarvuti</translation>
 <translation id="6998989275928107238">Kellele</translation>
 <translation id="7019153418965365059">Tundmatu hostiviga: <ph name="HOST_OFFLINE_REASON" />.</translation>
 <translation id="701976023053394610">Kaugabi</translation>
+<translation id="7026930240735156896">Järgige juhiseid, et seadistada arvutis kaugjuurdepääs</translation>
 <translation id="7038683108611689168">Aidake meil rakendust Chromoting täiustada, lubades kasutusstatistika ja krahhiaruannete kogumise.</translation>
 <translation id="7067321367069083429">Ekraan toimib puuteekraanina</translation>
 <translation id="7116737094673640201">Tere tulemast kasutama Chrome Remote Desktopi!</translation>
@@ -290,10 +293,10 @@ Lauaarvuti</translation>
 <translation id="7672203038394118626">Selles arvutis on kaugühendused keelatud.</translation>
 <translation id="7678209621226490279">Doki vasakule</translation>
 <translation id="7693372326588366043">Hostide loendi värskendamine</translation>
+<translation id="7714222945760997814">Teavita sellest</translation>
 <translation id="7782471917492991422">Kontrollige oma arvuti toitehalduse seadeid ja veenduge, et arvuti ei ole seadistatud lülituma jõudeolekul unerežiimile.</translation>
 <translation id="7810127880729796595">Kuva statistika (ühendus: <ph name="QUALITY" />)</translation>
 <translation id="7836926030608666805">Mõned vajalikud komponendid on puudu. Veenduge, et käitaksite Chrome'i uusimat versiooni, ja proovige uuesti.</translation>
-<translation id="7850909060902317210">Installige Chrome Remote Desktopi tarkvara ja järgige seadistuse lõpuleviimiseks juhiseid</translation>
 <translation id="7868137160098754906">Sisestage kaugarvuti PIN-kood.</translation>
 <translation id="7869445566579231750">Teil puudub luba selle rakenduse käitamiseks.</translation>
 <translation id="7895403300744144251">Kaugarvuti turvareeglid ei luba teie kontolt pärinevaid ühendusi.</translation>

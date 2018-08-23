@@ -23,6 +23,7 @@
 #include "media/capture/capture_export.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/win/capability_list_win.h"
+#include "media/capture/video/win/metrics.h"
 
 interface IMFSourceReader;
 
@@ -40,8 +41,10 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
                                                      VideoPixelFormat* format);
 
   explicit VideoCaptureDeviceMFWin(
+      const VideoCaptureDeviceDescriptor& device_descriptor,
       Microsoft::WRL::ComPtr<IMFMediaSource> source);
   explicit VideoCaptureDeviceMFWin(
+      const VideoCaptureDeviceDescriptor& device_descriptor,
       Microsoft::WRL::ComPtr<IMFMediaSource> source,
       Microsoft::WRL::ComPtr<IMFCaptureEngine> engine);
 
@@ -63,7 +66,6 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
   // Captured new video data.
   void OnIncomingCapturedData(const uint8_t* data,
                               int length,
-                              int rotation,
                               base::TimeTicks reference_time,
                               base::TimeDelta timestamp);
   void OnEvent(IMFMediaEvent* media_event);
@@ -91,7 +93,8 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
 
  private:
   HRESULT ExecuteHresultCallbackWithRetries(
-      base::RepeatingCallback<HRESULT()> callback);
+      base::RepeatingCallback<HRESULT()> callback,
+      MediaFoundationFunctionRequiringRetry which_function);
   HRESULT GetDeviceStreamCount(IMFCaptureSource* source, DWORD* count);
   HRESULT GetDeviceStreamCategory(
       IMFCaptureSource* source,
@@ -105,9 +108,14 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
   HRESULT FillCapabilities(IMFCaptureSource* source,
                            bool photo,
                            CapabilityList* capabilities);
-  void OnError(const base::Location& from_here, HRESULT hr);
-  void OnError(const base::Location& from_here, const char* message);
+  void OnError(VideoCaptureError error,
+               const base::Location& from_here,
+               HRESULT hr);
+  void OnError(VideoCaptureError error,
+               const base::Location& from_here,
+               const char* message);
 
+  VideoFacingMode facing_mode_;
   CreateMFPhotoCallbackCB create_mf_photo_callback_;
   scoped_refptr<MFVideoCallback> video_callback_;
   bool is_initialized_;

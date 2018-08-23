@@ -5,6 +5,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [785, 2016],
+      "drawsContent": false,
       "contentsOpaque": true,
       "drawsContent": true,
       "paintInvalidations": [
@@ -19,12 +20,6 @@
           "reason": "subtree"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutImage (positioned) IMG id='img'",
-      "reason": "subtree"
     }
   ]
 }

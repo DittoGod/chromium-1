@@ -25,7 +25,7 @@
 
 namespace storage {
 
-typedef FileSystemOperationRunner::OperationID OperationID;
+using OperationID = FileSystemOperationRunner::OperationID;
 
 class FileSystemOperationRunner::BeginOperationScoper
     : public base::SupportsWeakPtr<
@@ -45,7 +45,9 @@ FileSystemOperationRunner::OperationHandle::~OperationHandle() = default;
 FileSystemOperationRunner::~FileSystemOperationRunner() = default;
 
 void FileSystemOperationRunner::Shutdown() {
-  operations_.Clear();
+  // Clearing |operations_| may release our owning FileSystemContext, causing
+  // |this| to be deleted, so do not touch |this| after clear()ing it.
+  operations_.clear();
 }
 
 OperationID FileSystemOperationRunner::CreateFile(
@@ -64,10 +66,9 @@ OperationID FileSystemOperationRunner::CreateFile(
     return handle.id;
   }
   PrepareForWrite(handle.id, url);
-  operation_raw->CreateFile(
-      url, exclusive,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+  operation_raw->CreateFile(url, exclusive,
+                            base::Bind(&FileSystemOperationRunner::DidFinish,
+                                       AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
@@ -90,8 +91,8 @@ OperationID FileSystemOperationRunner::CreateDirectory(
   PrepareForWrite(handle.id, url);
   operation_raw->CreateDirectory(
       url, exclusive, recursive,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(), handle,
+                 callback));
   return handle.id;
 }
 
@@ -115,13 +116,14 @@ OperationID FileSystemOperationRunner::Copy(
   }
   PrepareForWrite(handle.id, dest_url);
   PrepareForRead(handle.id, src_url);
-  operation_raw->Copy(src_url, dest_url, option, error_behavior,
-                  progress_callback.is_null()
-                      ? CopyProgressCallback()
-                      : base::Bind(&FileSystemOperationRunner::OnCopyProgress,
-                                   AsWeakPtr(), handle, progress_callback),
-                  base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                             handle, callback));
+  operation_raw->Copy(
+      src_url, dest_url, option, error_behavior,
+      progress_callback.is_null()
+          ? CopyProgressCallback()
+          : base::Bind(&FileSystemOperationRunner::OnCopyProgress, AsWeakPtr(),
+                       handle, progress_callback),
+      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(), handle,
+                 callback));
   return handle.id;
 }
 
@@ -143,10 +145,9 @@ OperationID FileSystemOperationRunner::Move(
   }
   PrepareForWrite(handle.id, dest_url);
   PrepareForWrite(handle.id, src_url);
-  operation_raw->Move(
-      src_url, dest_url, option,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+  operation_raw->Move(src_url, dest_url, option,
+                      base::Bind(&FileSystemOperationRunner::DidFinish,
+                                 AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
@@ -166,9 +167,8 @@ OperationID FileSystemOperationRunner::DirectoryExists(
   }
   PrepareForRead(handle.id, url);
   operation_raw->DirectoryExists(
-      url,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+      url, base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
+                      handle, callback));
   return handle.id;
 }
 
@@ -188,9 +188,8 @@ OperationID FileSystemOperationRunner::FileExists(
   }
   PrepareForRead(handle.id, url);
   operation_raw->FileExists(
-      url,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+      url, base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
+                      handle, callback));
   return handle.id;
 }
 
@@ -210,9 +209,10 @@ OperationID FileSystemOperationRunner::GetMetadata(
     return handle.id;
   }
   PrepareForRead(handle.id, url);
-  operation_raw->GetMetadata(url, fields,
-                         base::Bind(&FileSystemOperationRunner::DidGetMetadata,
-                                    AsWeakPtr(), handle, callback));
+  operation_raw->GetMetadata(
+      url, fields,
+      base::Bind(&FileSystemOperationRunner::DidGetMetadata, AsWeakPtr(),
+                 handle, callback));
   return handle.id;
 }
 
@@ -228,7 +228,7 @@ OperationID FileSystemOperationRunner::ReadDirectory(
       BeginOperation(std::move(operation), scope.AsWeakPtr());
   if (!operation_raw) {
     DidReadDirectory(handle, std::move(callback), error,
-                     std::vector<DirectoryEntry>(), false);
+                     std::vector<filesystem::mojom::DirectoryEntry>(), false);
     return handle.id;
   }
   PrepareForRead(handle.id, url);
@@ -253,15 +253,13 @@ OperationID FileSystemOperationRunner::Remove(
     return handle.id;
   }
   PrepareForWrite(handle.id, url);
-  operation_raw->Remove(
-      url, recursive,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+  operation_raw->Remove(url, recursive,
+                        base::Bind(&FileSystemOperationRunner::DidFinish,
+                                   AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
 OperationID FileSystemOperationRunner::Write(
-    const net::URLRequestContext* url_request_context,
     const FileSystemURL& url,
     std::unique_ptr<storage::BlobDataHandle> blob,
     int64_t offset,
@@ -289,14 +287,14 @@ OperationID FileSystemOperationRunner::Write(
   std::unique_ptr<FileWriterDelegate> writer_delegate(new FileWriterDelegate(
       std::move(writer), url.mount_option().flush_policy()));
 
-  std::unique_ptr<net::URLRequest> blob_request(
-      storage::BlobProtocolHandler::CreateBlobRequest(
-          std::move(blob), url_request_context, writer_delegate.get()));
+  std::unique_ptr<BlobReader> blob_reader;
+  if (blob)
+    blob_reader = blob->CreateReader();
 
   PrepareForWrite(handle.id, url);
-  operation_raw->Write(url, std::move(writer_delegate), std::move(blob_request),
-                   base::Bind(&FileSystemOperationRunner::DidWrite, AsWeakPtr(),
-                              handle, callback));
+  operation_raw->Write(url, std::move(writer_delegate), std::move(blob_reader),
+                       base::Bind(&FileSystemOperationRunner::DidWrite,
+                                  AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
@@ -316,10 +314,9 @@ OperationID FileSystemOperationRunner::Truncate(
     return handle.id;
   }
   PrepareForWrite(handle.id, url);
-  operation_raw->Truncate(
-      url, length,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+  operation_raw->Truncate(url, length,
+                          base::Bind(&FileSystemOperationRunner::DidFinish,
+                                     AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
@@ -331,13 +328,14 @@ void FileSystemOperationRunner::Cancel(
     stray_cancel_callbacks_[id] = callback;
     return;
   }
-  FileSystemOperation* operation = operations_.Lookup(id);
-  if (!operation) {
+
+  Operations::iterator found = operations_.find(id);
+  if (found == operations_.end() || !found->second) {
     // There is no operation with |id|.
     callback.Run(base::File::FILE_ERROR_INVALID_OPERATION);
     return;
   }
-  operation->Cancel(callback);
+  found->second->Cancel(callback);
 }
 
 OperationID FileSystemOperationRunner::TouchFile(
@@ -357,10 +355,9 @@ OperationID FileSystemOperationRunner::TouchFile(
     return handle.id;
   }
   PrepareForWrite(handle.id, url);
-  operation_raw->TouchFile(
-      url, last_access_time, last_modified_time,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+  operation_raw->TouchFile(url, last_access_time, last_modified_time,
+                           base::Bind(&FileSystemOperationRunner::DidFinish,
+                                      AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
@@ -389,16 +386,15 @@ OperationID FileSystemOperationRunner::OpenFile(
   } else {
     PrepareForRead(handle.id, url);
   }
-  operation_raw->OpenFile(
-      url, file_flags,
-      base::Bind(&FileSystemOperationRunner::DidOpenFile, AsWeakPtr(),
-                 handle, callback));
+  operation_raw->OpenFile(url, file_flags,
+                          base::Bind(&FileSystemOperationRunner::DidOpenFile,
+                                     AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
 OperationID FileSystemOperationRunner::CreateSnapshotFile(
     const FileSystemURL& url,
-    const SnapshotFileCallback& callback) {
+    SnapshotFileCallback callback) {
   base::File::Error error = base::File::FILE_OK;
   std::unique_ptr<FileSystemOperation> operation = base::WrapUnique(
       file_system_context_->CreateFileSystemOperation(url, &error));
@@ -407,15 +403,14 @@ OperationID FileSystemOperationRunner::CreateSnapshotFile(
   OperationHandle handle =
       BeginOperation(std::move(operation), scope.AsWeakPtr());
   if (!operation_raw) {
-    DidCreateSnapshot(handle, callback, error, base::File::Info(),
-                      base::FilePath(), NULL);
+    DidCreateSnapshot(handle, std::move(callback), error, base::File::Info(),
+                      base::FilePath(), nullptr);
     return handle.id;
   }
   PrepareForRead(handle.id, url);
   operation_raw->CreateSnapshotFile(
-      url,
-      base::Bind(&FileSystemOperationRunner::DidCreateSnapshot, AsWeakPtr(),
-                 handle, callback));
+      url, base::Bind(&FileSystemOperationRunner::DidCreateSnapshot,
+                      AsWeakPtr(), handle, base::Passed(&callback)));
   return handle.id;
 }
 
@@ -437,8 +432,8 @@ OperationID FileSystemOperationRunner::CopyInForeignFile(
   PrepareForWrite(handle.id, dest_url);
   operation_raw->CopyInForeignFile(
       src_local_disk_path, dest_url,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(), handle,
+                 callback));
   return handle.id;
 }
 
@@ -458,9 +453,8 @@ OperationID FileSystemOperationRunner::RemoveFile(
   }
   PrepareForWrite(handle.id, url);
   operation_raw->RemoveFile(
-      url,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+      url, base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
+                      handle, callback));
   return handle.id;
 }
 
@@ -480,9 +474,8 @@ OperationID FileSystemOperationRunner::RemoveDirectory(
   }
   PrepareForWrite(handle.id, url);
   operation_raw->RemoveDirectory(
-      url,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+      url, base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
+                      handle, callback));
   return handle.id;
 }
 
@@ -505,10 +498,9 @@ OperationID FileSystemOperationRunner::CopyFileLocal(
   }
   PrepareForRead(handle.id, src_url);
   PrepareForWrite(handle.id, dest_url);
-  operation_raw->CopyFileLocal(
-      src_url, dest_url, option, progress_callback,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+  operation_raw->CopyFileLocal(src_url, dest_url, option, progress_callback,
+                               base::Bind(&FileSystemOperationRunner::DidFinish,
+                                          AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
@@ -530,10 +522,9 @@ OperationID FileSystemOperationRunner::MoveFileLocal(
   }
   PrepareForWrite(handle.id, src_url);
   PrepareForWrite(handle.id, dest_url);
-  operation_raw->MoveFileLocal(
-      src_url, dest_url, option,
-      base::Bind(&FileSystemOperationRunner::DidFinish, AsWeakPtr(),
-                 handle, callback));
+  operation_raw->MoveFileLocal(src_url, dest_url, option,
+                               base::Bind(&FileSystemOperationRunner::DidFinish,
+                                          AsWeakPtr(), handle, callback));
   return handle.id;
 }
 
@@ -552,15 +543,14 @@ FileSystemOperationRunner::FileSystemOperationRunner(
     FileSystemContext* file_system_context)
     : file_system_context_(file_system_context) {}
 
-void FileSystemOperationRunner::DidFinish(
-    const OperationHandle& handle,
-    const StatusCallback& callback,
-    base::File::Error rv) {
+void FileSystemOperationRunner::DidFinish(const OperationHandle& handle,
+                                          const StatusCallback& callback,
+                                          base::File::Error rv) {
   if (handle.scope) {
     finished_operations_.insert(handle.id);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&FileSystemOperationRunner::DidFinish,
-                              AsWeakPtr(), handle, callback, rv));
+        FROM_HERE, base::BindOnce(&FileSystemOperationRunner::DidFinish,
+                                  AsWeakPtr(), handle, callback, rv));
     return;
   }
   callback.Run(rv);
@@ -575,8 +565,9 @@ void FileSystemOperationRunner::DidGetMetadata(
   if (handle.scope) {
     finished_operations_.insert(handle.id);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&FileSystemOperationRunner::DidGetMetadata,
-                              AsWeakPtr(), handle, callback, rv, file_info));
+        FROM_HERE,
+        base::BindOnce(&FileSystemOperationRunner::DidGetMetadata, AsWeakPtr(),
+                       handle, callback, rv, file_info));
     return;
   }
   callback.Run(rv, file_info);
@@ -587,7 +578,7 @@ void FileSystemOperationRunner::DidReadDirectory(
     const OperationHandle& handle,
     const ReadDirectoryCallback& callback,
     base::File::Error rv,
-    std::vector<DirectoryEntry> entries,
+    std::vector<filesystem::mojom::DirectoryEntry> entries,
     bool has_more) {
   if (handle.scope) {
     finished_operations_.insert(handle.id);
@@ -610,8 +601,9 @@ void FileSystemOperationRunner::DidWrite(const OperationHandle& handle,
   if (handle.scope) {
     finished_operations_.insert(handle.id);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&FileSystemOperationRunner::DidWrite, AsWeakPtr(),
-                              handle, callback, rv, bytes, complete));
+        FROM_HERE,
+        base::BindOnce(&FileSystemOperationRunner::DidWrite, AsWeakPtr(),
+                       handle, callback, rv, bytes, complete));
     return;
   }
   callback.Run(rv, bytes, complete);
@@ -623,22 +615,23 @@ void FileSystemOperationRunner::DidOpenFile(
     const OperationHandle& handle,
     const OpenFileCallback& callback,
     base::File file,
-    const base::Closure& on_close_callback) {
+    base::OnceClosure on_close_callback) {
   if (handle.scope) {
     finished_operations_.insert(handle.id);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&FileSystemOperationRunner::DidOpenFile,
-                              AsWeakPtr(), handle, callback, Passed(&file),
-                              on_close_callback));
+        FROM_HERE,
+        base::BindOnce(&FileSystemOperationRunner::DidOpenFile, AsWeakPtr(),
+                       handle, callback, std::move(file),
+                       std::move(on_close_callback)));
     return;
   }
-  callback.Run(std::move(file), on_close_callback);
+  callback.Run(std::move(file), std::move(on_close_callback));
   FinishOperation(handle.id);
 }
 
 void FileSystemOperationRunner::DidCreateSnapshot(
     const OperationHandle& handle,
-    const SnapshotFileCallback& callback,
+    SnapshotFileCallback callback,
     base::File::Error rv,
     const base::File::Info& file_info,
     const base::FilePath& platform_path,
@@ -646,12 +639,13 @@ void FileSystemOperationRunner::DidCreateSnapshot(
   if (handle.scope) {
     finished_operations_.insert(handle.id);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&FileSystemOperationRunner::DidCreateSnapshot,
-                              AsWeakPtr(), handle, callback, rv, file_info,
-                              platform_path, std::move(file_ref)));
+        FROM_HERE,
+        base::BindOnce(&FileSystemOperationRunner::DidCreateSnapshot,
+                       AsWeakPtr(), handle, std::move(callback), rv, file_info,
+                       platform_path, std::move(file_ref)));
     return;
   }
-  callback.Run(rv, file_info, platform_path, std::move(file_ref));
+  std::move(callback).Run(rv, file_info, platform_path, std::move(file_ref));
   FinishOperation(handle.id);
 }
 
@@ -664,9 +658,9 @@ void FileSystemOperationRunner::OnCopyProgress(
     int64_t size) {
   if (handle.scope) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(
-            &FileSystemOperationRunner::OnCopyProgress,
-            AsWeakPtr(), handle, callback, type, source_url, dest_url, size));
+        FROM_HERE,
+        base::BindOnce(&FileSystemOperationRunner::OnCopyProgress, AsWeakPtr(),
+                       handle, callback, type, source_url, dest_url, size));
     return;
   }
   callback.Run(type, source_url, dest_url, size);
@@ -675,8 +669,8 @@ void FileSystemOperationRunner::OnCopyProgress(
 void FileSystemOperationRunner::PrepareForWrite(OperationID id,
                                                 const FileSystemURL& url) {
   if (file_system_context_->GetUpdateObservers(url.type())) {
-    file_system_context_->GetUpdateObservers(url.type())->Notify(
-        &FileUpdateObserver::OnStartUpdate, std::make_tuple(url));
+    file_system_context_->GetUpdateObservers(url.type())
+        ->Notify(&FileUpdateObserver::OnStartUpdate, url);
   }
   write_target_urls_[id].insert(url);
 }
@@ -684,8 +678,8 @@ void FileSystemOperationRunner::PrepareForWrite(OperationID id,
 void FileSystemOperationRunner::PrepareForRead(OperationID id,
                                                const FileSystemURL& url) {
   if (file_system_context_->GetAccessObservers(url.type())) {
-    file_system_context_->GetAccessObservers(url.type())->Notify(
-        &FileAccessObserver::OnAccess, std::make_tuple(url));
+    file_system_context_->GetAccessObservers(url.type())
+        ->Notify(&FileAccessObserver::OnAccess, url);
   }
 }
 
@@ -694,29 +688,36 @@ FileSystemOperationRunner::BeginOperation(
     std::unique_ptr<FileSystemOperation> operation,
     base::WeakPtr<BeginOperationScoper> scope) {
   OperationHandle handle;
-  handle.id = operations_.Add(std::move(operation));
+  handle.id = next_operation_id_++;
+
+  // TODO(https://crbug.com/864351): Diagnostic to determine whether OperationID
+  // wrap-around is occurring in the wild.
+  DCHECK(operations_.find(handle.id) == operations_.end());
+
+  operations_.emplace(handle.id, std::move(operation));
   handle.scope = scope;
   return handle;
 }
 
 void FileSystemOperationRunner::FinishOperation(OperationID id) {
+  // Deleting the |operations_| entry may release the FileSystemContext which
+  // owns this runner, so take a reference to keep both alive until the end of
+  // this call.
+  scoped_refptr<FileSystemContext> context(file_system_context_);
+
   OperationToURLSet::iterator found = write_target_urls_.find(id);
   if (found != write_target_urls_.end()) {
     const FileSystemURLSet& urls = found->second;
-    for (FileSystemURLSet::const_iterator iter = urls.begin();
-        iter != urls.end(); ++iter) {
-      if (file_system_context_->GetUpdateObservers(iter->type())) {
-        file_system_context_->GetUpdateObservers(iter->type())->Notify(
-            &FileUpdateObserver::OnEndUpdate, std::make_tuple(*iter));
+    for (const FileSystemURL& url : urls) {
+      if (file_system_context_->GetUpdateObservers(url.type())) {
+        file_system_context_->GetUpdateObservers(url.type())
+            ->Notify(&FileUpdateObserver::OnEndUpdate, url);
       }
     }
     write_target_urls_.erase(found);
   }
 
-  // IDMap::Lookup fails if the operation is NULL, so we don't check
-  // operations_.Lookup(id) here.
-
-  operations_.Remove(id);
+  operations_.erase(id);
   finished_operations_.erase(id);
 
   // Dispatch stray cancel callback if exists.

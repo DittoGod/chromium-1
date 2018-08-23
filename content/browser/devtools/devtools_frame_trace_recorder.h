@@ -24,13 +24,11 @@ class DevToolsFrameTraceRecorder {
   DevToolsFrameTraceRecorder();
   ~DevToolsFrameTraceRecorder();
 
-  void OnSwapCompositorFrame(
-      RenderFrameHostImpl* host,
-      const viz::CompositorFrameMetadata& frame_metadata);
-
   void OnSynchronousSwapCompositorFrame(
       RenderFrameHostImpl* host,
       const viz::CompositorFrameMetadata& frame_metadata);
+
+  static constexpr int kMaximumNumberOfScreenshots = 450;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DevToolsFrameTraceRecorder);

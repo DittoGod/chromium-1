@@ -4,7 +4,6 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/process/process.h"
 #include "base/run_loop.h"
@@ -22,6 +21,7 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -32,6 +32,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_utils.h"
 #include "media/base/media_switches.h"
 #include "net/base/filename_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -47,22 +48,14 @@ using content::WebContents;
 namespace {
 
 int RenderProcessHostCount() {
-  content::RenderProcessHost::iterator hosts =
-      content::RenderProcessHost::AllHostsIterator();
-  int count = 0;
-  while (!hosts.IsAtEnd()) {
-    if (hosts.GetCurrentValue()->HasConnection())
-      count++;
-    hosts.Advance();
-  }
-  return count;
+  return content::RenderProcessHost::GetCurrentRenderProcessCountForTesting();
 }
 
 WebContents* FindFirstDevToolsContents() {
   std::unique_ptr<content::RenderWidgetHostIterator> widgets(
       RenderWidgetHost::GetRenderWidgetHosts());
   while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
-    if (!widget->GetProcess()->HasConnection())
+    if (!widget->GetProcess()->IsInitializedAndNotDead())
       continue;
     RenderViewHost* view_host = RenderViewHost::From(widget);
     if (!view_host)
@@ -93,7 +86,7 @@ base::Process ProcessFromHandle(base::ProcessHandle handle) {
 
 }  // namespace
 
-class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
+class ChromeRenderProcessHostTest : public extensions::ExtensionBrowserTest {
  public:
   ChromeRenderProcessHostTest() {}
 
@@ -107,7 +100,8 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
 
     WaitForLauncherThread();
     WaitForMessageProcessing(wc);
-    return ProcessFromHandle(wc->GetMainFrame()->GetProcess()->GetHandle());
+    return ProcessFromHandle(
+        wc->GetMainFrame()->GetProcess()->GetProcess().Handle());
   }
 
   // Loads the given url in a new background tab and returns the handle of its
@@ -124,15 +118,15 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
 
     WaitForLauncherThread();
     WaitForMessageProcessing(wc);
-    return ProcessFromHandle(wc->GetMainFrame()->GetProcess()->GetHandle());
+    return ProcessFromHandle(
+        wc->GetMainFrame()->GetProcess()->GetProcess().Handle());
   }
 
   // Ensures that the backgrounding / foregrounding gets a chance to run.
   void WaitForLauncherThread() {
     base::RunLoop run_loop;
-    content::BrowserThread::PostTaskAndReply(
-        content::BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
-        base::Bind(&base::DoNothing), run_loop.QuitWhenIdleClosure());
+    content::GetProcessLauncherTaskRunner()->PostTaskAndReply(
+        FROM_HERE, base::DoNothing(), run_loop.QuitWhenIdleClosure());
     run_loop.Run();
   }
 
@@ -162,7 +156,7 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
     const extensions::Extension* extension =
         LoadExtension(test_data_dir_.AppendASCII("options_page"));
 
-    // Change the first tab to be the omnibox page (TYPE_WEBUI).
+    // Change the first tab to be the omnibox page (WebUI).
     GURL omnibox(chrome::kChromeUIOmniboxURL);
     ui_test_utils::NavigateToURL(browser(), omnibox);
     EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
@@ -171,7 +165,7 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
     EXPECT_EQ(omnibox, tab1->GetURL());
     EXPECT_EQ(host_count, RenderProcessHostCount());
 
-    // Create a new TYPE_TABBED tab.  It should be in its own process.
+    // Create a new normal tab with a data URL. It should be in its own process.
     GURL page1("data:text/html,hello world1");
 
     ui_test_utils::WindowedTabAddedNotificationObserver observer1(
@@ -188,23 +182,30 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
     EXPECT_EQ(host_count, RenderProcessHostCount());
     EXPECT_NE(rph1, rph2);
 
-    // Create another TYPE_TABBED tab.  It should share the previous process.
+    // Create another data URL tab.  With Site Isolation, this will require its
+    // own process, but without Site Isolation, it can share the previous
+    // process.
     GURL page2("data:text/html,hello world2");
     ui_test_utils::WindowedTabAddedNotificationObserver observer2(
         content::NotificationService::AllSources());
     ::ShowSingletonTab(browser(), page2);
     observer2.Wait();
     tab_count++;
+    if (content::AreAllSitesIsolatedForTesting())
+      host_count++;
     EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
     tab2 = browser()->tab_strip_model()->GetWebContentsAt(tab_count - 1);
     EXPECT_EQ(tab2->GetURL(), page2);
     EXPECT_EQ(host_count, RenderProcessHostCount());
-    EXPECT_EQ(tab2->GetMainFrame()->GetProcess(), rph2);
+    if (content::AreAllSitesIsolatedForTesting())
+      EXPECT_NE(tab2->GetMainFrame()->GetProcess(), rph2);
+    else
+      EXPECT_EQ(tab2->GetMainFrame()->GetProcess(), rph2);
 
-    // Create another TYPE_WEBUI tab.  It should share the process with omnibox.
-    // Note: intentionally create this tab after the TYPE_TABBED tabs to
-    // exercise bug 43448 where extension and WebUI tabs could get combined into
-    // normal renderers.
+    // Create another WebUI tab.  It should share the process with omnibox.
+    // Note: intentionally create this tab after the normal tabs to exercise bug
+    // 43448 where extension and WebUI tabs could get combined into normal
+    // renderers.
     GURL history(chrome::kChromeUIHistoryURL);
     ui_test_utils::WindowedTabAddedNotificationObserver observer3(
         content::NotificationService::AllSources());
@@ -217,7 +218,7 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
     EXPECT_EQ(host_count, RenderProcessHostCount());
     EXPECT_EQ(tab2->GetMainFrame()->GetProcess(), rph1);
 
-    // Create a TYPE_EXTENSION tab.  It should be in its own process.
+    // Create an extension tab.  It should be in its own process.
     GURL extension_url("chrome-extension://" + extension->id());
     ui_test_utils::WindowedTabAddedNotificationObserver observer4(
         content::NotificationService::AllSources());
@@ -263,13 +264,13 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, MAYBE_ProcessPerTab) {
   int tab_count = 1;
   int host_count = 1;
 
-  // Change the first tab to be the new tab page (TYPE_WEBUI).
+  // Change the first tab to be a WebUI page.
   GURL omnibox(chrome::kChromeUIOmniboxURL);
   ui_test_utils::NavigateToURL(browser(), omnibox);
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
 
-  // Create a new TYPE_TABBED tab.  It should be in its own process.
+  // Create a new normal tab with a data URL.  It should be in its own process.
   GURL page1("data:text/html,hello world1");
   ui_test_utils::WindowedTabAddedNotificationObserver observer1(
       content::NotificationService::AllSources());
@@ -280,13 +281,16 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, MAYBE_ProcessPerTab) {
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
 
-  // Create another TYPE_TABBED tab.  It should share the previous process.
+  // Create another data URL tab.  With Site Isolation, this will require its
+  // own process, but without Site Isolation, it can share the previous process.
   GURL page2("data:text/html,hello world2");
   ui_test_utils::WindowedTabAddedNotificationObserver observer2(
       content::NotificationService::AllSources());
   ::ShowSingletonTab(browser(), page2);
   observer2.Wait();
   tab_count++;
+  if (content::AreAllSitesIsolatedForTesting())
+    host_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
 
@@ -534,21 +538,21 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
 class WindowDestroyer : public content::WebContentsObserver {
  public:
   WindowDestroyer(content::WebContents* web_contents, TabStripModel* model)
-      : content::WebContentsObserver(web_contents), tab_strip_model_(model) {}
+      : content::WebContentsObserver(web_contents),
+        tab_strip_model_(model),
+        browser_closed_observer_(chrome::NOTIFICATION_BROWSER_CLOSED,
+                                 content::NotificationService::AllSources()) {}
+
+  // Wait for the browser window to be destroyed.
+  void Wait() { browser_closed_observer_.Wait(); }
 
   void RenderProcessGone(base::TerminationStatus status) override {
-    // Wait for the window to be destroyed, which will ensure all other
-    // RenderViewHost objects are deleted before we return and proceed with
-    // the next iteration of notifications.
-    content::WindowedNotificationObserver observer(
-        chrome::NOTIFICATION_BROWSER_CLOSED,
-        content::NotificationService::AllSources());
     tab_strip_model_->CloseAllTabs();
-    observer.Wait();
   }
 
  private:
   TabStripModel* tab_strip_model_;
+  content::WindowedNotificationObserver browser_closed_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowDestroyer);
 };
@@ -582,16 +586,12 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
   // Create an object that will close the window on a process crash.
   WindowDestroyer destroyer(wc1, browser()->tab_strip_model());
 
-  content::WindowedNotificationObserver observer(
-      chrome::NOTIFICATION_BROWSER_CLOSED,
-      content::NotificationService::AllSources());
-
   // Kill the renderer process, simulating a crash. This should the ProcessDied
   // method to be called. Alternatively, RenderProcessHost::OnChannelError can
   // be called to directly force a call to ProcessDied.
-  wc1->GetMainFrame()->GetProcess()->Shutdown(-1, true);
+  wc1->GetMainFrame()->GetProcess()->Shutdown(-1);
 
-  observer.Wait();
+  destroyer.Wait();
 }
 
 // Sets up the browser in order to start the tests with two tabs open: one
@@ -619,7 +619,7 @@ class ChromeRenderProcessHostBackgroundingTest
 
     // Set up the server and get the test pages.
     base::FilePath test_data_dir;
-    ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+    ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
     embedded_test_server()->ServeFilesFromDirectory(
         test_data_dir.AppendASCII("chrome/test/data/"));
     audio_url_ = embedded_test_server()->GetURL("/extensions/loop_audio.html");
@@ -634,8 +634,10 @@ class ChromeRenderProcessHostBackgroundingTest
 
     // Create a new tab for the no audio page and confirm that the process of
     // each tab is different and that both are valid.
-    audio_process_ = ProcessFromHandle(
-        audio_tab_web_contents_->GetMainFrame()->GetProcess()->GetHandle());
+    audio_process_ = ProcessFromHandle(audio_tab_web_contents_->GetMainFrame()
+                                           ->GetProcess()
+                                           ->GetProcess()
+                                           .Handle());
     no_audio_process_ = ShowSingletonTab(no_audio_url_);
     ASSERT_NE(audio_process_.Pid(), no_audio_process_.Pid());
     ASSERT_TRUE(no_audio_process_.IsValid());

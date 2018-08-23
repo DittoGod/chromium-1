@@ -6,14 +6,14 @@
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_JOB_WRAPPER_H_
 
 #include "base/macros.h"
-#include "content/browser/loader/url_loader_request_handler.h"
+#include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/common/content_export.h"
 
 namespace content {
 
 class ServiceWorkerURLRequestJob;
-class ServiceWorkerURLLoaderJob;
+class ServiceWorkerNavigationLoader;
 class ServiceWorkerVersion;
 
 // This class is a helper to support having
@@ -22,9 +22,9 @@ class ServiceWorkerVersion;
 // non-S13nServiceWorker). It wraps either a
 // ServiceWorkerURLRequestJob or a callback for URLLoader and forwards to the
 // underlying implementation.
-class ServiceWorkerURLJobWrapper {
+class CONTENT_EXPORT ServiceWorkerURLJobWrapper {
  public:
-  // A helper used by the ServiceWorkerURLLoaderJob or
+  // A helper used by the ServiceWorkerNavigationLoader or
   // ServiceWorkerURLRequestJob.
   class CONTENT_EXPORT Delegate {
    public:
@@ -32,7 +32,7 @@ class ServiceWorkerURLJobWrapper {
 
     // Will be invoked before the request is restarted. The caller
     // can use this opportunity to grab state from the
-    // ServiceWorkerURLLoaderJob or ServiceWorkerURLRequestJob to determine
+    // ServiceWorkerNavigationLoader or ServiceWorkerURLRequestJob to determine
     // how it should behave when the request is restarted.
     virtual void OnPrepareToRestart() = 0;
 
@@ -51,6 +51,11 @@ class ServiceWorkerURLJobWrapper {
     // Called to signal that loading failed, and that the resource being loaded
     // was a main resource.
     virtual void MainResourceLoadFailed() {}
+
+    virtual void ReportDestination(
+        ServiceWorkerMetrics::MainResourceRequestDestination destination) {}
+
+    virtual void WillDispatchFetchEventForMainResource() {}
   };
 
   // Non-S13nServiceWorker.
@@ -59,7 +64,7 @@ class ServiceWorkerURLJobWrapper {
 
   // S13nServiceWorker.
   explicit ServiceWorkerURLJobWrapper(
-      std::unique_ptr<ServiceWorkerURLLoaderJob> url_loader_job);
+      std::unique_ptr<ServiceWorkerNavigationLoader> url_loader_job);
 
   ~ServiceWorkerURLJobWrapper();
 
@@ -72,6 +77,9 @@ class ServiceWorkerURLJobWrapper {
   // instead should fallback to the network.
   bool ShouldFallbackToNetwork();
 
+  // Returns true if this job should be forwarded to a service worker.
+  bool ShouldForwardToServiceWorker();
+
   // Tells the job to abort with a start error. Currently this is only called
   // because the controller was lost. This function could be made more generic
   // if needed later.
@@ -83,7 +91,7 @@ class ServiceWorkerURLJobWrapper {
  private:
   enum class JobType { kURLRequest, kURLLoader };
   base::WeakPtr<ServiceWorkerURLRequestJob> url_request_job_;
-  std::unique_ptr<ServiceWorkerURLLoaderJob> url_loader_job_;
+  std::unique_ptr<ServiceWorkerNavigationLoader> url_loader_job_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerURLJobWrapper);
 };

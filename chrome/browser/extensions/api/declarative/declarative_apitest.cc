@@ -5,18 +5,19 @@
 #include <stddef.h>
 
 #include <memory>
-
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/thread_test_helper.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/browser/api/declarative/rules_registry_service.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_rules_registry.h"
@@ -150,14 +151,29 @@ IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, PRE_PersistRules) {
   ASSERT_TRUE(RunExtensionTest("declarative/redirect_to_data")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, PersistRules) {
+// Disabled on Linux for flakiness: https://crbug.com/347159
+#if defined(OS_LINUX)
+#define MAYBE_PersistRules DISABLED_PersistRules
+#else
+#define MAYBE_PersistRules PersistRules
+#endif
+IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, MAYBE_PersistRules) {
   ui_test_utils::NavigateToURL(browser(), GURL(kArbitraryUrl));
   EXPECT_EQ(kTestTitle, GetTitle());
 }
 
+// Disabled for flakiness: http://crbug.com/851854
+#if defined(OS_MACOSX) && defined(ADDRESS_SANITIZER)
+#define MAYBE_ExtensionLifetimeRulesHandling \
+  DISABLED_ExtensionLifetimeRulesHandling
+#else
+#define MAYBE_ExtensionLifetimeRulesHandling ExtensionLifetimeRulesHandling
+#endif
+
 // Test that the rules are correctly persisted and (de)activated during
 // changing the "installed" and "enabled" status of an extension.
-IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, ExtensionLifetimeRulesHandling) {
+IN_PROC_BROWSER_TEST_F(DeclarativeApiTest,
+                       MAYBE_ExtensionLifetimeRulesHandling) {
   TestExtensionDir ext_dir;
 
   // 1. Install the extension. Rules should become active.
@@ -171,6 +187,9 @@ IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, ExtensionLifetimeRulesHandling) {
   const Extension* extension = InstallExtensionWithUIAutoConfirm(
       ext_dir.Pack(), 1 /*+1 installed extension*/, browser());
   ASSERT_TRUE(extension);
+  // Wait for declarative rules to be set up.
+  content::BrowserContext::GetDefaultStoragePartition(profile())
+      ->FlushNetworkInterfaceForTesting();
   std::string extension_id(extension->id());
   ASSERT_TRUE(ready.WaitUntilSatisfied());
   ui_test_utils::NavigateToURL(browser(), GURL(kArbitraryUrl));
@@ -220,10 +239,17 @@ IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, ExtensionLifetimeRulesHandling) {
   EXPECT_EQ(0u, NumberOfRegisteredRules(extension_id));
 }
 
-// When an extenion is uninstalled, the state store deletes all preferences
+// Disabled for flakiness: http://crbug.com/851854
+#if defined(OS_MACOSX) && defined(ADDRESS_SANITIZER)
+#define MAYBE_NoTracesAfterUninstalling DISABLED_NoTracesAfterUninstalling
+#else
+#define MAYBE_NoTracesAfterUninstalling NoTracesAfterUninstalling
+#endif
+
+// When an extension is uninstalled, the state store deletes all preferences
 // stored for that extension. We need to make sure we don't store anything after
 // that deletion occurs.
-IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, NoTracesAfterUninstalling) {
+IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, MAYBE_NoTracesAfterUninstalling) {
   TestExtensionDir ext_dir;
 
   // 1. Install the extension. Verify that rules become active and some prefs
@@ -238,6 +264,9 @@ IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, NoTracesAfterUninstalling) {
   const Extension* extension = InstallExtensionWithUIAutoConfirm(
       ext_dir.Pack(), 1 /*+1 installed extension*/, browser());
   ASSERT_TRUE(extension);
+  // Wait for declarative rules to be set up.
+  content::BrowserContext::GetDefaultStoragePartition(profile())
+      ->FlushNetworkInterfaceForTesting();
   std::string extension_id(extension->id());
   ASSERT_TRUE(ready.WaitUntilSatisfied());
   ui_test_utils::NavigateToURL(browser(), GURL(kArbitraryUrl));
@@ -248,6 +277,9 @@ IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, NoTracesAfterUninstalling) {
 
   // 2. Uninstall the extension. Rules are gone and preferences should be empty.
   UninstallExtension(extension_id);
+  // Wait for declarative rules to be removed.
+  content::BrowserContext::GetDefaultStoragePartition(profile())
+      ->FlushNetworkInterfaceForTesting();
   ui_test_utils::NavigateToURL(browser(), GURL(kArbitraryUrl));
   EXPECT_NE(kTestTitle, GetTitle());
   EXPECT_EQ(0u, NumberOfRegisteredRules(extension_id));

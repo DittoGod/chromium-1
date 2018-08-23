@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,31 +18,11 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "VerticalScrollbar",
-          "rect": [14, 37, 15, 68],
-          "reason": "appeared"
-        },
-        {
-          "object": "VerticalScrollbar",
-          "rect": [14, 37, 15, 68],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutListBox SELECT",
+          "object": "LayoutBlockFlow OPTION id='option'",
           "rect": [1, 37, 13, 17],
           "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow OPTION id='option'",
-      "reason": "style change"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "style change"
     }
   ]
 }

@@ -15,7 +15,7 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "media/capture/mojo/image_capture_types.h"
+#include "media/capture/mojom/image_capture_types.h"
 #include "media/capture/video/blob_utils.h"
 #include "media/capture/video_capture_types.h"
 #include "media/filters/jpeg_parser.h"
@@ -393,7 +393,9 @@ void FileVideoCaptureDevice::OnAllocateAndStart(
   DCHECK(!file_parser_);
   file_parser_ = GetVideoFileParser(file_path_, &capture_format_);
   if (!file_parser_) {
-    client_->OnError(FROM_HERE, "Could not open Video file");
+    client_->OnError(
+        VideoCaptureError::kFileVideoCaptureDeviceCouldNotOpenVideoFile,
+        FROM_HERE, "Could not open Video file");
     return;
   }
 

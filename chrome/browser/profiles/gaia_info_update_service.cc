@@ -16,9 +16,10 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/profile_management_switches.h"
 #include "components/signin/core/browser/signin_pref_names.h"
 #include "content/public/browser/notification_details.h"
@@ -38,9 +39,9 @@ const int kMinUpdateIntervalSeconds = 5;
 
 GAIAInfoUpdateService::GAIAInfoUpdateService(Profile* profile)
     : profile_(profile) {
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetForProfile(profile_);
-  signin_manager->AddObserver(this);
+  identity::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile_);
+  identity_manager->AddObserver(this);
 
   PrefService* prefs = profile_->GetPrefs();
   last_updated_ = base::Time::FromInternalValue(
@@ -54,9 +55,9 @@ GAIAInfoUpdateService::~GAIAInfoUpdateService() {
 
 void GAIAInfoUpdateService::Update() {
   // The user must be logged in.
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetForProfile(profile_);
-  if (!signin_manager->IsAuthenticated())
+  identity::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile_);
+  if (!identity_manager->HasPrimaryAccount())
     return;
 
   if (profile_image_downloader_)
@@ -85,8 +86,9 @@ Profile* GAIAInfoUpdateService::GetBrowserProfile() {
   return profile_;
 }
 
-std::string GAIAInfoUpdateService::GetCachedPictureURL() const {
-  return profile_->GetPrefs()->GetString(prefs::kProfileGAIAInfoPictureURL);
+GURL GAIAInfoUpdateService::GetCachedPictureURL() const {
+  return GURL(
+      profile_->GetPrefs()->GetString(prefs::kProfileGAIAInfoPictureURL));
 }
 
 bool GAIAInfoUpdateService::IsPreSignin() const {
@@ -110,7 +112,8 @@ void GAIAInfoUpdateService::OnProfileDownloadSuccess(
   SkBitmap bitmap = downloader->GetProfilePicture();
   ProfileDownloader::PictureStatus picture_status =
       downloader->GetProfilePictureStatus();
-  std::string picture_url = downloader->GetProfilePictureURL();
+  GURL picture_url = downloader->GetProfilePictureURL();
+  DCHECK(picture_url.is_valid());
 
   ProfileAttributesEntry* entry;
   if (!g_browser_process->profile_manager()->GetProfileAttributesStorage().
@@ -123,7 +126,7 @@ void GAIAInfoUpdateService::OnProfileDownloadSuccess(
 
   if (picture_status == ProfileDownloader::PICTURE_SUCCESS) {
     profile_->GetPrefs()->SetString(prefs::kProfileGAIAInfoPictureURL,
-                                    picture_url);
+                                    picture_url.spec());
     gfx::Image gfx_image = gfx::Image::CreateFrom1xBitmap(bitmap);
     entry->SetGAIAPicture(&gfx_image);
   } else if (picture_status == ProfileDownloader::PICTURE_DEFAULT) {
@@ -131,9 +134,10 @@ void GAIAInfoUpdateService::OnProfileDownloadSuccess(
   }
 
   const base::string16 hosted_domain = downloader->GetProfileHostedDomain();
-  profile_->GetPrefs()->SetString(prefs::kGoogleServicesHostedDomain,
-      (hosted_domain.empty() ? Profile::kNoHostedDomainFound :
-                               base::UTF16ToUTF8(hosted_domain)));
+  profile_->GetPrefs()->SetString(
+      prefs::kGoogleServicesHostedDomain,
+      (hosted_domain.empty() ? AccountTrackerService::kNoHostedDomainFound
+                             : base::UTF16ToUTF8(hosted_domain)));
 }
 
 void GAIAInfoUpdateService::OnProfileDownloadFailure(
@@ -162,6 +166,12 @@ void GAIAInfoUpdateService::OnUsernameChanged(const std::string& username) {
     entry->SetGAIAPicture(nullptr);
     // Unset the cached URL.
     profile_->GetPrefs()->ClearPref(prefs::kProfileGAIAInfoPictureURL);
+    if (profile_->GetPrefs()->GetInteger(prefs::kProfileLocalAvatarIndex) !=
+        -1) {
+      // Restore avatar from the local prefs.
+      entry->SetAvatarIconIndex(
+          profile_->GetPrefs()->GetInteger(prefs::kProfileLocalAvatarIndex));
+    }
   } else {
     // Update the new user's GAIA info.
     Update();
@@ -171,9 +181,9 @@ void GAIAInfoUpdateService::OnUsernameChanged(const std::string& username) {
 void GAIAInfoUpdateService::Shutdown() {
   timer_.Stop();
   profile_image_downloader_.reset();
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetForProfile(profile_);
-  signin_manager->RemoveObserver(this);
+  identity::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile_);
+  identity_manager->RemoveObserver(this);
 
   // OK to reset |profile_| pointer here because GAIAInfoUpdateService will not
   // access it again.  This pointer is also used to implement the delegate for
@@ -206,12 +216,12 @@ void GAIAInfoUpdateService::ScheduleNextUpdate() {
   timer_.Start(FROM_HERE, delta, this, &GAIAInfoUpdateService::Update);
 }
 
-void GAIAInfoUpdateService::GoogleSigninSucceeded(const std::string& account_id,
-                                                  const std::string& username) {
-  OnUsernameChanged(username);
+void GAIAInfoUpdateService::OnPrimaryAccountSet(
+    const AccountInfo& primary_account_info) {
+  OnUsernameChanged(primary_account_info.gaia);
 }
 
-void GAIAInfoUpdateService::GoogleSignedOut(const std::string& account_id,
-                                            const std::string& username) {
+void GAIAInfoUpdateService::OnPrimaryAccountCleared(
+    const AccountInfo& previous_primary_account_info) {
   OnUsernameChanged(std::string());
 }

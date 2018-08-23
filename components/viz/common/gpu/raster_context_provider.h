@@ -42,7 +42,8 @@ class VIZ_COMMON_EXPORT RasterContextProvider {
  public:
   class VIZ_COMMON_EXPORT ScopedRasterContextLock {
    public:
-    explicit ScopedRasterContextLock(RasterContextProvider* context_provider);
+    explicit ScopedRasterContextLock(RasterContextProvider* context_provider,
+                                     const char* url = nullptr);
     ~ScopedRasterContextLock();
 
     gpu::raster::RasterInterface* RasterInterface() {
@@ -53,6 +54,7 @@ class VIZ_COMMON_EXPORT RasterContextProvider {
     RasterContextProvider* const context_provider_;
     base::AutoLock context_lock_;
     std::unique_ptr<ContextCacheController::ScopedBusy> busy_;
+    const char* url_;
   };
 
   // RefCounted interface.
@@ -97,11 +99,6 @@ class VIZ_COMMON_EXPORT RasterContextProvider {
   // nullptr if a GrContext fails to initialize on this context.
   virtual class GrContext* GrContext() = 0;
 
-  // Invalidates the cached OpenGL state in GrContext.  The context provider
-  // must have been successfully bound to a thread before calling this.
-  // See skia GrContext::resetContext for details.
-  virtual void InvalidateGrContext(uint32_t state) = 0;
-
   // Returns the capabilities of the currently bound 3d context.  The context
   // provider must have been successfully bound to a thread before calling this.
   virtual const gpu::Capabilities& ContextCapabilities() const = 0;
@@ -110,6 +107,8 @@ class VIZ_COMMON_EXPORT RasterContextProvider {
   // context provider must have been successfully bound to a thread before
   // calling this.
   virtual const gpu::GpuFeatureInfo& GetGpuFeatureInfo() const = 0;
+
+  // TODO(vmiura): Hide ContextGL() & GrContext() behind some kind of lock.
 
   // Get a GLES2 interface to the 3d context.  The context provider must have
   // been successfully bound to a thread before calling this.

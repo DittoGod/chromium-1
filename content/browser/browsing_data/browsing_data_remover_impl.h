@@ -116,6 +116,7 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
     int origin_type_mask;
     std::unique_ptr<BrowsingDataFilterBuilder> filter_builder;
     Observer* observer;
+    base::Time task_started;
   };
 
   // Setter for |is_removing_|; DCHECKs that we can only start removing if we're
@@ -151,6 +152,11 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
   // that calls OnTaskComplete(). The Remover is complete once all the closures
   // created by this method have been invoked.
   base::OnceClosure CreatePendingTaskCompletionClosure();
+
+  // Same as CreatePendingTaskCompletionClosure() but guarantees that
+  // OnTaskComplete() is called if the task is dropped. That can typically
+  // happen when the connection is closed while an interface call is made.
+  base::OnceClosure CreatePendingTaskCompletionClosureForMojo();
 
   // Like GetWeakPtr(), but returns a weak pointer to BrowsingDataRemoverImpl
   // for internal purposes.
@@ -189,7 +195,7 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
   int num_pending_tasks_ = 0;
 
   // Observers of the global state and individual tasks.
-  base::ObserverList<Observer, true> observer_list_;
+  base::ObserverList<Observer, true>::Unchecked observer_list_;
 
   // We do not own this.
   StoragePartition* storage_partition_for_testing_;

@@ -14,13 +14,12 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/pickle.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/dbus/dbus_thread_linux.h"
 #include "chrome/grit/chromium_strings.h"
@@ -424,7 +423,7 @@ password_manager::PasswordStoreChangeList NativeBackendKWallet::AddLogin(
     forms.erase(it, forms.end());
   }
 
-  forms.push_back(base::MakeUnique<PasswordForm>(form));
+  forms.push_back(std::make_unique<PasswordForm>(form));
   changes.push_back(password_manager::PasswordStoreChange(
       password_manager::PasswordStoreChange::ADD, form));
 
@@ -457,7 +456,7 @@ bool NativeBackendKWallet::UpdateLogin(
     return true;
 
   forms.erase(it, forms.end());
-  forms.push_back(base::MakeUnique<PasswordForm>(form));
+  forms.push_back(std::make_unique<PasswordForm>(form));
   if (SetLoginsList(forms, form.signon_realm, wallet_handle)) {
     changes->push_back(password_manager::PasswordStoreChange(
         password_manager::PasswordStoreChange::UPDATE, form));
@@ -627,7 +626,7 @@ bool NativeBackendKWallet::GetLoginsList(
     for (const auto& form : all_forms) {
       auto it = update_forms.find(form->signon_realm);
       if (it != update_forms.end())
-        it->second.push_back(base::MakeUnique<PasswordForm>(*form));
+        it->second.push_back(std::make_unique<PasswordForm>(*form));
     }
 
     // Update the backend.

@@ -24,7 +24,6 @@
 #include "content/browser/dom_storage/dom_storage_task_runner.h"
 #include "content/browser/dom_storage/session_storage_database.h"
 #include "content/browser/dom_storage/session_storage_database_adapter.h"
-#include "content/browser/leveldb_wrapper_impl.h"
 #include "content/common/dom_storage/dom_storage_map.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "content/public/browser/browser_thread.h"
@@ -38,14 +37,10 @@ namespace content {
 
 namespace {
 
-// Delay for a moment after a value is set in anticipation
-// of other values being set, so changes are batched.
-const int kCommitDefaultDelaySecs = 5;
-
 // To avoid excessive IO we apply limits to the amount of data being written
 // and the frequency of writes. The specific values used are somewhat arbitrary.
-const int kMaxBytesPerHour = kPerStorageAreaQuota;
-const int kMaxCommitsPerHour = 60;
+constexpr int kMaxBytesPerHour = kPerStorageAreaQuota;
+constexpr int kMaxCommitsPerHour = 60;
 
 }  // namespace
 
@@ -91,7 +86,7 @@ const base::FilePath::CharType DOMStorageArea::kDatabaseFileExtension[] =
 // static
 base::FilePath DOMStorageArea::DatabaseFileNameFromOrigin(
     const url::Origin& origin) {
-  std::string filename = storage::GetIdentifierFromOrigin(origin.GetURL());
+  std::string filename = storage::GetIdentifierFromOrigin(origin);
   // There is no base::FilePath.AppendExtension() method, so start with just the
   // extension as the filename, and then InsertBeforeExtension the desired
   // name.
@@ -105,12 +100,11 @@ url::Origin DOMStorageArea::OriginFromDatabaseFileName(
   DCHECK(name.MatchesExtension(kDatabaseFileExtension));
   std::string origin_id =
       name.BaseName().RemoveExtension().MaybeAsASCII();
-  return url::Origin::Create(storage::GetOriginFromIdentifier(origin_id));
+  return storage::GetOriginFromIdentifier(origin_id);
 }
 
 void DOMStorageArea::EnableAggressiveCommitDelay() {
   s_aggressive_flushing_enabled_ = true;
-  LevelDBWrapperImpl::EnableAggressiveCommitDelay();
 }
 
 DOMStorageArea::DOMStorageArea(const std::string& namespace_id,
@@ -581,11 +575,16 @@ base::TimeDelta DOMStorageArea::ComputeCommitDelay() const {
   if (s_aggressive_flushing_enabled_)
     return base::TimeDelta::FromSeconds(1);
 
+  // Delay for a moment after a value is set in anticipation
+  // of other values being set, so changes are batched.
+  static constexpr base::TimeDelta kCommitDefaultDelaySecs =
+      base::TimeDelta::FromSeconds(5);
+
   base::TimeDelta elapsed_time = base::TimeTicks::Now() - start_time_;
-  base::TimeDelta delay = std::max(
-      base::TimeDelta::FromSeconds(kCommitDefaultDelaySecs),
-      std::max(commit_rate_limiter_.ComputeDelayNeeded(elapsed_time),
-               data_rate_limiter_.ComputeDelayNeeded(elapsed_time)));
+  base::TimeDelta delay =
+      std::max(kCommitDefaultDelaySecs,
+               std::max(commit_rate_limiter_.ComputeDelayNeeded(elapsed_time),
+                        data_rate_limiter_.ComputeDelayNeeded(elapsed_time)));
   UMA_HISTOGRAM_LONG_TIMES("LocalStorage.CommitDelay", delay);
   return delay;
 }

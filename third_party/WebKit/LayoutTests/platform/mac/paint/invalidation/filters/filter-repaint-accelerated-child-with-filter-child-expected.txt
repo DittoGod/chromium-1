@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -27,7 +28,7 @@
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='resize' class='drop-shadow'",
-          "rect": [-2, -2, 260, 260],
+          "rect": [0, 0, 212, 257],
           "reason": "geometry"
         }
       ],
@@ -43,12 +44,6 @@
         [0, 0, 1, 0],
         [-4, -4, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='resize' class='drop-shadow'",
-      "reason": "geometry"
     }
   ]
 }

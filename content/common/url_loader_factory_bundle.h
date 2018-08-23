@@ -10,7 +10,7 @@
 
 #include "base/macros.h"
 #include "content/common/content_export.h"
-#include "content/public/common/shared_url_loader_factory.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 class GURL;
@@ -20,13 +20,14 @@ namespace content {
 // Holds the internal state of a URLLoaderFactoryBundle in a form that is safe
 // to pass across sequences.
 class CONTENT_EXPORT URLLoaderFactoryBundleInfo
-    : public SharedURLLoaderFactoryInfo {
+    : public network::SharedURLLoaderFactoryInfo {
  public:
   URLLoaderFactoryBundleInfo();
   URLLoaderFactoryBundleInfo(
       network::mojom::URLLoaderFactoryPtrInfo default_factory_info,
       std::map<std::string, network::mojom::URLLoaderFactoryPtrInfo>
-          factories_info);
+          factories_info,
+      bool bypass_redirect_checks);
   ~URLLoaderFactoryBundleInfo() override;
 
   network::mojom::URLLoaderFactoryPtrInfo& default_factory_info() {
@@ -38,20 +39,27 @@ class CONTENT_EXPORT URLLoaderFactoryBundleInfo
     return factories_info_;
   }
 
+  bool bypass_redirect_checks() const { return bypass_redirect_checks_; }
+  void set_bypass_redirect_checks(bool bypass_redirect_checks) {
+    bypass_redirect_checks_ = bypass_redirect_checks;
+  }
+
  protected:
   // SharedURLLoaderFactoryInfo implementation.
-  scoped_refptr<SharedURLLoaderFactory> CreateFactory() override;
+  scoped_refptr<network::SharedURLLoaderFactory> CreateFactory() override;
 
   network::mojom::URLLoaderFactoryPtrInfo default_factory_info_;
   std::map<std::string, network::mojom::URLLoaderFactoryPtrInfo>
       factories_info_;
+  bool bypass_redirect_checks_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(URLLoaderFactoryBundleInfo);
 };
 
 // Encapsulates a collection of URLLoaderFactoryPtrs which can be usd to acquire
 // loaders for various types of resource requests.
-class CONTENT_EXPORT URLLoaderFactoryBundle : public SharedURLLoaderFactory {
+class CONTENT_EXPORT URLLoaderFactoryBundle
+    : public network::SharedURLLoaderFactory {
  public:
   URLLoaderFactoryBundle();
 
@@ -80,8 +88,9 @@ class CONTENT_EXPORT URLLoaderFactoryBundle : public SharedURLLoaderFactory {
                             network::mojom::URLLoaderClientPtr client,
                             const net::MutableNetworkTrafficAnnotationTag&
                                 traffic_annotation) override;
-
-  std::unique_ptr<SharedURLLoaderFactoryInfo> Clone() override;
+  void Clone(network::mojom::URLLoaderFactoryRequest request) override;
+  std::unique_ptr<network::SharedURLLoaderFactoryInfo> Clone() override;
+  bool BypassRedirectChecks() const override;
 
   // The |info| contains replacement factories for a subset of the existing
   // bundle.
@@ -92,6 +101,7 @@ class CONTENT_EXPORT URLLoaderFactoryBundle : public SharedURLLoaderFactory {
 
   network::mojom::URLLoaderFactoryPtr default_factory_;
   std::map<std::string, network::mojom::URLLoaderFactoryPtr> factories_;
+  bool bypass_redirect_checks_ = false;
 };
 
 }  // namespace content

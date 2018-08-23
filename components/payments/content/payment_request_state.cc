@@ -20,6 +20,7 @@
 #include "components/payments/content/payment_response_helper.h"
 #include "components/payments/content/service_worker_payment_instrument.h"
 #include "components/payments/core/autofill_payment_instrument.h"
+#include "components/payments/core/features.h"
 #include "components/payments/core/journey_logger.h"
 #include "components/payments/core/payment_instrument.h"
 #include "components/payments/core/payment_request_data_util.h"
@@ -45,6 +46,8 @@ PaymentRequestState::PaymentRequestState(
       delegate_(delegate),
       personal_data_manager_(personal_data_manager),
       journey_logger_(journey_logger),
+      are_requested_methods_supported_(
+          !spec_->supported_card_networks().empty()),
       selected_shipping_profile_(nullptr),
       selected_shipping_option_error_profile_(nullptr),
       selected_contact_profile_(nullptr),
@@ -53,12 +56,15 @@ PaymentRequestState::PaymentRequestState(
       payment_request_delegate_(payment_request_delegate),
       profile_comparator_(app_locale, *spec),
       weak_ptr_factory_(this) {
-  if (base::FeatureList::IsEnabled(features::kServiceWorkerPaymentApps)) {
+  if (base::FeatureList::IsEnabled(::features::kServiceWorkerPaymentApps)) {
+    DCHECK(web_contents);
     get_all_instruments_finished_ = false;
     ServiceWorkerPaymentAppFactory::GetInstance()->GetAllPaymentApps(
         web_contents,
         payment_request_delegate_->GetPaymentManifestWebDataService(),
         spec_->method_data(),
+        /*may_crawl_for_installable_payment_apps=*/
+        !spec_->supports_basic_card(),
         base::BindOnce(&PaymentRequestState::GetAllPaymentAppsCallback,
                        weak_ptr_factory_.GetWeakPtr(), web_contents,
                        top_level_origin, frame_origin),
@@ -136,6 +142,7 @@ void PaymentRequestState::FinishedGetAllSWPaymentInstruments() {
   SetDefaultProfileSelections();
 
   get_all_instruments_finished_ = true;
+  are_requested_methods_supported_ |= !available_instruments_.empty();
   NotifyOnGetAllPaymentInstrumentsFinished();
 
   // Fullfill the pending CanMakePayment call.
@@ -204,8 +211,7 @@ void PaymentRequestState::CheckRequestedMethodsSupported(
     StatusCallback callback) {
   DCHECK(get_all_instruments_finished_);
 
-  std::move(callback).Run(!spec_->supported_card_networks().empty() ||
-                          !available_instruments_.empty());
+  std::move(callback).Run(are_requested_methods_supported_);
 }
 
 std::string PaymentRequestState::GetAuthenticatedEmail() const {
@@ -412,7 +418,9 @@ void PaymentRequestState::PopulateProfileCache() {
   // Create the list of available instruments. A copy of each card will be made
   // by their respective AutofillPaymentInstrument.
   const std::vector<autofill::CreditCard*>& cards =
-      personal_data_manager_->GetCreditCardsToSuggest();
+      personal_data_manager_->GetCreditCardsToSuggest(
+          /*include_server_cards=*/base::FeatureList::IsEnabled(
+              payments::features::kReturnGooglePayInBasicCard));
   for (autofill::CreditCard* card : cards)
     AddAutofillPaymentInstrument(/*selected=*/false, *card);
 }

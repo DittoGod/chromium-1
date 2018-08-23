@@ -36,7 +36,7 @@ class AwRenderThreadContextProvider
  public:
   static scoped_refptr<AwRenderThreadContextProvider> Create(
       scoped_refptr<gl::GLSurface> surface,
-      scoped_refptr<gpu::InProcessCommandBuffer::Service> service);
+      scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor);
 
   // Gives the GL internal format that should be used for calling CopyTexImage2D
   // on the default framebuffer.
@@ -52,7 +52,6 @@ class AwRenderThreadContextProvider
   gpu::ContextSupport* ContextSupport() override;
   class GrContext* GrContext() override;
   viz::ContextCacheController* CacheController() override;
-  void InvalidateGrContext(uint32_t state) override;
   base::Lock* GetLock() override;
   void AddObserver(viz::ContextLostObserver* obs) override;
   void RemoveObserver(viz::ContextLostObserver* obs) override;
@@ -62,7 +61,7 @@ class AwRenderThreadContextProvider
 
   AwRenderThreadContextProvider(
       scoped_refptr<gl::GLSurface> surface,
-      scoped_refptr<gpu::InProcessCommandBuffer::Service> service);
+      scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor);
   ~AwRenderThreadContextProvider() override;
 
  private:
@@ -75,7 +74,7 @@ class AwRenderThreadContextProvider
   sk_sp<class GrContext> gr_context_;
   std::unique_ptr<viz::ContextCacheController> cache_controller_;
 
-  base::ObserverList<viz::ContextLostObserver> observers_;
+  base::ObserverList<viz::ContextLostObserver>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(AwRenderThreadContextProvider);
 };

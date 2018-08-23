@@ -9,10 +9,12 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
+import android.graphics.drawable.BitmapDrawable;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.util.DisplayMetrics;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.blink_public.platform.WebDisplayMode;
@@ -38,6 +40,7 @@ public class WebApkInfo extends WebappInfo {
     private static final String TAG = "WebApkInfo";
 
     private Icon mBadgeIcon;
+    private Icon mSplashIcon;
     private String mApkPackageName;
     private int mShellApkVersion;
     private String mManifestUrl;
@@ -139,14 +142,16 @@ public class WebApkInfo extends WebappInfo {
         Map<String, String> iconUrlToMurmur2HashMap = getIconUrlAndIconMurmur2HashMap(bundle);
 
         int primaryIconId = IntentUtils.safeGetInt(bundle, WebApkMetaDataKeys.ICON_ID, 0);
-        Bitmap primaryIcon = decodeImageResource(res, primaryIconId);
+        Bitmap primaryIcon = decodeBitmapFromDrawable(res, primaryIconId);
 
         int badgeIconId = IntentUtils.safeGetInt(bundle, WebApkMetaDataKeys.BADGE_ICON_ID, 0);
-        Bitmap badgeIcon = decodeImageResource(res, badgeIconId);
+        Bitmap badgeIcon = decodeBitmapFromDrawable(res, badgeIconId);
+
+        Bitmap splashIcon = decodeSplashIcon(bundle, res, primaryIconId);
 
         return create(WebApkConstants.WEBAPK_ID_PREFIX + webApkPackageName, url, scope,
-                new Icon(primaryIcon), new Icon(badgeIcon), name, shortName, displayMode,
-                orientation, source, themeColor, backgroundColor, webApkPackageName,
+                new Icon(primaryIcon), new Icon(badgeIcon), new Icon(splashIcon), name, shortName,
+                displayMode, orientation, source, themeColor, backgroundColor, webApkPackageName,
                 shellApkVersion, manifestUrl, manifestStartUrl, iconUrlToMurmur2HashMap,
                 forceNavigation);
     }
@@ -159,6 +164,7 @@ public class WebApkInfo extends WebappInfo {
      * @param scope                   Scope for the WebAPK.
      * @param primaryIcon             Primary icon to show for the WebAPK.
      * @param badgeIcon               Badge icon to use for notifications.
+     * @param splashIcon              Splash icon to use for the splash screen.
      * @param name                    Name of the WebAPK.
      * @param shortName               The short name of the WebAPK.
      * @param displayMode             Display mode of the WebAPK.
@@ -178,9 +184,9 @@ public class WebApkInfo extends WebappInfo {
      *                                WebAPK is already open.
      */
     public static WebApkInfo create(String id, String url, String scope, Icon primaryIcon,
-            Icon badgeIcon, String name, String shortName, @WebDisplayMode int displayMode,
-            int orientation, int source, long themeColor, long backgroundColor,
-            String webApkPackageName, int shellApkVersion, String manifestUrl,
+            Icon badgeIcon, Icon splashIcon, String name, String shortName,
+            @WebDisplayMode int displayMode, int orientation, int source, long themeColor,
+            long backgroundColor, String webApkPackageName, int shellApkVersion, String manifestUrl,
             String manifestStartUrl, Map<String, String> iconUrlToMurmur2HashMap,
             boolean forceNavigation) {
         if (id == null || url == null || manifestStartUrl == null || webApkPackageName == null) {
@@ -197,21 +203,23 @@ public class WebApkInfo extends WebappInfo {
             scope = ShortcutHelper.getScopeFromUrl(manifestStartUrl);
         }
 
-        return new WebApkInfo(id, url, scope, primaryIcon, badgeIcon, name, shortName, displayMode,
-                orientation, source, themeColor, backgroundColor, webApkPackageName,
+        return new WebApkInfo(id, url, scope, primaryIcon, badgeIcon, splashIcon, name, shortName,
+                displayMode, orientation, source, themeColor, backgroundColor, webApkPackageName,
                 shellApkVersion, manifestUrl, manifestStartUrl, iconUrlToMurmur2HashMap,
                 forceNavigation);
     }
 
     protected WebApkInfo(String id, String url, String scope, Icon primaryIcon, Icon badgeIcon,
-            String name, String shortName, @WebDisplayMode int displayMode, int orientation,
-            int source, long themeColor, long backgroundColor, String webApkPackageName,
-            int shellApkVersion, String manifestUrl, String manifestStartUrl,
-            Map<String, String> iconUrlToMurmur2HashMap, boolean forceNavigation) {
+            Icon splashIcon, String name, String shortName, @WebDisplayMode int displayMode,
+            int orientation, int source, long themeColor, long backgroundColor,
+            String webApkPackageName, int shellApkVersion, String manifestUrl,
+            String manifestStartUrl, Map<String, String> iconUrlToMurmur2HashMap,
+            boolean forceNavigation) {
         super(id, url, scope, primaryIcon, name, shortName, displayMode, orientation, source,
                 themeColor, backgroundColor, null /* splash_screen_url */,
                 false /* isIconGenerated */, forceNavigation);
         mBadgeIcon = badgeIcon;
+        mSplashIcon = splashIcon;
         mApkPackageName = webApkPackageName;
         mShellApkVersion = shellApkVersion;
         mManifestUrl = manifestUrl;
@@ -226,6 +234,13 @@ public class WebApkInfo extends WebappInfo {
      */
     public Bitmap badgeIcon() {
         return (mBadgeIcon == null) ? null : mBadgeIcon.decoded();
+    }
+
+    /**
+     * Returns the splash icon in Bitmap form.
+     */
+    public Bitmap splashIcon() {
+        return (mSplashIcon == null) ? null : mSplashIcon.decoded();
     }
 
     @Override
@@ -276,10 +291,79 @@ public class WebApkInfo extends WebappInfo {
     }
 
     /**
-     * Decodes bitmap from WebAPK's resources.
+     * Decodes bitmap drawable from WebAPK's resources. This should also be used for XML aliases.
      */
-    private static Bitmap decodeImageResource(Resources webApkResources, int resourceId) {
-        return BitmapFactory.decodeResource(webApkResources, resourceId);
+    private static Bitmap decodeBitmapFromDrawable(Resources webApkResources, int resourceId) {
+        if (resourceId == 0) {
+            return null;
+        }
+        try {
+            BitmapDrawable bitmapDrawable =
+                    (BitmapDrawable) ApiCompatibilityUtils.getDrawable(webApkResources, resourceId);
+            return bitmapDrawable != null ? bitmapDrawable.getBitmap() : null;
+        } catch (Resources.NotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Decodes a bitmap drawable from the WebAPK's resources for a specific density.
+     */
+    private static Bitmap decodeBitmapFromDrawableForDensity(
+            Resources webApkResources, int resourceId, int density) {
+        if (resourceId == 0) {
+            return null;
+        }
+        try {
+            BitmapDrawable bitmapDrawable =
+                    (BitmapDrawable) ApiCompatibilityUtils.getDrawableForDensity(
+                            webApkResources, resourceId, density);
+            return bitmapDrawable != null ? bitmapDrawable.getBitmap() : null;
+        } catch (Resources.NotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Computes the density of app icon to use for the splash screen based on the device density.
+     */
+    private static int computeDensityforSplashIcon(int deviceDensity) {
+        if (deviceDensity < DisplayMetrics.DENSITY_HIGH) {
+            return DisplayMetrics.DENSITY_XHIGH;
+        }
+        if (deviceDensity < DisplayMetrics.DENSITY_XHIGH) {
+            return DisplayMetrics.DENSITY_XXHIGH;
+        }
+        return DisplayMetrics.DENSITY_XXXHIGH;
+    }
+
+    /**
+     * Decodes a splash icon with logic dependent on the device's density.
+     */
+    private static Bitmap decodeSplashIcon(
+            Bundle bundle, Resources webApkResources, int appIconId) {
+        DisplayMetrics metrics = webApkResources.getDisplayMetrics();
+        if (metrics == null) {
+            // We have no basis on which to choose a higher DPI, so default to primary icon.
+            return null;
+        }
+        int deviceDensity = metrics.densityDpi;
+        int splashIconId = IntentUtils.safeGetInt(bundle, WebApkMetaDataKeys.SPLASH_ID, 0);
+        boolean hasLargeSplashIcons = IntentUtils.safeGetBoolean(
+                bundle, WebApkMetaDataKeys.HAS_LARGE_SPLASH_ICONS, false);
+
+        if (deviceDensity >= DisplayMetrics.DENSITY_XXHIGH && hasLargeSplashIcons) {
+            // If the server was able to provide larger splash icons we use those. This can be
+            // one or both of xxhdpi and xxxhdpi. If only one exists the up/down sampling is only
+            // for a single density and will still look good.
+            return decodeBitmapFromDrawable(webApkResources, splashIconId);
+        }
+        // If there is no drawable for a density this will down-sample or up-sample whatever app
+        // icons are provided to fit the target density. This can result in lower graphical
+        // fidelity; however, Chrome already does this for xxxhdpi icons in most cases so this isn't
+        // a concern.
+        return decodeBitmapFromDrawableForDensity(
+                webApkResources, appIconId, computeDensityforSplashIcon(deviceDensity));
     }
 
     /**

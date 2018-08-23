@@ -63,9 +63,7 @@ class TestImageController : public ImageController {
 
 class DecodedImageTrackerTest : public testing::Test {
  public:
-  void SetUp() override {
-    decoded_image_tracker_.set_image_controller(image_controller());
-  }
+  DecodedImageTrackerTest() : decoded_image_tracker_(&image_controller_) {}
 
   TestImageController* image_controller() { return &image_controller_; }
   DecodedImageTracker* decoded_image_tracker() {
@@ -108,13 +106,13 @@ TEST_F(DecodedImageTrackerTest, NotifyFrameFinishedUnlocksImages) {
   // space differs then that image is not locked. Note that we use the high
   // filter quality here, since it shouldn't matter and the checks should
   // succeed anyway.
-  DrawImage locked_draw_image(paint_image, SkIRect::MakeWH(1, 1),
-                              kHigh_SkFilterQuality, SkMatrix::I(),
-                              paint_image.frame_index(), decoded_color_space);
+  DrawImage locked_draw_image(
+      paint_image, SkIRect::MakeWH(1, 1), kHigh_SkFilterQuality, SkMatrix::I(),
+      PaintImage::kDefaultFrameIndex, decoded_color_space);
   EXPECT_TRUE(image_controller()->IsDrawImageLocked(locked_draw_image));
   DrawImage srgb_draw_image(paint_image, SkIRect::MakeWH(1, 1),
                             kHigh_SkFilterQuality, SkMatrix::I(),
-                            paint_image.frame_index(), srgb_color_space);
+                            PaintImage::kDefaultFrameIndex, srgb_color_space);
   EXPECT_FALSE(image_controller()->IsDrawImageLocked(srgb_draw_image));
 
   locked = false;

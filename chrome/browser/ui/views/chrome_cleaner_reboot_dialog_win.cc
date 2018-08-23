@@ -10,7 +10,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -70,15 +70,17 @@ void ChromeCleanerRebootDialog::Show(Browser* browser) {
       this, nullptr, browser->window()->GetNativeWindow());
   widget->SetBounds(GetDialogBounds(browser));
   widget->Show();
-
-  dialog_controller_->DialogShown();
 }
 
 // WidgetDelegate overrides.
 
 ui::ModalType ChromeCleanerRebootDialog::GetModalType() const {
-  return safe_browsing::IsRebootPromptModal() ? ui::MODAL_TYPE_WINDOW
-                                              : ui::MODAL_TYPE_NONE;
+  safe_browsing::RebootPromptType prompt_type =
+      safe_browsing::GetRebootPromptType();
+  DCHECK_NE(safe_browsing::REBOOT_PROMPT_TYPE_OPEN_SETTINGS_PAGE, prompt_type);
+  return prompt_type == safe_browsing::REBOOT_PROMPT_TYPE_SHOW_MODAL_DIALOG
+             ? ui::MODAL_TYPE_WINDOW
+             : ui::MODAL_TYPE_NONE;
 }
 
 base::string16 ChromeCleanerRebootDialog::GetWindowTitle() const {

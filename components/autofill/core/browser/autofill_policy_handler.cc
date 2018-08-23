@@ -5,7 +5,7 @@
 #include "components/autofill/core/browser/autofill_policy_handler.h"
 
 #include "base/values.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_value_map.h"
@@ -22,9 +22,13 @@ void AutofillPolicyHandler::ApplyPolicySettings(
     const policy::PolicyMap& policies,
     PrefValueMap* prefs) {
   const base::Value* value = policies.GetValue(policy_name());
-  bool auto_fill_enabled;
-  if (value && value->GetAsBoolean(&auto_fill_enabled) && !auto_fill_enabled)
-    prefs->SetBoolean(autofill::prefs::kAutofillEnabled, false);
+  bool autofill_enabled;
+  if (value && value->GetAsBoolean(&autofill_enabled) && !autofill_enabled) {
+    prefs->SetBoolean(autofill::prefs::kAutofillEnabledDeprecated, false);
+    // Disable the fine-grained prefs if the master pref is disabled by policy.
+    prefs->SetBoolean(autofill::prefs::kAutofillCreditCardEnabled, false);
+    prefs->SetBoolean(autofill::prefs::kAutofillProfileEnabled, false);
+  }
 }
 
 }  // namespace autofill

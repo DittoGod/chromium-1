@@ -11,18 +11,19 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "components/arc/arc_util.h"
 #include "components/arc/ime/arc_ime_bridge_impl.h"
-#include "components/exo/shell_surface.h"
-#include "components/exo/surface.h"
 #include "components/exo/wm_helper.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ime/input_method.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/range/range.h"
+#include "ui/keyboard/keyboard_controller.h"
 
 namespace arc {
 
@@ -45,14 +46,18 @@ class ArcWindowDelegateImpl : public ArcImeService::ArcWindowDelegate {
 
   ~ArcWindowDelegateImpl() override = default;
 
-  bool IsArcWindow(
-      const aura::Window* window) const override {
-    return exo::Surface::AsSurface(window) ||
-           exo::ShellSurface::GetMainSurface(window);
+  bool IsInArcAppWindow(const aura::Window* window) const override {
+    for (; window; window = window->parent()) {
+      if (IsArcAppWindow(window))
+        return true;
+    }
+    return false;
   }
 
   void RegisterFocusObserver() override {
-    DCHECK(exo::WMHelper::HasInstance());
+    // WMHelper is not created in tests.
+    if (!exo::WMHelper::HasInstance())
+      return;
     exo::WMHelper::GetInstance()->AddFocusObserver(ime_service_);
   }
 
@@ -112,12 +117,11 @@ ArcImeService::ArcImeService(content::BrowserContext* context,
     : ime_bridge_(new ArcImeBridgeImpl(this, bridge_service)),
       arc_window_delegate_(new ArcWindowDelegateImpl(this)),
       ime_type_(ui::TEXT_INPUT_TYPE_NONE),
-      has_composition_text_(false),
-      keyboard_controller_(nullptr),
-      is_focus_observer_installed_(false) {
-  aura::Env* env = aura::Env::GetInstanceDontCreate();
-  if (env)
-    env->AddObserver(this);
+      is_personalized_learning_allowed_(false),
+      has_composition_text_(false) {
+  if (aura::Env::HasInstance())
+    aura::Env::GetInstance()->AddObserver(this);
+  arc_window_delegate_->RegisterFocusObserver();
 }
 
 ArcImeService::~ArcImeService() {
@@ -127,16 +131,16 @@ ArcImeService::~ArcImeService() {
 
   if (focused_arc_window_)
     focused_arc_window_->RemoveObserver(this);
-  if (is_focus_observer_installed_)
-    arc_window_delegate_->UnregisterFocusObserver();
-  aura::Env* env = aura::Env::GetInstanceDontCreate();
-  if (env)
-    env->RemoveObserver(this);
-  // Removing |this| from KeyboardController.
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  if (keyboard_controller && keyboard_controller_ == keyboard_controller) {
-    keyboard_controller_->RemoveObserver(this);
+  arc_window_delegate_->UnregisterFocusObserver();
+  if (aura::Env::HasInstance())
+    aura::Env::GetInstance()->RemoveObserver(this);
+
+  // KeyboardController is destroyed before ArcImeService (except in tests),
+  // so check whether there is a KeyboardController first before removing |this|
+  // from KeyboardController observers.
+  if (keyboard::KeyboardController::HasInstance()) {
+    auto* keyboard_controller = keyboard::KeyboardController::Get();
+    keyboard_controller->RemoveObserver(this);
   }
 }
 
@@ -173,18 +177,15 @@ void ArcImeService::ReattachInputMethod(aura::Window* old_window,
 // Overridden from aura::EnvObserver:
 
 void ArcImeService::OnWindowInitialized(aura::Window* new_window) {
-  if (arc_window_delegate_->IsArcWindow(new_window)) {
-    if (!is_focus_observer_installed_) {
-      arc_window_delegate_->RegisterFocusObserver();
-      is_focus_observer_installed_ = true;
+  // TODO(mash): Support virtual keyboard under MASH. There is no
+  // KeyboardController in the browser process under MASH.
+  if (features::IsAshInBrowserProcess() &&
+      keyboard::KeyboardController::HasInstance()) {
+    auto* keyboard_controller = keyboard::KeyboardController::Get();
+    if (keyboard_controller->enabled() &&
+        !keyboard_controller->HasObserver(this)) {
+      keyboard_controller->AddObserver(this);
     }
-  }
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  if (keyboard_controller && keyboard_controller_ != keyboard_controller) {
-    // Registering |this| as an observer only once per KeyboardController.
-    keyboard_controller_ = keyboard_controller;
-    keyboard_controller_->AddObserver(this);
   }
 }
 
@@ -215,8 +216,7 @@ void ArcImeService::OnWindowFocused(aura::Window* gained_focus,
     return;
 
   const bool detach = (lost_focus && focused_arc_window_ == lost_focus);
-  const bool attach =
-      (gained_focus && arc_window_delegate_->IsArcWindow(gained_focus));
+  const bool attach = arc_window_delegate_->IsInArcAppWindow(gained_focus);
 
   if (detach) {
     focused_arc_window_->RemoveObserver(this);
@@ -234,21 +234,26 @@ void ArcImeService::OnWindowFocused(aura::Window* gained_focus,
 ////////////////////////////////////////////////////////////////////////////////
 // Overridden from arc::ArcImeBridge::Delegate
 
-void ArcImeService::OnTextInputTypeChanged(ui::TextInputType type) {
-  if (ime_type_ == type)
+void ArcImeService::OnTextInputTypeChanged(
+    ui::TextInputType type,
+    bool is_personalized_learning_allowed) {
+  if (ime_type_ == type &&
+      is_personalized_learning_allowed_ == is_personalized_learning_allowed) {
     return;
+  }
   ime_type_ = type;
+  is_personalized_learning_allowed_ = is_personalized_learning_allowed;
 
   ui::InputMethod* const input_method = GetInputMethod();
   if (input_method)
     input_method->OnTextInputTypeChanged(this);
 }
 
-void ArcImeService::OnCursorRectChanged(const gfx::Rect& rect) {
+void ArcImeService::OnCursorRectChanged(const gfx::Rect& rect,
+                                        bool is_screen_coordinates) {
   InvalidateSurroundingTextAndSelectionRange();
-  if (cursor_rect_ == rect)
+  if (!UpdateCursorRect(rect, is_screen_coordinates))
     return;
-  cursor_rect_ = rect;
 
   ui::InputMethod* const input_method = GetInputMethod();
   if (input_method)
@@ -262,10 +267,10 @@ void ArcImeService::OnCancelComposition() {
     input_method->CancelComposition(this);
 }
 
-void ArcImeService::ShowImeIfNeeded() {
+void ArcImeService::ShowVirtualKeyboardIfEnabled() {
   ui::InputMethod* const input_method = GetInputMethod();
   if (input_method && input_method->GetTextInputClient() == this) {
-    input_method->ShowImeIfNeeded();
+    input_method->ShowVirtualKeyboardIfEnabled();
   }
 }
 
@@ -273,18 +278,29 @@ void ArcImeService::OnCursorRectChangedWithSurroundingText(
     const gfx::Rect& rect,
     const gfx::Range& text_range,
     const base::string16& text_in_range,
-    const gfx::Range& selection_range) {
+    const gfx::Range& selection_range,
+    bool is_screen_coordinates) {
   text_range_ = text_range;
   text_in_range_ = text_in_range;
   selection_range_ = selection_range;
 
-  if (cursor_rect_ == rect)
+  if (!UpdateCursorRect(rect, is_screen_coordinates))
     return;
-  cursor_rect_ = rect;
 
   ui::InputMethod* const input_method = GetInputMethod();
   if (input_method)
     input_method->OnCaretBoundsChanged(this);
+}
+
+void ArcImeService::RequestHideIme() {
+  // TODO(mash): Support virtual keyboard under MASH. There is no
+  // KeyboardController in the browser process under MASH.
+  if (features::IsAshInBrowserProcess() &&
+      keyboard::KeyboardController::HasInstance()) {
+    auto* keyboard_controller = keyboard::KeyboardController::Get();
+    if (keyboard_controller->enabled())
+      keyboard_controller->HideKeyboardImplicitlyBySystem();
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -304,8 +320,7 @@ void ArcImeService::OnKeyboardAppearanceChanged(
   gfx::Rect bounds_in_px =
       gfx::ScaleToEnclosingRect(new_bounds, GetDefaultDeviceScaleFactor());
 
-  ime_bridge_->SendOnKeyboardAppearanceChanging(bounds_in_px,
-                                                state.is_available);
+  ime_bridge_->SendOnKeyboardAppearanceChanging(bounds_in_px, state.is_visible);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -384,29 +399,7 @@ ui::TextInputType ArcImeService::GetTextInputType() const {
 }
 
 gfx::Rect ArcImeService::GetCaretBounds() const {
-  if (!focused_arc_window_)
-    return gfx::Rect();
-  aura::Window* window = focused_arc_window_;
-
-  // |cursor_rect_| holds the rectangle reported from ARC apps, in the "screen
-  // coordinates" in ARC, counted by physical pixels.
-  // Chrome OS input methods expect the coordinates in Chrome OS screen, within
-  // device independent pixels. Two factors are involved for the conversion.
-
-  // Divide by the scale factor. To convert from physical pixels to DIP.
-  // The default scale factor is always used because Android side is always
-  // using the default scale factor regardless of dynamic scale factor in Chrome
-  // side.
-  gfx::Rect converted = gfx::ScaleToEnclosingRect(
-      cursor_rect_, 1.0 / GetDefaultDeviceScaleFactor());
-
-  // Add the offset of the window showing the ARC app.
-  // TODO(yoshiki): Support for non-arc toplevel window. The following code do
-  // not work correctly with arc windows inside non-arc toplevel window (eg.
-  // notification).
-  converted.Offset(
-      window->GetToplevelWindow()->GetBoundsInScreen().OffsetFromOrigin());
-  return converted;
+  return cursor_rect_;
 }
 
 bool ArcImeService::GetTextRange(gfx::Range* range) const {
@@ -465,6 +458,13 @@ bool ArcImeService::HasCompositionText() const {
   return has_composition_text_;
 }
 
+ui::TextInputClient::FocusReason ArcImeService::GetFocusReason() const {
+  // TODO(https://crbug.com/824604): Determine how the current input client got
+  // focused.
+  NOTIMPLEMENTED_LOG_ONCE();
+  return ui::TextInputClient::FOCUS_REASON_OTHER;
+}
+
 bool ArcImeService::GetCompositionTextRange(gfx::Range* range) const {
   return false;
 }
@@ -487,10 +487,14 @@ bool ArcImeService::IsTextEditCommandEnabled(
   return false;
 }
 
-const std::string& ArcImeService::GetClientSourceInfo() const {
+ukm::SourceId ArcImeService::GetClientSourceForMetrics() const {
   // TODO(yhanada): Implement this method. crbug.com/752657
   NOTIMPLEMENTED_LOG_ONCE();
-  return base::EmptyString();
+  return ukm::SourceId();
+}
+
+bool ArcImeService::ShouldDoLearning() {
+  return is_personalized_learning_allowed_;
 }
 
 // static
@@ -503,6 +507,31 @@ void ArcImeService::InvalidateSurroundingTextAndSelectionRange() {
   text_range_ = gfx::Range::InvalidRange();
   text_in_range_ = base::string16();
   selection_range_ = gfx::Range::InvalidRange();
+}
+
+bool ArcImeService::UpdateCursorRect(const gfx::Rect& rect,
+                                     bool is_screen_coordinates) {
+  // Divide by the scale factor. To convert from physical pixels to DIP.
+  // The default scale factor is always used because Android side is always
+  // using the default scale factor regardless of dynamic scale factor in Chrome
+  // side.
+  gfx::Rect converted(
+      gfx::ScaleToEnclosingRect(rect, 1 / GetDefaultDeviceScaleFactor()));
+
+  // If the supplied coordinates are relative to the window, add the offset of
+  // the window showing the ARC app.
+  if (!is_screen_coordinates) {
+    if (!focused_arc_window_)
+      return false;
+    converted.Offset(focused_arc_window_->GetToplevelWindow()
+                         ->GetBoundsInScreen()
+                         .OffsetFromOrigin());
+  }
+
+  if (cursor_rect_ == converted)
+    return false;
+  cursor_rect_ = converted;
+  return true;
 }
 
 }  // namespace arc

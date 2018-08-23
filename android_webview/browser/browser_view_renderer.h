@@ -75,6 +75,8 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
   bool OnDrawHardware();
   bool OnDrawSoftware(SkCanvas* canvas);
 
+  bool NeedToDrawBackgroundColor();
+
   // CapturePicture API methods.
   sk_sp<SkPicture> CapturePicture(int width, int height);
   void EnableOnNewPicture(bool enabled);
@@ -98,7 +100,8 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
   float dip_scale() const { return dip_scale_; }
   float page_scale_factor() const { return page_scale_factor_; }
 
-  // Set the root layer scroll offset to |new_value|.
+  // Set the root layer scroll offset to |new_value|. The |new_value| here is in
+  // physical pixel.
   void ScrollTo(const gfx::Vector2d& new_value);
 
   // Android views hierarchy gluing.
@@ -153,6 +156,7 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
   bool window_visible_for_tests() const { return window_visible_; }
 
  private:
+  void SetActiveCompositor(content::SynchronousCompositor* compositor);
   void SetTotalRootLayerScrollOffset(const gfx::Vector2dF& new_value_dip);
   bool CanOnDraw();
   bool CompositeSW(SkCanvas* canvas);
@@ -179,7 +183,6 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
 
   BrowserViewRendererClient* const client_;
   const scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
-  const bool sync_on_draw_hardware_;
   CompositorFrameConsumer* current_compositor_frame_consumer_;
   std::set<CompositorFrameConsumer*> compositor_frame_consumers_;
 
@@ -209,15 +212,11 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
   bool on_new_picture_enable_;
   bool clear_view_;
 
-  bool offscreen_pre_raster_;
+  // Approximates whether render thread functor has a frame to draw. It is safe
+  // for Java side to stop blitting the background color once this is true.
+  bool has_rendered_frame_ = false;
 
-  // Must do a synchronous draw first to ensure GL bindings are initialized.
-  // TODO(boliu): Wait on render thread and remove this. When the
-  // first synchronous draw requirement is removed,
-  // RenderThreadManager::DeleteHardwareRendererOnUI will need to
-  // change, because it will no longer be true that having received a
-  // frame means that GL bindings have been initialized.
-  bool allow_async_draw_;
+  bool offscreen_pre_raster_;
 
   gfx::Vector2d last_on_draw_scroll_offset_;
   gfx::Rect last_on_draw_global_visible_rect_;
@@ -226,11 +225,13 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
 
   gfx::SizeF scrollable_size_dip_;
 
-  // TODO(miletus): Make scroll_offset_dip_ a gfx::ScrollOffset.
-  gfx::Vector2dF scroll_offset_dip_;
+  // When zoom-for-dsf enabled |max_scroll_offset_unscaled_| and
+  // |scroll_offset_unscaled_| is in physical pixel; otherwise, they are in dip
+  // TODO(miletus): Make scroll_offset_unscaled_ a gfx::ScrollOffset.
+  gfx::Vector2dF scroll_offset_unscaled_;
 
-  // TODO(miletus): Make max_scroll_offset_dip_ a gfx::ScrollOffset.
-  gfx::Vector2dF max_scroll_offset_dip_;
+  // TODO(miletus): Make max_scroll_offset_unscaled_ a gfx::ScrollOffset.
+  gfx::Vector2dF max_scroll_offset_unscaled_;
 
   // Used to prevent rounding errors from accumulating enough to generate
   // visible skew (especially noticeable when scrolling up and down in the same

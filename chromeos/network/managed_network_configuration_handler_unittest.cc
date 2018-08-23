@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/json/json_writer.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -15,12 +17,15 @@
 #include "chromeos/dbus/fake_shill_profile_client.h"
 #include "chromeos/dbus/fake_shill_service_client.h"
 #include "chromeos/network/managed_network_configuration_handler_impl.h"
+#include "chromeos/network/mock_network_state_handler.h"
 #include "chromeos/network/network_configuration_handler.h"
 #include "chromeos/network/network_policy_observer.h"
 #include "chromeos/network/network_profile_handler.h"
-#include "chromeos/network/network_state_handler.h"
+#include "chromeos/network/network_state.h"
+#include "chromeos/network/onc/onc_signature.h"
 #include "chromeos/network/onc/onc_test_utils.h"
 #include "chromeos/network/onc/onc_utils.h"
+#include "chromeos/network/onc/onc_validator.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -32,6 +37,21 @@ namespace {
 
 constexpr char kUser1[] = "user1";
 constexpr char kUser1ProfilePath[] = "/profile/user1/shill";
+constexpr char kTestGuid1[] = "{a3860e83-f03d-4cb1-bafa-b22c9e746950}";
+
+std::string PrettyJson(const base::DictionaryValue& value) {
+  std::string pretty;
+  base::JSONWriter::WriteWithOptions(
+      value, base::JSONWriter::OPTIONS_PRETTY_PRINT, &pretty);
+  return pretty;
+}
+
+void ErrorCallback(const std::string& error_name,
+                   std::unique_ptr<base::DictionaryValue> error_data) {
+  ADD_FAILURE() << "Unexpected error: " << error_name
+                << " with associated data: \n"
+                << PrettyJson(*error_data);
+}
 
 class TestNetworkProfileHandler : public NetworkProfileHandler {
  public:
@@ -70,7 +90,7 @@ class ManagedNetworkConfigurationHandlerTest : public testing::Test {
   ManagedNetworkConfigurationHandlerTest() {
     DBusThreadManager::Initialize();
 
-    network_state_handler_ = NetworkStateHandler::InitializeForTest();
+    network_state_handler_ = MockNetworkStateHandler::InitializeForTest();
     network_profile_handler_ = std::make_unique<TestNetworkProfileHandler>();
     network_configuration_handler_.reset(
         NetworkConfigurationHandler::InitializeForTest(
@@ -126,31 +146,47 @@ class ManagedNetworkConfigurationHandlerTest : public testing::Test {
                  const std::string& path_to_onc) {
     std::unique_ptr<base::DictionaryValue> policy =
         path_to_onc.empty()
-            ? onc::ReadDictionaryFromJson(onc::kEmptyUnencryptedConfiguration)
+            ? base::DictionaryValue::From(onc::ReadDictionaryFromJson(
+                  onc::kEmptyUnencryptedConfiguration))
             : test_utils::ReadTestDictionary(path_to_onc);
 
-    base::ListValue network_configs;
-    {
-      const base::Value* found =
-          policy->FindKeyOfType(::onc::toplevel_config::kNetworkConfigurations,
-                                base::Value::Type::LIST);
-      if (found)
-        network_configs = base::ListValue(found->GetList());
-    }
-
-    base::DictionaryValue global_config;
-    {
-      const base::Value* found = policy->FindKeyOfType(
-          ::onc::toplevel_config::kGlobalNetworkConfiguration,
-          base::Value::Type::DICTIONARY);
-      if (found) {
-        global_config = std::move(*base::DictionaryValue::From(
-            base::Value::ToUniquePtrValue(found->Clone())));
+    base::ListValue validated_network_configs;
+    const base::Value* found_network_configs =
+        policy->FindKeyOfType(::onc::toplevel_config::kNetworkConfigurations,
+                              base::Value::Type::LIST);
+    if (found_network_configs) {
+      for (const auto& network_config : found_network_configs->GetList()) {
+        onc::Validator validator(true,    // error_on_unknown_field
+                                 true,    // error_on_wrong_recommended
+                                 false,   // error_on_missing_field
+                                 true,    // managed_onc
+                                 false);  // log_warnings
+        validator.SetOncSource(onc_source);
+        onc::Validator::Result validation_result;
+        std::unique_ptr<base::DictionaryValue> validated_network_config =
+            validator.ValidateAndRepairObject(
+                &onc::kNetworkConfigurationSignature, network_config,
+                &validation_result);
+        if (validation_result == onc::Validator::INVALID) {
+          ADD_FAILURE() << "Network configuration invalid.";
+          return;
+        }
+        validated_network_configs.GetList().push_back(
+            std::move(*(validated_network_config)));
       }
     }
 
+    base::DictionaryValue global_config;
+    const base::Value* found_global_config = policy->FindKeyOfType(
+        ::onc::toplevel_config::kGlobalNetworkConfiguration,
+        base::Value::Type::DICTIONARY);
+    if (found_global_config) {
+      global_config = std::move(*base::DictionaryValue::From(
+          base::Value::ToUniquePtrValue(found_global_config->Clone())));
+    }
+
     managed_network_configuration_handler_->SetPolicy(
-        onc_source, userhash, network_configs, global_config);
+        onc_source, userhash, validated_network_configs, global_config);
   }
 
   void SetUpEntry(const std::string& path_to_shill_json,
@@ -168,11 +204,11 @@ class ManagedNetworkConfigurationHandlerTest : public testing::Test {
     managed_network_configuration_handler_.reset();
   }
 
- private:
+ protected:
   base::MessageLoop message_loop_;
 
   TestNetworkPolicyObserver policy_observer_;
-  std::unique_ptr<NetworkStateHandler> network_state_handler_;
+  std::unique_ptr<MockNetworkStateHandler> network_state_handler_;
   std::unique_ptr<TestNetworkProfileHandler> network_profile_handler_;
   std::unique_ptr<NetworkConfigurationHandler> network_configuration_handler_;
   std::unique_ptr<ManagedNetworkConfigurationHandlerImpl>
@@ -240,8 +276,7 @@ TEST_F(ManagedNetworkConfigurationHandlerTest, EnableManagedCredentialsVPN) {
   base::RunLoop().RunUntilIdle();
 
   const base::DictionaryValue* properties =
-      GetShillServiceClient()->GetServiceProperties(
-          "{a3860e83-f03d-4cb1-bafa-b22c9e746950}");
+      GetShillServiceClient()->GetServiceProperties(kTestGuid1);
   ASSERT_TRUE(properties);
   EXPECT_EQ(*expected_shill_properties, *properties);
 }
@@ -418,15 +453,63 @@ TEST_F(ManagedNetworkConfigurationHandlerTest, SetPolicyUpdateManagedVPN) {
   InitializeStandardProfiles();
   SetUpEntry("policy/shill_managed_vpn.json", kUser1ProfilePath, "entry_path");
 
-  std::unique_ptr<base::DictionaryValue> expected_shill_properties =
-      test_utils::ReadTestDictionary("policy/shill_policy_on_managed_vpn.json");
-
   SetPolicy(::onc::ONC_SOURCE_USER_POLICY, kUser1, "policy/policy_vpn.onc");
   base::RunLoop().RunUntilIdle();
 
   const base::DictionaryValue* properties =
-      GetShillServiceClient()->GetServiceProperties(
-          "{a3860e83-f03d-4cb1-bafa-b22c9e746950}");
+      GetShillServiceClient()->GetServiceProperties(kTestGuid1);
+  ASSERT_TRUE(properties);
+  std::unique_ptr<base::DictionaryValue> expected_shill_properties =
+      test_utils::ReadTestDictionary("policy/shill_policy_on_managed_vpn.json");
+  EXPECT_EQ(*expected_shill_properties, *properties);
+}
+
+TEST_F(ManagedNetworkConfigurationHandlerTest,
+       SetPolicyUpdateManagedVPNPlusUi) {
+  InitializeStandardProfiles();
+  SetUpEntry("policy/shill_managed_vpn.json", kUser1ProfilePath, "entry_path");
+
+  // Apply a policy that does not provide an authenticaiton type.
+  SetPolicy(::onc::ONC_SOURCE_USER_POLICY, kUser1,
+            "policy/policy_vpn_no_auth.onc");
+  base::RunLoop().RunUntilIdle();
+
+  // Apply additional configuration (e.g. from the UI). This includes password
+  // and OTP which should be allowed when authentication type is not explicitly
+  // set. See https://crbug.com/817617 for details.
+  const NetworkState* network_state =
+      network_state_handler_->GetNetworkStateFromGuid(kTestGuid1);
+  ASSERT_TRUE(network_state);
+  std::unique_ptr<base::DictionaryValue> ui_config =
+      test_utils::ReadTestDictionary("policy/policy_vpn_ui.json");
+  managed_network_configuration_handler_->SetProperties(
+      network_state->path(), *ui_config, base::DoNothing(),
+      base::Bind(&ErrorCallback));
+  base::RunLoop().RunUntilIdle();
+
+  const base::DictionaryValue* properties =
+      GetShillServiceClient()->GetServiceProperties(kTestGuid1);
+  ASSERT_TRUE(properties);
+  std::unique_ptr<base::DictionaryValue> expected_shill_properties =
+      test_utils::ReadTestDictionary(
+          "policy/shill_policy_on_managed_vpn_plus_ui.json");
+  EXPECT_EQ(*expected_shill_properties, *properties);
+}
+
+TEST_F(ManagedNetworkConfigurationHandlerTest,
+       SetPolicyUpdateManagedVPNNoUserAuthType) {
+  InitializeStandardProfiles();
+  SetUpEntry("policy/shill_managed_vpn.json", kUser1ProfilePath, "entry_path");
+
+  std::unique_ptr<base::DictionaryValue> expected_shill_properties =
+      test_utils::ReadTestDictionary("policy/shill_policy_on_managed_vpn.json");
+
+  SetPolicy(::onc::ONC_SOURCE_USER_POLICY, kUser1,
+            "policy/policy_vpn_no_user_auth_type.onc");
+  base::RunLoop().RunUntilIdle();
+
+  const base::DictionaryValue* properties =
+      GetShillServiceClient()->GetServiceProperties(kTestGuid1);
   ASSERT_TRUE(properties);
   EXPECT_EQ(*expected_shill_properties, *properties);
 }
@@ -537,9 +620,8 @@ TEST_F(ManagedNetworkConfigurationHandlerTest, AutoConnectDisallowed) {
 
   // Apply the user policy with global autoconnect config and expect that
   // autoconnect is disabled in the network's profile entry.
-  SetPolicy(::onc::ONC_SOURCE_USER_POLICY,
-            kUser1,
-            "policy/policy_disallow_autoconnect.onc");
+  SetPolicy(::onc::ONC_SOURCE_USER_POLICY, kUser1,
+            "policy/policy_allow_only_policy_networks_to_autoconnect.onc");
   base::RunLoop().RunUntilIdle();
 
   const base::DictionaryValue* properties =
@@ -608,6 +690,101 @@ TEST_F(ManagedNetworkConfigurationHandlerTest,
   // calling RunUntilIdle to simulate shutdown during policy application.
   ResetManagedNetworkConfigurationHandler();
   base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(ManagedNetworkConfigurationHandlerTest,
+       AllowOnlyPolicyNetworksToConnect) {
+  InitializeStandardProfiles();
+
+  // Check transfer to NetworkStateHandler
+  EXPECT_CALL(
+      *network_state_handler_,
+      UpdateBlockedWifiNetworks(true, false, std::vector<std::string>()))
+      .Times(1);
+
+  // Set 'AllowOnlyPolicyNetworksToConnect' policy and a random user policy.
+  SetPolicy(::onc::ONC_SOURCE_DEVICE_POLICY, std::string(),
+            "policy/policy_allow_only_policy_networks_to_connect.onc");
+  SetPolicy(::onc::ONC_SOURCE_USER_POLICY, kUser1, "policy/policy_wifi1.onc");
+  base::RunLoop().RunUntilIdle();
+
+  // Check ManagedNetworkConfigurationHandler policy accessors.
+  EXPECT_TRUE(managed_handler()->AllowOnlyPolicyNetworksToConnect());
+  EXPECT_FALSE(
+      managed_handler()->AllowOnlyPolicyNetworksToConnectIfAvailable());
+  EXPECT_FALSE(managed_handler()->AllowOnlyPolicyNetworksToAutoconnect());
+  EXPECT_TRUE(managed_handler()->GetBlacklistedHexSSIDs().empty());
+}
+
+TEST_F(ManagedNetworkConfigurationHandlerTest,
+       AllowOnlyPolicyNetworksToConnectIfAvailable) {
+  InitializeStandardProfiles();
+
+  // Check transfer to NetworkStateHandler
+  EXPECT_CALL(
+      *network_state_handler_,
+      UpdateBlockedWifiNetworks(false, true, std::vector<std::string>()))
+      .Times(1);
+
+  // Set 'AllowOnlyPolicyNetworksToConnect' policy and a random user policy.
+  SetPolicy(
+      ::onc::ONC_SOURCE_DEVICE_POLICY, std::string(),
+      "policy/policy_allow_only_policy_networks_to_connect_if_available.onc");
+  SetPolicy(::onc::ONC_SOURCE_USER_POLICY, kUser1, "policy/policy_wifi1.onc");
+  base::RunLoop().RunUntilIdle();
+
+  // Check ManagedNetworkConfigurationHandler policy accessors.
+  EXPECT_FALSE(managed_handler()->AllowOnlyPolicyNetworksToConnect());
+  EXPECT_TRUE(managed_handler()->AllowOnlyPolicyNetworksToConnectIfAvailable());
+  EXPECT_FALSE(managed_handler()->AllowOnlyPolicyNetworksToAutoconnect());
+  EXPECT_TRUE(managed_handler()->GetBlacklistedHexSSIDs().empty());
+}
+
+TEST_F(ManagedNetworkConfigurationHandlerTest,
+       AllowOnlyPolicyNetworksToAutoconnect) {
+  InitializeStandardProfiles();
+
+  // Check transfer to NetworkStateHandler
+  EXPECT_CALL(
+      *network_state_handler_,
+      UpdateBlockedWifiNetworks(false, false, std::vector<std::string>()))
+      .Times(1);
+
+  // Set 'AllowOnlyPolicyNetworksToAutoconnect' policy and a random user policy.
+  SetPolicy(::onc::ONC_SOURCE_DEVICE_POLICY, std::string(),
+            "policy/policy_allow_only_policy_networks_to_autoconnect.onc");
+  SetPolicy(::onc::ONC_SOURCE_USER_POLICY, kUser1, "policy/policy_wifi1.onc");
+  base::RunLoop().RunUntilIdle();
+
+  // Check ManagedNetworkConfigurationHandler policy accessors.
+  EXPECT_FALSE(managed_handler()->AllowOnlyPolicyNetworksToConnect());
+  EXPECT_FALSE(
+      managed_handler()->AllowOnlyPolicyNetworksToConnectIfAvailable());
+  EXPECT_TRUE(managed_handler()->AllowOnlyPolicyNetworksToAutoconnect());
+  EXPECT_TRUE(managed_handler()->GetBlacklistedHexSSIDs().empty());
+}
+
+TEST_F(ManagedNetworkConfigurationHandlerTest, GetBlacklistedHexSSIDs) {
+  InitializeStandardProfiles();
+  std::vector<std::string> blacklist = {"476F6F676C65477565737450534B"};
+
+  // Check transfer to NetworkStateHandler
+  EXPECT_CALL(*network_state_handler_,
+              UpdateBlockedWifiNetworks(false, false, blacklist))
+      .Times(1);
+
+  // Set 'BlacklistedHexSSIDs' policy and a random user policy.
+  SetPolicy(::onc::ONC_SOURCE_DEVICE_POLICY, std::string(),
+            "policy/policy_blacklisted_hex_ssids.onc");
+  SetPolicy(::onc::ONC_SOURCE_USER_POLICY, kUser1, "policy/policy_wifi1.onc");
+  base::RunLoop().RunUntilIdle();
+
+  // Check ManagedNetworkConfigurationHandler policy accessors.
+  EXPECT_FALSE(managed_handler()->AllowOnlyPolicyNetworksToConnect());
+  EXPECT_FALSE(
+      managed_handler()->AllowOnlyPolicyNetworksToConnectIfAvailable());
+  EXPECT_FALSE(managed_handler()->AllowOnlyPolicyNetworksToAutoconnect());
+  EXPECT_EQ(blacklist, managed_handler()->GetBlacklistedHexSSIDs());
 }
 
 }  // namespace chromeos

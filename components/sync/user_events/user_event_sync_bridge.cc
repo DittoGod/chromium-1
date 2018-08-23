@@ -10,10 +10,14 @@
 
 #include "base/big_endian.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
+#include "components/signin/core/browser/account_info.h"
+#include "components/sync/model/data_type_activation_request.h"
 #include "components/sync/model/entity_change.h"
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/mutable_data_batch.h"
@@ -55,32 +59,28 @@ std::unique_ptr<EntityData> MoveToEntityData(
   return entity_data;
 }
 
-std::unique_ptr<EntityData> CopyToEntityData(
-    const UserEventSpecifics specifics) {
-  auto entity_data = std::make_unique<EntityData>();
-  entity_data->non_unique_name =
-      base::Int64ToString(specifics.event_time_usec());
-  *entity_data->specifics.mutable_user_event() = specifics;
-  return entity_data;
-}
-
 }  // namespace
 
 UserEventSyncBridge::UserEventSyncBridge(
     OnceModelTypeStoreFactory store_factory,
-    const ChangeProcessorFactory& change_processor_factory,
+    std::unique_ptr<ModelTypeChangeProcessor> change_processor,
     GlobalIdMapper* global_id_mapper)
-    : ModelTypeSyncBridge(change_processor_factory, USER_EVENTS),
-      global_id_mapper_(global_id_mapper) {
+    : ModelTypeSyncBridge(std::move(change_processor)),
+      global_id_mapper_(global_id_mapper),
+      weak_ptr_factory_(this) {
   DCHECK(global_id_mapper_);
   std::move(store_factory)
       .Run(USER_EVENTS, base::BindOnce(&UserEventSyncBridge::OnStoreCreated,
-                                       base::AsWeakPtr(this)));
-  global_id_mapper_->AddGlobalIdChangeObserver(base::Bind(
-      &UserEventSyncBridge::HandleGlobalIdChange, base::AsWeakPtr(this)));
+                                       weak_ptr_factory_.GetWeakPtr()));
+  global_id_mapper_->AddGlobalIdChangeObserver(
+      base::Bind(&UserEventSyncBridge::HandleGlobalIdChange,
+                 weak_ptr_factory_.GetWeakPtr()));
 }
 
-UserEventSyncBridge::~UserEventSyncBridge() {}
+UserEventSyncBridge::~UserEventSyncBridge() {
+  if (!deferred_user_events_while_initializing_.empty())
+    LOG(ERROR) << "Non-empty event queue at shutdown!";
+}
 
 std::unique_ptr<MetadataChangeList>
 UserEventSyncBridge::CreateMetadataChangeList() {
@@ -116,22 +116,25 @@ base::Optional<ModelError> UserEventSyncBridge::ApplySyncChanges(
                                            kv.second.event_time_usec());
                 });
 
-  batch->TransferMetadataChanges(std::move(metadata_change_list));
-  store_->CommitWriteBatch(
-      std::move(batch),
-      base::Bind(&UserEventSyncBridge::OnCommit, base::AsWeakPtr(this)));
+  batch->TakeMetadataChangesFrom(std::move(metadata_change_list));
+  store_->CommitWriteBatch(std::move(batch),
+                           base::BindOnce(&UserEventSyncBridge::OnCommit,
+                                          weak_ptr_factory_.GetWeakPtr()));
   return {};
 }
 
 void UserEventSyncBridge::GetData(StorageKeyList storage_keys,
                                   DataCallback callback) {
-  store_->ReadData(storage_keys, base::Bind(&UserEventSyncBridge::OnReadData,
-                                            base::AsWeakPtr(this), callback));
+  store_->ReadData(
+      storage_keys,
+      base::BindOnce(&UserEventSyncBridge::OnReadData,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
-void UserEventSyncBridge::GetAllData(DataCallback callback) {
-  store_->ReadAllData(base::Bind(&UserEventSyncBridge::OnReadAllData,
-                                 base::AsWeakPtr(this), callback));
+void UserEventSyncBridge::GetAllDataForDebugging(DataCallback callback) {
+  store_->ReadAllData(base::BindOnce(&UserEventSyncBridge::OnReadAllData,
+                                     weak_ptr_factory_.GetWeakPtr(),
+                                     std::move(callback)));
 }
 
 std::string UserEventSyncBridge::GetClientTag(const EntityData& entity_data) {
@@ -142,29 +145,127 @@ std::string UserEventSyncBridge::GetStorageKey(const EntityData& entity_data) {
   return GetStorageKeyFromSpecifics(entity_data.specifics.user_event());
 }
 
-void UserEventSyncBridge::DisableSync() {
-  // No data should be retained through sign out.
-  store_->ReadAllData(base::Bind(&UserEventSyncBridge::OnReadAllDataToDelete,
-                                 base::AsWeakPtr(this)));
+void UserEventSyncBridge::OnSyncStarting(
+    const DataTypeActivationRequest& request) {
+  DCHECK(!request.authenticated_account_id.empty());
+  DCHECK(syncing_account_id_.empty());
+
+  syncing_account_id_ = request.authenticated_account_id;
+
+  if (store_ && change_processor()->IsTrackingMetadata()) {
+    ReadAllDataAndResubmit();
+  }
+}
+
+ModelTypeSyncBridge::StopSyncResponse UserEventSyncBridge::ApplyStopSyncChanges(
+    std::unique_ptr<MetadataChangeList> delete_metadata_change_list) {
+  // Sync can only be stopped after initialization.
+  DCHECK(deferred_user_events_while_initializing_.empty());
+
+  syncing_account_id_.clear();
+
+  if (delete_metadata_change_list) {
+    // Delete everything except user consents. With DICE the signout may happen
+    // frequently. It is important to report all user consents, thus, they are
+    // persisted for some time even after signout.
+    store_->ReadAllData(
+        base::BindOnce(&UserEventSyncBridge::OnReadAllDataToDelete,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       std::move(delete_metadata_change_list)));
+  }
+
+  return StopSyncResponse::kModelStillReadyToSync;
+}
+
+void UserEventSyncBridge::OnReadAllDataToDelete(
+    std::unique_ptr<MetadataChangeList> delete_metadata_change_list,
+    const base::Optional<ModelError>& error,
+    std::unique_ptr<RecordList> data_records) {
+  if (error) {
+    LOG(WARNING) << "OnReadAllDataToDelete received a model error: "
+                 << error->ToString();
+    return;
+  }
+
+  std::unique_ptr<WriteBatch> batch = store_->CreateWriteBatch();
+  // We delete all the metadata (even for consents), because it may become
+  // invalid when the sync is reenabled. This may lead to the same consent
+  // being reported multiple times, which is allowed.
+  batch->TakeMetadataChangesFrom(std::move(delete_metadata_change_list));
+
+  UserEventSpecifics specifics;
+  for (const Record& r : *data_records) {
+    if (!specifics.ParseFromString(r.value) ||
+        specifics.event_case() != UserEventSpecifics::EventCase::kUserConsent) {
+      batch->DeleteData(r.id);
+    }
+  }
+
+  store_->CommitWriteBatch(std::move(batch),
+                           base::BindOnce(&UserEventSyncBridge::OnCommit,
+                                          weak_ptr_factory_.GetWeakPtr()));
+}
+
+void UserEventSyncBridge::ReadAllDataAndResubmit() {
+  DCHECK(!syncing_account_id_.empty());
+  DCHECK(change_processor()->IsTrackingMetadata());
+  DCHECK(store_);
+  store_->ReadAllData(
+      base::BindOnce(&UserEventSyncBridge::OnReadAllDataToResubmit,
+                     weak_ptr_factory_.GetWeakPtr()));
+}
+
+void UserEventSyncBridge::OnReadAllDataToResubmit(
+    const base::Optional<ModelError>& error,
+    std::unique_ptr<RecordList> data_records) {
+  if (syncing_account_id_.empty()) {
+    // Meanwhile the sync has been disabled. We will try next time.
+    return;
+  }
+  DCHECK(change_processor()->IsTrackingMetadata());
+
+  if (error) {
+    change_processor()->ReportError(*error);
+    return;
+  }
+
+  for (const Record& r : *data_records) {
+    auto specifics = std::make_unique<UserEventSpecifics>();
+    if (specifics->ParseFromString(r.value) &&
+        specifics->event_case() ==
+            UserEventSpecifics::EventCase::kUserConsent &&
+        specifics->user_consent().account_id() == syncing_account_id_) {
+      RecordUserEventImpl(std::move(specifics));
+    }
+  }
 }
 
 void UserEventSyncBridge::RecordUserEvent(
     std::unique_ptr<UserEventSpecifics> specifics) {
-  // TODO(skym): Remove this when ModelTypeStore synchronously returns a
-  // partially initialized reference, see crbug.com/709094.
-  if (!store_) {
+  // TODO(vitaliii): Sanity-check specifics->user_consent().account_id() against
+  // syncing_account_id_, maybe DCHECK.
+  DCHECK(!specifics->has_user_consent() ||
+         !specifics->user_consent().account_id().empty());
+  if (change_processor()->IsTrackingMetadata()) {
+    RecordUserEventImpl(std::move(specifics));
     return;
   }
-  // TODO(skym): Remove this when the processor can handle Put() calls before
-  // being given metadata, see crbug.com/761485. Dropping data on the floor here
-  // is better than just writing to the store, because it will be lost if sent
-  // to just the store, and bloat persistent storage indefinitely.
-  if (!change_processor()->IsTrackingMetadata()) {
-    return;
-  }
+  if (specifics->has_user_consent())
+    deferred_user_events_while_initializing_.push_back(std::move(specifics));
+}
+
+// static
+std::string UserEventSyncBridge::GetStorageKeyFromSpecificsForTest(
+    const UserEventSpecifics& specifics) {
+  return GetStorageKeyFromSpecifics(specifics);
+}
+
+void UserEventSyncBridge::RecordUserEventImpl(
+    std::unique_ptr<UserEventSpecifics> specifics) {
+  DCHECK(store_);
+  DCHECK(change_processor()->IsTrackingMetadata());
 
   std::string storage_key = GetStorageKeyFromSpecifics(*specifics);
-
   // There are two scenarios we need to guard against here. First, the given
   // user even may have been read from an old global_id timestamp off of a
   // navigation, which has already been re-written. In this case, we should be
@@ -187,9 +288,18 @@ void UserEventSyncBridge::RecordUserEvent(
 
   change_processor()->Put(storage_key, MoveToEntityData(std::move(specifics)),
                           batch->GetMetadataChangeList());
-  store_->CommitWriteBatch(
-      std::move(batch),
-      base::Bind(&UserEventSyncBridge::OnCommit, base::AsWeakPtr(this)));
+  store_->CommitWriteBatch(std::move(batch),
+                           base::BindOnce(&UserEventSyncBridge::OnCommit,
+                                          weak_ptr_factory_.GetWeakPtr()));
+}
+
+void UserEventSyncBridge::ProcessQueuedEvents() {
+  DCHECK(change_processor()->IsTrackingMetadata());
+  for (std::unique_ptr<sync_pb::UserEventSpecifics>& event :
+       deferred_user_events_while_initializing_) {
+    RecordUserEventImpl(std::move(event));
+  }
+  deferred_user_events_while_initializing_.clear();
 }
 
 void UserEventSyncBridge::OnStoreCreated(
@@ -200,9 +310,11 @@ void UserEventSyncBridge::OnStoreCreated(
     return;
   }
 
+  // TODO(vitaliii): Garbage collect old user consents if sync is disabled.
+
   store_ = std::move(store);
   store_->ReadAllMetadata(base::BindOnce(
-      &UserEventSyncBridge::OnReadAllMetadata, base::AsWeakPtr(this)));
+      &UserEventSyncBridge::OnReadAllMetadata, weak_ptr_factory_.GetWeakPtr()));
 }
 
 void UserEventSyncBridge::OnReadAllMetadata(
@@ -211,16 +323,12 @@ void UserEventSyncBridge::OnReadAllMetadata(
   if (error) {
     change_processor()->ReportError(*error);
   } else {
-    if (!metadata_batch->GetModelTypeState().initial_sync_done()) {
-      // We have never initialized before, force it to true. We are not going to
-      // ever have a GetUpdates because our type is commit only.
-      // TODO(skym): Do we need to worry about saving this back ourselves? Or
-      // does that get taken care for us?
-      ModelTypeState state = metadata_batch->GetModelTypeState();
-      state.set_initial_sync_done(true);
-      metadata_batch->SetModelTypeState(state);
-    }
     change_processor()->ModelReadyToSync(std::move(metadata_batch));
+    DCHECK(change_processor()->IsTrackingMetadata());
+    if (!syncing_account_id_.empty()) {
+      ReadAllDataAndResubmit();
+    }
+    ProcessQueuedEvents();
   }
 }
 
@@ -234,7 +342,7 @@ void UserEventSyncBridge::OnReadData(DataCallback callback,
                                      const base::Optional<ModelError>& error,
                                      std::unique_ptr<RecordList> data_records,
                                      std::unique_ptr<IdList> missing_id_list) {
-  OnReadAllData(callback, error, std::move(data_records));
+  OnReadAllData(std::move(callback), error, std::move(data_records));
 }
 
 void UserEventSyncBridge::OnReadAllData(
@@ -247,35 +355,19 @@ void UserEventSyncBridge::OnReadAllData(
   }
 
   auto batch = std::make_unique<MutableDataBatch>();
-  UserEventSpecifics specifics;
   for (const Record& r : *data_records) {
-    if (specifics.ParseFromString(r.value)) {
-      DCHECK_EQ(r.id, GetStorageKeyFromSpecifics(specifics));
-      batch->Put(r.id, CopyToEntityData(specifics));
+    auto specifics = std::make_unique<UserEventSpecifics>();
+
+    if (specifics->ParseFromString(r.value)) {
+      DCHECK_EQ(r.id, GetStorageKeyFromSpecifics(*specifics));
+      batch->Put(r.id, MoveToEntityData(std::move(specifics)));
     } else {
       change_processor()->ReportError(
           {FROM_HERE, "Failed deserializing user events."});
       return;
     }
   }
-  callback.Run(std::move(batch));
-}
-
-void UserEventSyncBridge::OnReadAllDataToDelete(
-    const base::Optional<ModelError>& error,
-    std::unique_ptr<RecordList> data_records) {
-  if (error) {
-    change_processor()->ReportError(*error);
-    return;
-  }
-
-  std::unique_ptr<WriteBatch> batch = store_->CreateWriteBatch();
-  for (const Record& r : *data_records) {
-    batch->DeleteData(r.id);
-  }
-  store_->CommitWriteBatch(
-      std::move(batch),
-      base::Bind(&UserEventSyncBridge::OnCommit, base::AsWeakPtr(this)));
+  std::move(callback).Run(std::move(batch));
 }
 
 void UserEventSyncBridge::HandleGlobalIdChange(int64_t old_global_id,

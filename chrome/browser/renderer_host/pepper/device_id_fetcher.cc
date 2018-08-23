@@ -7,7 +7,7 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
@@ -21,7 +21,7 @@
 #include "crypto/random.h"
 #include "crypto/sha2.h"
 #include "ppapi/c/pp_errors.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/cryptohome/system_salt_getter.h"
@@ -125,7 +125,7 @@ void DeviceIDFetcher::CheckPrefsOnUIThread() {
   // Try the legacy path first for ChromeOS. We pass the new salt in as well
   // in case the legacy id doesn't exist.
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND},
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
                            base::Bind(&DeviceIDFetcher::LegacyComputeAsync,
                                       this, profile->GetPath(), salt));
 #else

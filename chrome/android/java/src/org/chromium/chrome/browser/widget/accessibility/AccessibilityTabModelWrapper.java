@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.widget.accessibility;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.support.design.widget.TabLayout;
+import android.support.v7.content.res.AppCompatResources;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.ImageButton;
@@ -14,7 +15,9 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
@@ -100,13 +103,13 @@ public class AccessibilityTabModelWrapper extends LinearLayout {
     public void setup(AccessibilityTabModelAdapterListener listener) {
         if (FeatureUtilities.isChromeModernDesignEnabled()) {
             mTabIconDarkColor =
-                    ApiCompatibilityUtils.getColorStateList(getResources(), R.color.black_alpha_65);
-            mTabIconSelectedDarkColor = ApiCompatibilityUtils.getColorStateList(
-                    getResources(), R.color.light_active_color);
+                    AppCompatResources.getColorStateList(getContext(), R.color.dark_mode_tint);
+            mTabIconSelectedDarkColor =
+                    AppCompatResources.getColorStateList(getContext(), R.color.light_active_color);
             mTabIconLightColor =
-                    ApiCompatibilityUtils.getColorStateList(getResources(), R.color.white_alpha_70);
-            mTabIconSelectedLightColor = ApiCompatibilityUtils.getColorStateList(
-                    getResources(), R.color.white_mode_tint);
+                    AppCompatResources.getColorStateList(getContext(), R.color.white_alpha_70);
+            mTabIconSelectedLightColor =
+                    AppCompatResources.getColorStateList(getContext(), R.color.white_mode_tint);
             // Setting scaleY here to make sure the icons are not flipped due to the scaleY of its
             // container layout.
             mModernStandardButtonIcon = new TintedImageView(getContext());
@@ -131,7 +134,9 @@ public class AccessibilityTabModelWrapper extends LinearLayout {
                     mModernStackButtonWrapper.newTab()
                             .setCustomView(mModernIncognitoButtonIcon)
                             .setContentDescription(
-                                    R.string.accessibility_tab_switcher_incognito_stack);
+                                    ChromeFeatureList.isEnabled(ChromeFeatureList.INCOGNITO_STRINGS)
+                                            ? R.string.accessibility_tab_switcher_private_stack
+                                            : R.string.accessibility_tab_switcher_incognito_stack);
             mModernStackButtonWrapper.addTab(mModernIncognitoButton);
             mModernStackButtonWrapper.addOnTabSelectedListener(
                     new TabLayout.OnTabSelectedListener() {
@@ -189,7 +194,7 @@ public class AccessibilityTabModelWrapper extends LinearLayout {
         if (FeatureUtilities.isChromeModernDesignEnabled()) {
             if (incognitoSelected) {
                 setBackgroundColor(ApiCompatibilityUtils.getColor(
-                        getResources(), R.color.incognito_primary_color));
+                        getResources(), R.color.incognito_modern_primary_color));
                 mModernStackButtonWrapper.setSelectedTabIndicatorColor(
                         mTabIconSelectedLightColor.getDefaultColor());
                 mModernStandardButtonIcon.setTint(mTabIconLightColor);
@@ -221,7 +226,9 @@ public class AccessibilityTabModelWrapper extends LinearLayout {
 
         mAccessibilityView.setContentDescription(incognitoSelected
                         ? getContext().getString(
-                                  R.string.accessibility_tab_switcher_incognito_stack)
+                                  ChromeFeatureList.isEnabled(ChromeFeatureList.INCOGNITO_STRINGS)
+                                          ? R.string.accessibility_tab_switcher_private_stack
+                                          : R.string.accessibility_tab_switcher_incognito_stack)
                         : getContext().getString(
                                   R.string.accessibility_tab_switcher_standard_stack));
 
@@ -247,7 +254,9 @@ public class AccessibilityTabModelWrapper extends LinearLayout {
         setStateBasedOnModel();
 
         int stackAnnouncementId = incognitoSelected
-                ? R.string.accessibility_tab_switcher_incognito_stack_selected
+                ? (ChromeFeatureList.isEnabled(ChromeFeatureList.INCOGNITO_STRINGS)
+                                  ? R.string.accessibility_tab_switcher_private_stack_selected
+                                  : R.string.accessibility_tab_switcher_incognito_stack_selected)
                 : R.string.accessibility_tab_switcher_standard_stack_selected;
         AccessibilityTabModelWrapper.this.announceForAccessibility(
                 getResources().getString(stackAnnouncementId));
@@ -274,5 +283,15 @@ public class AccessibilityTabModelWrapper extends LinearLayout {
     protected void onDetachedFromWindow() {
         mIsAttachedToWindow = false;
         super.onDetachedFromWindow();
+    }
+
+    @VisibleForTesting
+    public TabLayout.Tab getIncognitoTabsButton() {
+        return mModernIncognitoButton;
+    }
+
+    @VisibleForTesting
+    public TabLayout.Tab getStandardTabsButton() {
+        return mModernStandardButton;
     }
 }

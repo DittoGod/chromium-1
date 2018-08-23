@@ -6,6 +6,7 @@
 #define EXTENSIONS_COMMON_CONSTANTS_H_
 
 #include "base/files/file_path.h"
+#include "base/logging.h"
 #include "ui/base/layout.h"
 
 namespace extensions {
@@ -100,11 +101,6 @@ extern const char kAuthUserQueryKey[];
 // Mime type strings
 extern const char kMimeTypeJpeg[];
 extern const char kMimeTypePng[];
-
-// TODO(lazyboy): This is a hack and it is copied from service_worker_types.cc,
-// which is not available to extensions/ code. Move the constant to
-// content/public/common.
-extern const int64_t kInvalidServiceWorkerVersionId;
 
 // The extension id of the Web Store component application.
 extern const char kWebStoreAppId[];
@@ -210,6 +206,9 @@ enum ExtensionIcons {
   EXTENSION_ICON_INVALID = 0,
 };
 
+// The extension id of the ChromeVox extension.
+extern const char kChromeVoxExtensionId[];
+
 // The extension id of the feedback component extension.
 extern const char kFeedbackExtensionId[];
 
@@ -239,6 +238,9 @@ extern const char kPolicyBlockedScripting[];
 
 // The default block size for hashing used in content verification.
 extern const int kContentVerificationDefaultBlockSize;
+
+// The minimum severity of a log or error in order to report it to the browser.
+extern const logging::LogSeverity kMinimumSeverityToReportError;
 
 }  // namespace extension_misc
 

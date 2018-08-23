@@ -30,14 +30,40 @@ FakeSigninManager::FakeSigninManager(
     SigninClient* client,
     ProfileOAuth2TokenService* token_service,
     AccountTrackerService* account_tracker_service,
+    GaiaCookieManagerService* cookie_manager_service)
+    : FakeSigninManager(client,
+                        token_service,
+                        account_tracker_service,
+                        cookie_manager_service,
+                        nullptr,
+                        signin::AccountConsistencyMethod::kDisabled) {}
+
+FakeSigninManager::FakeSigninManager(
+    SigninClient* client,
+    ProfileOAuth2TokenService* token_service,
+    AccountTrackerService* account_tracker_service,
     GaiaCookieManagerService* cookie_manager_service,
     SigninErrorController* signin_error_controller)
+    : FakeSigninManager(client,
+                        token_service,
+                        account_tracker_service,
+                        cookie_manager_service,
+                        signin_error_controller,
+                        signin::AccountConsistencyMethod::kDisabled) {}
+
+FakeSigninManager::FakeSigninManager(
+    SigninClient* client,
+    ProfileOAuth2TokenService* token_service,
+    AccountTrackerService* account_tracker_service,
+    GaiaCookieManagerService* cookie_manager_service,
+    SigninErrorController* signin_error_controller,
+    signin::AccountConsistencyMethod account_consistency)
     : SigninManager(client,
                     token_service,
                     account_tracker_service,
                     cookie_manager_service,
                     signin_error_controller,
-                    signin::AccountConsistencyMethod::kDisabled),
+                    account_consistency),
       token_service_(token_service) {}
 
 FakeSigninManager::~FakeSigninManager() {}
@@ -75,7 +101,7 @@ void FakeSigninManager::SignIn(const std::string& gaia_id,
 }
 
 void FakeSigninManager::ForceSignOut() {
-  prohibit_signout_ = false;
+  ProhibitSignout(false);
   SignOut(signin_metrics::SIGNOUT_TEST,
           signin_metrics::SignoutDelete::IGNORE_METRIC);
 }
@@ -88,7 +114,23 @@ void FakeSigninManager::FailSignin(const GoogleServiceAuthError& error) {
 void FakeSigninManager::DoSignOut(
     signin_metrics::ProfileSignout signout_source_metric,
     signin_metrics::SignoutDelete signout_delete_metric,
-    bool remove_all_accounts) {
+    RemoveAccountsOption remove_option) {
+  if (!IsAuthenticated()) {
+    if (AuthInProgress()) {
+      // If the user is in the process of signing in, then treat a call to
+      // SignOut as a cancellation request.
+      GoogleServiceAuthError error(GoogleServiceAuthError::REQUEST_CANCELED);
+      HandleAuthError(error);
+    } else {
+      // Clean up our transient data and exit if we aren't signed in.
+      // This avoids a perf regression from clearing out the TokenDB if
+      // SignOut() is invoked on startup to clean up any incomplete previous
+      // signin attempts.
+      ClearTransientSigninData();
+    }
+    return;
+  }
+
   if (IsSignoutProhibited())
     return;
   set_auth_in_progress(std::string());
@@ -97,8 +139,19 @@ void FakeSigninManager::DoSignOut(
   const std::string account_id = GetAuthenticatedAccountId();
   const std::string username = account_info.email;
   authenticated_account_id_.clear();
-  if (token_service_ && remove_all_accounts)
-    token_service_->RevokeAllCredentials();
+  switch (remove_option) {
+    case RemoveAccountsOption::kRemoveAllAccounts:
+      if (token_service_)
+        token_service_->RevokeAllCredentials();
+      break;
+    case RemoveAccountsOption::kRemoveAuthenticatedAccountIfInError:
+      if (token_service_ && token_service_->RefreshTokenHasError(account_id))
+        token_service_->RevokeCredentials(account_id);
+      break;
+    case RemoveAccountsOption::kKeepAllAccounts:
+      // Do nothing.
+      break;
+  }
 
   FireGoogleSignedOut(account_id, account_info);
 }

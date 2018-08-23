@@ -5,11 +5,11 @@
 #include "content/browser/android/java/gin_java_bridge_message_filter.h"
 
 #include "base/auto_reset.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "content/browser/android/java/gin_java_bridge_dispatcher_host.h"
 #include "content/browser/android/java/java_bridge_thread.h"
 #include "content/common/gin_java_bridge_messages.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -110,7 +110,7 @@ GinJavaBridgeDispatcherHost* GinJavaBridgeMessageFilter::FindHost() {
   // Not being able to find a host is OK -- we can receive messages from
   // RenderFrames for which the corresponding host part has already been
   // destroyed. That means, any references to Java objects that the host was
-  // holding were already released (with the death of ContentViewCore), so we
+  // holding were already released (with the death of WebContents), so we
   // can just ignore such messages.
   // RenderProcessHostImpl does the same -- if it can't find a listener
   // for the message's routing id, it just drops the message silently.

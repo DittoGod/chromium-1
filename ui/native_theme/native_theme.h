@@ -311,11 +311,13 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_ProminentButtonColor,
     kColorId_TextOnProminentButtonColor,
     // MenuItem
+    kColorId_TouchableMenuItemLabelColor,
+    kColorId_ActionableSubmenuVerticalSeparatorColor,
     kColorId_EnabledMenuItemForegroundColor,
     kColorId_DisabledMenuItemForegroundColor,
     kColorId_SelectedMenuItemForegroundColor,
     kColorId_FocusedMenuItemBackgroundColor,
-    kColorId_MenuItemSubtitleColor,
+    kColorId_MenuItemMinorTextColor,
     kColorId_MenuSeparatorColor,
     kColorId_MenuBackgroundColor,
     kColorId_MenuBorderColor,
@@ -434,7 +436,7 @@ class NATIVE_THEME_EXPORT NativeTheme {
 
  private:
   // Observers to notify when the native theme changes.
-  base::ObserverList<NativeThemeObserver> native_theme_observers_;
+  base::ObserverList<NativeThemeObserver>::Unchecked native_theme_observers_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeTheme);
 };

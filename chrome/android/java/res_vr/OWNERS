@@ -1,4 +1,5 @@
-set noparent
-file://chrome/android/java/res/OWNERS
-# COMPONENT: UI>Browser>Mobile
+file://chrome/android/java/src/org/chromium/chrome/browser/vr/VR_JAVA_OWNERS
+
+# TEAM: xr-dev@chromium.org
+# COMPONENT: UI>Browser>VR
 # OS: Android

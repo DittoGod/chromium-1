@@ -12,11 +12,10 @@
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/extensions/bookmark_app_helper.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/web_applications/extensions/bookmark_app_util.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/web_application_info.h"
 #include "extensions/common/constants.h"
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(banners::AppBannerManagerDesktop);
 
 namespace {
 
@@ -27,11 +26,14 @@ bool gDisableTriggeringForTesting = false;
 namespace banners {
 
 bool AppBannerManagerDesktop::IsEnabled() {
-  if (gDisableTriggeringForTesting)
-    return false;
-
   return base::FeatureList::IsEnabled(features::kAppBanners) ||
          IsExperimentalAppBannersEnabled();
+}
+
+// static
+AppBannerManager* AppBannerManager::FromWebContents(
+    content::WebContents* web_contents) {
+  return AppBannerManagerDesktop::FromWebContents(web_contents);
 }
 
 void AppBannerManagerDesktop::DisableTriggeringForTesting() {
@@ -64,13 +66,10 @@ void AppBannerManagerDesktop::DidFinishCreatingBookmarkApp(
   // TODO(crbug.com/789381): plumb through enough information to be able to
   // distinguish between extension install failures and user-cancellations of
   // the app install dialog.
-  if (IsExperimentalAppBannersEnabled()) {
-    SendBannerPromptRequest();  // Reprompt.
-    return;
-  }
-  // Call Terminate() to terminate the flow but don't record a dismiss metric
-  // here because the banner isn't necessarily dismissed.
-  Terminate();
+  SendBannerDismissed();
+  TrackUserResponse(USER_RESPONSE_WEB_APP_DISMISSED);
+  AppBannerSettingsHelper::RecordBannerDismissEvent(
+      contents, GetAppIdentifier(), AppBannerSettingsHelper::WEB);
 }
 
 bool AppBannerManagerDesktop::IsWebAppConsideredInstalled(
@@ -78,7 +77,7 @@ bool AppBannerManagerDesktop::IsWebAppConsideredInstalled(
     const GURL& validated_url,
     const GURL& start_url,
     const GURL& manifest_url) {
-  return extensions::BookmarkAppHelper::BookmarkOrHostedAppInstalled(
+  return extensions::BookmarkOrHostedAppInstalled(
       web_contents->GetBrowserContext(), start_url);
 }
 

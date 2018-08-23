@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -92,108 +93,6 @@
           "reason": "SVG resource change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "appeared"
     }
   ]
 }

@@ -12,19 +12,24 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/variations/variations_params_manager.h"
+#include "content/browser/frame_host/render_frame_host_delegate.h"
+#include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/common/url_schemes.h"
 #include "content/public/browser/browser_child_process_host_iterator.h"
+#include "content/public/browser/browser_plugin_guest_delegate.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/site_isolation_policy.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/process_type.h"
@@ -119,8 +124,7 @@ void RunMessageLoop() {
 }
 
 void RunThisRunLoop(base::RunLoop* run_loop) {
-  base::MessageLoop::ScopedNestableTaskAllower allow(
-      base::MessageLoop::current());
+  base::MessageLoopCurrent::ScopedNestableTaskAllower allow;
   run_loop->Run();
 }
 
@@ -159,14 +163,14 @@ void RunAllTasksUntilIdle() {
     // current loop iteration and loop in case the MessageLoop posts tasks to
     // the Task Scheduler after the initial flush.
     TaskObserver task_observer;
-    base::MessageLoop::current()->AddTaskObserver(&task_observer);
+    base::MessageLoopCurrent::Get()->AddTaskObserver(&task_observer);
 
     base::RunLoop run_loop;
     base::TaskScheduler::GetInstance()->FlushAsyncForTesting(
         run_loop.QuitWhenIdleClosure());
     run_loop.Run();
 
-    base::MessageLoop::current()->RemoveTaskObserver(&task_observer);
+    base::MessageLoopCurrent::Get()->RemoveTaskObserver(&task_observer);
 
     if (!task_observer.processed())
       break;
@@ -191,8 +195,7 @@ std::unique_ptr<base::Value> ExecuteScriptAndGetValue(
 }
 
 bool AreAllSitesIsolatedForTesting() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kSitePerProcess);
+  return SiteIsolationPolicy::UseDedicatedProcessesForAllSites();
 }
 
 void IsolateAllSitesForTesting(base::CommandLine* command_line) {
@@ -220,6 +223,55 @@ void DeprecatedEnableFeatureWithParam(const base::Feature& feature,
   std::map<std::string, std::string> param_values = {{param_name, param_value}};
   variations::testing::VariationParamsManager::AppendVariationParams(
       kFakeTrialName, kFakeTrialGroupName, param_values, command_line);
+}
+
+namespace {
+
+// Helper class for CreateAndAttachInnerContents.
+//
+// TODO(lfg): https://crbug.com/821187 Inner webcontentses currently require
+// supplying a BrowserPluginGuestDelegate; however, the oopif architecture
+// doesn't really require it. Refactor this so that we can create an inner
+// contents without any of the guest machinery.
+class InnerWebContentsHelper : public WebContentsObserver {
+ public:
+  explicit InnerWebContentsHelper() : WebContentsObserver() {}
+  ~InnerWebContentsHelper() override = default;
+
+  // WebContentsObserver:
+  void WebContentsDestroyed() override { delete this; }
+
+  void SetInnerWebContents(WebContents* inner_web_contents) {
+    Observe(inner_web_contents);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(InnerWebContentsHelper);
+};
+
+}  // namespace
+
+WebContents* CreateAndAttachInnerContents(RenderFrameHost* rfh) {
+  WebContents* outer_contents =
+      static_cast<RenderFrameHostImpl*>(rfh)->delegate()->GetAsWebContents();
+  if (!outer_contents)
+    return nullptr;
+
+  auto guest_delegate = std::make_unique<InnerWebContentsHelper>();
+
+  WebContents::CreateParams inner_params(outer_contents->GetBrowserContext());
+
+  // TODO(erikchen): Fix ownership semantics for guest views.
+  // https://crbug.com/832879.
+  WebContents* inner_contents = WebContents::Create(inner_params).release();
+
+  // Attach. |inner_contents| becomes owned by |outer_contents|.
+  inner_contents->AttachToOuterWebContentsFrame(outer_contents, rfh);
+
+  // |guest_delegate| becomes owned by |inner_contents|.
+  guest_delegate.release()->SetInnerWebContents(inner_contents);
+
+  return inner_contents;
 }
 
 MessageLoopRunner::MessageLoopRunner(QuitMode quit_mode)
@@ -267,33 +319,26 @@ void MessageLoopRunner::Quit() {
 WindowedNotificationObserver::WindowedNotificationObserver(
     int notification_type,
     const NotificationSource& source)
-    : seen_(false),
-      running_(false),
-      source_(NotificationService::AllSources()) {
+    : source_(NotificationService::AllSources()) {
   AddNotificationType(notification_type, source);
 }
 
 WindowedNotificationObserver::WindowedNotificationObserver(
     int notification_type,
     const ConditionTestCallback& callback)
-    : seen_(false),
-      running_(false),
-      callback_(callback),
-      source_(NotificationService::AllSources()) {
+    : callback_(callback), source_(NotificationService::AllSources()) {
   AddNotificationType(notification_type, source_);
 }
 
 WindowedNotificationObserver::WindowedNotificationObserver(
     int notification_type,
     const ConditionTestCallbackWithoutSourceAndDetails& callback)
-    : seen_(false),
-      running_(false),
-      callback_(base::Bind(&IgnoreSourceAndDetails, callback)),
+    : callback_(base::Bind(&IgnoreSourceAndDetails, callback)),
       source_(NotificationService::AllSources()) {
   registrar_.Add(this, notification_type, source_);
 }
 
-WindowedNotificationObserver::~WindowedNotificationObserver() {}
+WindowedNotificationObserver::~WindowedNotificationObserver() = default;
 
 void WindowedNotificationObserver::AddNotificationType(
     int notification_type,
@@ -302,30 +347,21 @@ void WindowedNotificationObserver::AddNotificationType(
 }
 
 void WindowedNotificationObserver::Wait() {
-  if (seen_)
-    return;
-
-  running_ = true;
-  message_loop_runner_ = new MessageLoopRunner;
-  message_loop_runner_->Run();
+  if (!seen_)
+    run_loop_.Run();
   EXPECT_TRUE(seen_);
 }
 
-void WindowedNotificationObserver::Observe(
-    int type,
-    const NotificationSource& source,
-    const NotificationDetails& details) {
+void WindowedNotificationObserver::Observe(int type,
+                                           const NotificationSource& source,
+                                           const NotificationDetails& details) {
   source_ = source;
   details_ = details;
   if (!callback_.is_null() && !callback_.Run(source, details))
     return;
 
   seen_ = true;
-  if (!running_)
-    return;
-
-  message_loop_runner_->Quit();
-  running_ = false;
+  run_loop_.Quit();
 }
 
 InProcessUtilityThreadHelper::InProcessUtilityThreadHelper()
@@ -336,8 +372,8 @@ InProcessUtilityThreadHelper::InProcessUtilityThreadHelper()
 
 InProcessUtilityThreadHelper::~InProcessUtilityThreadHelper() {
   if (child_thread_count_) {
-    DCHECK(BrowserThread::IsMessageLoopValid(BrowserThread::UI));
-    DCHECK(BrowserThread::IsMessageLoopValid(BrowserThread::IO));
+    DCHECK(BrowserThread::IsThreadInitialized(BrowserThread::UI));
+    DCHECK(BrowserThread::IsThreadInitialized(BrowserThread::IO));
     run_loop_.reset(new base::RunLoop);
     run_loop_->Run();
   }
@@ -406,6 +442,28 @@ void WebContentsDestroyedWatcher::Wait() {
 
 void WebContentsDestroyedWatcher::WebContentsDestroyed() {
   run_loop_.Quit();
+}
+
+TestPageScaleObserver::TestPageScaleObserver(WebContents* web_contents)
+    : WebContentsObserver(web_contents) {}
+
+TestPageScaleObserver::~TestPageScaleObserver() {}
+
+void TestPageScaleObserver::OnPageScaleFactorChanged(float page_scale_factor) {
+  last_scale_ = page_scale_factor;
+  seen_page_scale_change_ = true;
+  if (done_callback_)
+    std::move(done_callback_).Run();
+}
+
+float TestPageScaleObserver::WaitForPageScaleUpdate() {
+  if (!seen_page_scale_change_) {
+    base::RunLoop run_loop;
+    done_callback_ = run_loop.QuitClosure();
+    run_loop.Run();
+  }
+  seen_page_scale_change_ = false;
+  return last_scale_;
 }
 
 GURL EffectiveURLContentBrowserClient::GetEffectiveURL(

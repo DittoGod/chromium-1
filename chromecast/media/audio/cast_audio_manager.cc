@@ -5,13 +5,12 @@
 #include "chromecast/media/audio/cast_audio_manager.h"
 
 #include <algorithm>
-#include <memory>
-#include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "chromecast/media/audio/cast_audio_mixer.h"
 #include "chromecast/media/audio/cast_audio_output_stream.h"
-#include "chromecast/media/cma/backend/media_pipeline_backend_factory.h"
+#include "chromecast/media/cma/backend/cma_backend_factory.h"
 #include "chromecast/public/media/media_pipeline_backend.h"
 
 namespace {
@@ -36,12 +35,18 @@ namespace media {
 CastAudioManager::CastAudioManager(
     std::unique_ptr<::media::AudioThread> audio_thread,
     ::media::AudioLogFactory* audio_log_factory,
-    std::unique_ptr<MediaPipelineBackendFactory> backend_factory,
+    base::RepeatingCallback<CmaBackendFactory*()> backend_factory_getter,
+    scoped_refptr<base::SingleThreadTaskRunner> browser_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> backend_task_runner,
+    service_manager::Connector* connector,
     bool use_mixer)
     : AudioManagerBase(std::move(audio_thread), audio_log_factory),
-      backend_factory_(std::move(backend_factory)),
-      backend_task_runner_(std::move(backend_task_runner)) {
+      backend_factory_getter_(std::move(backend_factory_getter)),
+      browser_task_runner_(std::move(browser_task_runner)),
+      backend_task_runner_(std::move(backend_task_runner)),
+      browser_connector_(connector) {
+  DCHECK(backend_factory_getter_);
+  DCHECK(browser_connector_);
   if (use_mixer)
     mixer_ = std::make_unique<CastAudioMixer>(this);
 }
@@ -68,7 +73,7 @@ void CastAudioManager::GetAudioInputDeviceNames(
   // Need to send a valid AudioParameters object even when it will be unused.
   return ::media::AudioParameters(
       ::media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-      ::media::CHANNEL_LAYOUT_STEREO, kDefaultSampleRate, 16,
+      ::media::CHANNEL_LAYOUT_STEREO, kDefaultSampleRate,
       kDefaultInputBufferSize);
 }
 
@@ -91,6 +96,12 @@ void CastAudioManager::ReleaseOutputStream(::media::AudioOutputStream* stream) {
   }
 }
 
+CmaBackendFactory* CastAudioManager::backend_factory() {
+  if (!backend_factory_)
+    backend_factory_ = backend_factory_getter_.Run();
+  return backend_factory_;
+}
+
 ::media::AudioOutputStream* CastAudioManager::MakeLinearOutputStream(
     const ::media::AudioParameters& params,
     const ::media::AudioManager::LogCallback& log_callback) {
@@ -100,7 +111,8 @@ void CastAudioManager::ReleaseOutputStream(::media::AudioOutputStream* stream) {
   if (mixer_)
     return mixer_->MakeStream(params);
   else
-    return new CastAudioOutputStream(params, this);
+    return new CastAudioOutputStream(params, browser_task_runner_,
+                                     browser_connector_, this);
 }
 
 ::media::AudioOutputStream* CastAudioManager::MakeLowLatencyOutputStream(
@@ -113,7 +125,8 @@ void CastAudioManager::ReleaseOutputStream(::media::AudioOutputStream* stream) {
   if (mixer_)
     return mixer_->MakeStream(params);
   else
-    return new CastAudioOutputStream(params, this);
+    return new CastAudioOutputStream(params, browser_task_runner_,
+                                     browser_connector_, this);
 }
 
 ::media::AudioInputStream* CastAudioManager::MakeLinearInputStream(
@@ -138,7 +151,6 @@ void CastAudioManager::ReleaseOutputStream(::media::AudioOutputStream* stream) {
   ::media::ChannelLayout channel_layout = ::media::CHANNEL_LAYOUT_STEREO;
   int sample_rate = kDefaultSampleRate;
   int buffer_size = kDefaultOutputBufferSize;
-  int bits_per_sample = 16;
   if (input_params.IsValid()) {
     // Do not change:
     // - the channel layout
@@ -152,7 +164,7 @@ void CastAudioManager::ReleaseOutputStream(::media::AudioOutputStream* stream) {
 
   ::media::AudioParameters output_params(
       ::media::AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
-      sample_rate, bits_per_sample, buffer_size);
+      sample_rate, buffer_size);
   return output_params;
 }
 
@@ -163,7 +175,8 @@ void CastAudioManager::ReleaseOutputStream(::media::AudioOutputStream* stream) {
 
   // Keep a reference to this stream for proper behavior on
   // CastAudioManager::ReleaseOutputStream.
-  mixer_output_stream_.reset(new CastAudioOutputStream(params, this));
+  mixer_output_stream_.reset(new CastAudioOutputStream(
+      params, browser_task_runner_, browser_connector_, this));
   return mixer_output_stream_.get();
 }
 

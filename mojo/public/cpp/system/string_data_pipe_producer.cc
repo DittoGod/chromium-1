@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 
 namespace mojo {
 
@@ -58,7 +58,9 @@ MojoResult WriteDataToProducerHandle(DataPipeProducerHandle producer,
 StringDataPipeProducer::StringDataPipeProducer(
     ScopedDataPipeProducerHandle producer)
     : producer_(std::move(producer)),
-      watcher_(FROM_HERE, SimpleWatcher::ArmingPolicy::AUTOMATIC),
+      watcher_(FROM_HERE,
+               SimpleWatcher::ArmingPolicy::AUTOMATIC,
+               base::SequencedTaskRunnerHandle::Get()),
       weak_factory_(this) {}
 
 StringDataPipeProducer::~StringDataPipeProducer() = default;

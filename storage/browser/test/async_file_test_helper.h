@@ -10,7 +10,7 @@
 
 #include "storage/browser/fileapi/file_system_operation.h"
 #include "storage/common/fileapi/file_system_types.h"
-#include "third_party/WebKit/common/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 
 class GURL;
 
@@ -99,7 +99,8 @@ class AsyncFileTestHelper {
   static bool DirectoryExists(storage::FileSystemContext* context,
                               const storage::FileSystemURL& url);
 
-  // Returns usage and quota. It's valid to pass NULL to |usage| and/or |quota|.
+  // Returns usage and quota. It's valid to pass nullptr to |usage| and/or
+  // |quota|.
   static blink::mojom::QuotaStatusCode GetUsageAndQuota(
       storage::QuotaManager* quota_manager,
       const GURL& origin,

@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
 #include "base/threading/sequenced_task_runner_handle.h"
@@ -24,17 +23,20 @@ class SingleRequestURLLoaderFactory::HandlerState
       : handler_(std::move(handler)),
         handler_task_runner_(base::SequencedTaskRunnerHandle::Get()) {}
 
-  void HandleRequest(network::mojom::URLLoaderRequest loader,
+  void HandleRequest(const network::ResourceRequest& resource_request,
+                     network::mojom::URLLoaderRequest loader,
                      network::mojom::URLLoaderClientPtr client) {
     if (!handler_task_runner_->RunsTasksInCurrentSequence()) {
       handler_task_runner_->PostTask(
-          FROM_HERE, base::BindOnce(&HandlerState::HandleRequest, this,
-                                    std::move(loader), std::move(client)));
+          FROM_HERE,
+          base::BindOnce(&HandlerState::HandleRequest, this, resource_request,
+                         std::move(loader), std::move(client)));
       return;
     }
 
     DCHECK(handler_);
-    std::move(handler_).Run(std::move(loader), std::move(client));
+    std::move(handler_).Run(resource_request, std::move(loader),
+                            std::move(client));
   }
 
  private:
@@ -57,14 +59,14 @@ class SingleRequestURLLoaderFactory::HandlerState
 };
 
 class SingleRequestURLLoaderFactory::FactoryInfo
-    : public SharedURLLoaderFactoryInfo {
+    : public network::SharedURLLoaderFactoryInfo {
  public:
   explicit FactoryInfo(scoped_refptr<HandlerState> state)
       : state_(std::move(state)) {}
   ~FactoryInfo() override = default;
 
   // SharedURLLoaderFactoryInfo:
-  scoped_refptr<SharedURLLoaderFactory> CreateFactory() override {
+  scoped_refptr<network::SharedURLLoaderFactory> CreateFactory() override {
     return new SingleRequestURLLoaderFactory(std::move(state_));
   }
 
@@ -86,10 +88,15 @@ void SingleRequestURLLoaderFactory::CreateLoaderAndStart(
     const network::ResourceRequest& request,
     network::mojom::URLLoaderClientPtr client,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
-  state_->HandleRequest(std::move(loader), std::move(client));
+  state_->HandleRequest(request, std::move(loader), std::move(client));
 }
 
-std::unique_ptr<SharedURLLoaderFactoryInfo>
+void SingleRequestURLLoaderFactory::Clone(
+    network::mojom::URLLoaderFactoryRequest request) {
+  NOTREACHED();
+}
+
+std::unique_ptr<network::SharedURLLoaderFactoryInfo>
 SingleRequestURLLoaderFactory::Clone() {
   return std::make_unique<FactoryInfo>(state_);
 }

@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/values.h"
@@ -61,7 +60,7 @@ class MockPrefStore : public ValueMapPrefStore {
 
   bool initialized_ = false;
   bool success_ = false;
-  base::ObserverList<PrefStore::Observer, true> observers_;
+  base::ObserverList<PrefStore::Observer, true>::Unchecked observers_;
 };
 
 void ExpectInitializationComplete(PrefStore* pref_store, bool success) {

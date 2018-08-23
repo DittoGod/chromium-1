@@ -13,11 +13,13 @@
 #include "base/bind.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "chrome/browser/chromeos/printing/specifics_translation.h"
 #include "components/sync/base/report_unrecoverable_error.h"
 #include "components/sync/model/model_type_change_processor.h"
 #include "components/sync/model/model_type_store.h"
 #include "components/sync/model/mutable_data_batch.h"
+#include "components/sync/model_impl/client_tag_based_model_type_processor.h"
 #include "components/sync/protocol/model_type_state.pb.h"
 #include "components/sync/protocol/sync.pb.h"
 
@@ -25,13 +27,14 @@ namespace chromeos {
 
 namespace {
 
+using syncer::ClientTagBasedModelTypeProcessor;
 using syncer::ConflictResolution;
 using syncer::EntityChange;
 using syncer::EntityChangeList;
 using syncer::EntityData;
+using syncer::MetadataChangeList;
 using syncer::ModelTypeChangeProcessor;
 using syncer::ModelTypeStore;
-using syncer::MetadataChangeList;
 
 std::unique_ptr<EntityData> CopyToEntityData(
     const sync_pb::PrinterSpecifics& specifics) {
@@ -70,6 +73,7 @@ class PrintersSyncBridge::StoreProxy {
     store_->CommitWriteBatch(
         std::move(batch),
         base::BindOnce(&StoreProxy::OnCommit, weak_ptr_factory_.GetWeakPtr()));
+    owner_->NotifyPrintersUpdated();
   }
 
  private:
@@ -148,9 +152,9 @@ class PrintersSyncBridge::StoreProxy {
 PrintersSyncBridge::PrintersSyncBridge(
     syncer::OnceModelTypeStoreFactory callback,
     const base::RepeatingClosure& error_callback)
-    : ModelTypeSyncBridge(base::BindRepeating(&ModelTypeChangeProcessor::Create,
-                                              error_callback),
-                          syncer::PRINTERS),
+    : ModelTypeSyncBridge(
+          std::make_unique<ClientTagBasedModelTypeProcessor>(syncer::PRINTERS,
+                                                             error_callback)),
       store_delegate_(std::make_unique<StoreProxy>(this, std::move(callback))),
       observers_(new base::ObserverListThreadSafe<Observer>()) {}
 
@@ -199,7 +203,7 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::MergeSyncData(
   }
 
   NotifyPrintersUpdated();
-  batch->TransferMetadataChanges(std::move(metadata_change_list));
+  batch->TakeMetadataChangesFrom(std::move(metadata_change_list));
   store_delegate_->Commit(std::move(batch));
   return {};
 }
@@ -233,7 +237,7 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::ApplySyncChanges(
 
   NotifyPrintersUpdated();
   // Update the local database with metadata for the incoming changes.
-  batch->TransferMetadataChanges(std::move(metadata_change_list));
+  batch->TakeMetadataChangesFrom(std::move(metadata_change_list));
 
   store_delegate_->Commit(std::move(batch));
   return {};
@@ -251,10 +255,10 @@ void PrintersSyncBridge::GetData(StorageKeyList storage_keys,
       }
     }
   }
-  callback.Run(std::move(batch));
+  std::move(callback).Run(std::move(batch));
 }
 
-void PrintersSyncBridge::GetAllData(DataCallback callback) {
+void PrintersSyncBridge::GetAllDataForDebugging(DataCallback callback) {
   auto batch = std::make_unique<syncer::MutableDataBatch>();
   {
     base::AutoLock lock(data_lock_);
@@ -262,7 +266,7 @@ void PrintersSyncBridge::GetAllData(DataCallback callback) {
       batch->Put(entry.first, CopyToEntityData(*entry.second));
     }
   }
-  callback.Run(std::move(batch));
+  std::move(callback).Run(std::move(batch));
 }
 
 std::string PrintersSyncBridge::GetClientTag(const EntityData& entity_data) {
@@ -326,7 +330,7 @@ bool PrintersSyncBridge::UpdatePrinterLocked(
 
   // Modify the printer in-place then notify the change processor.
   sync_pb::PrinterSpecifics* merged = iter->second.get();
-  merged->MergeFrom(*printer);
+  MergePrinterToSpecifics(*SpecificsToPrinter(*printer), merged);
   merged->set_updated_timestamp(base::Time::Now().ToJavaTime());
   CommitPrinterPut(*merged);
 
@@ -374,6 +378,11 @@ base::Optional<sync_pb::PrinterSpecifics> PrintersSyncBridge::GetPrinter(
   }
 
   return {*iter->second};
+}
+
+bool PrintersSyncBridge::HasPrinter(const std::string& id) const {
+  base::AutoLock lock(data_lock_);
+  return all_data_.find(id) != all_data_.end();
 }
 
 void PrintersSyncBridge::CommitPrinterPut(

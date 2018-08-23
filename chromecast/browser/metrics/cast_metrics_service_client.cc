@@ -36,6 +36,7 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/histogram_fetcher.h"
 #include "content/public/common/content_switches.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if defined(OS_LINUX)
 #include "chromecast/browser/metrics/external_metrics.h"
@@ -243,7 +244,7 @@ CastMetricsServiceClient::CreateUploader(
     ::metrics::MetricsLogUploader::MetricServiceType service_type,
     const ::metrics::MetricsLogUploader::UploadCallback& on_upload_complete) {
   return std::unique_ptr<::metrics::MetricsLogUploader>(
-      new ::metrics::NetMetricsLogUploader(request_context_, server_url,
+      new ::metrics::NetMetricsLogUploader(url_loader_factory_, server_url,
                                            insecure_server_url, mime_type,
                                            service_type, on_upload_complete));
 }
@@ -259,8 +260,9 @@ bool CastMetricsServiceClient::IsConsentGiven() const {
 void CastMetricsServiceClient::EnableMetricsService(bool enabled) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&CastMetricsServiceClient::EnableMetricsService,
-                              base::Unretained(this), enabled));
+        FROM_HERE,
+        base::BindOnce(&CastMetricsServiceClient::EnableMetricsService,
+                       base::Unretained(this), enabled));
     return;
   }
 
@@ -273,16 +275,15 @@ void CastMetricsServiceClient::EnableMetricsService(bool enabled) {
 
 CastMetricsServiceClient::CastMetricsServiceClient(
     PrefService* pref_service,
-    net::URLRequestContextGetter* request_context)
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
     : pref_service_(pref_service),
-      cast_service_(nullptr),
       client_info_loaded_(false),
 #if defined(OS_LINUX)
       external_metrics_(nullptr),
       platform_metrics_(nullptr),
 #endif  // defined(OS_LINUX)
       task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      request_context_(request_context) {
+      url_loader_factory_(url_loader_factory) {
 }
 
 CastMetricsServiceClient::~CastMetricsServiceClient() {
@@ -314,11 +315,8 @@ void CastMetricsServiceClient::SetForceClientId(
   force_client_id_ = client_id;
 }
 
-void CastMetricsServiceClient::Initialize(CastService* cast_service) {
-  DCHECK(cast_service);
-  DCHECK(!cast_service_);
-  cast_service_ = cast_service;
-
+void CastMetricsServiceClient::Initialize() {
+  DCHECK(!metrics_state_manager_);
   metrics_state_manager_ = ::metrics::MetricsStateManager::Create(
       pref_service_, this, base::string16(),
       base::Bind(&CastMetricsServiceClient::StoreClientInfo,

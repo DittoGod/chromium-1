@@ -11,24 +11,29 @@
 #include "base/message_loop/message_loop.h"
 #include "base/sys_info.h"
 #include "base/threading/thread.h"
-#include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/arc_midis_client.h"
 #include "chromeos/dbus/arc_obb_mounter_client.h"
 #include "chromeos/dbus/arc_oemcrypto_client.h"
 #include "chromeos/dbus/auth_policy_client.h"
 #include "chromeos/dbus/biod/biod_client.h"
+#include "chromeos/dbus/cec_service_client.h"
+#include "chromeos/dbus/cicerone_client.h"
+#include "chromeos/dbus/concierge_client.h"
 #include "chromeos/dbus/cras_audio_client.h"
 #include "chromeos/dbus/cros_disks_client.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/dbus_clients_browser.h"
 #include "chromeos/dbus/dbus_clients_common.h"
+#include "chromeos/dbus/dbus_switches.h"
 #include "chromeos/dbus/debug_daemon_client.h"
 #include "chromeos/dbus/easy_unlock_client.h"
 #include "chromeos/dbus/gsm_sms_client.h"
+#include "chromeos/dbus/hammerd_client.h"
 #include "chromeos/dbus/image_burner_client.h"
 #include "chromeos/dbus/image_loader_client.h"
 #include "chromeos/dbus/lorgnette_manager_client.h"
+#include "chromeos/dbus/machine_learning_client.h"
 #include "chromeos/dbus/media_analytics_client.h"
 #include "chromeos/dbus/modem_messaging_client.h"
 #include "chromeos/dbus/permission_broker_client.h"
@@ -113,6 +118,11 @@ dbus::Bus* DBusThreadManager::GetSystemBus() {
   return system_bus_.get();
 }
 
+ArcAppfuseProviderClient* DBusThreadManager::GetArcAppfuseProviderClient() {
+  return clients_browser_ ? clients_browser_->arc_appfuse_provider_client_.get()
+                          : nullptr;
+}
+
 ArcMidisClient* DBusThreadManager::GetArcMidisClient() {
   return clients_browser_ ? clients_browser_->arc_midis_client_.get() : nullptr;
 }
@@ -136,6 +146,18 @@ BiodClient* DBusThreadManager::GetBiodClient() {
   return clients_common_->biod_client_.get();
 }
 
+CecServiceClient* DBusThreadManager::GetCecServiceClient() {
+  return clients_common_->cec_service_client_.get();
+}
+
+CiceroneClient* DBusThreadManager::GetCiceroneClient() {
+  return clients_browser_ ? clients_browser_->cicerone_client_.get() : nullptr;
+}
+
+ConciergeClient* DBusThreadManager::GetConciergeClient() {
+  return clients_browser_ ? clients_browser_->concierge_client_.get() : nullptr;
+}
+
 CrasAudioClient* DBusThreadManager::GetCrasAudioClient() {
   return clients_common_->cras_audio_client_.get();
 }
@@ -156,11 +178,6 @@ DebugDaemonClient* DBusThreadManager::GetDebugDaemonClient() {
 
 EasyUnlockClient* DBusThreadManager::GetEasyUnlockClient() {
   return clients_browser_ ? clients_browser_->easy_unlock_client_.get()
-                          : nullptr;
-}
-
-LorgnetteManagerClient* DBusThreadManager::GetLorgnetteManagerClient() {
-  return clients_browser_ ? clients_browser_->lorgnette_manager_client_.get()
                           : nullptr;
 }
 
@@ -193,6 +210,10 @@ GsmSMSClient* DBusThreadManager::GetGsmSMSClient() {
   return clients_common_->gsm_sms_client_.get();
 }
 
+HammerdClient* DBusThreadManager::GetHammerdClient() {
+  return clients_common_->hammerd_client_.get();
+}
+
 ImageBurnerClient* DBusThreadManager::GetImageBurnerClient() {
   return clients_browser_ ? clients_browser_->image_burner_client_.get()
                           : nullptr;
@@ -203,6 +224,15 @@ ImageLoaderClient* DBusThreadManager::GetImageLoaderClient() {
                           : nullptr;
 }
 
+LorgnetteManagerClient* DBusThreadManager::GetLorgnetteManagerClient() {
+  return clients_browser_ ? clients_browser_->lorgnette_manager_client_.get()
+                          : nullptr;
+}
+
+MachineLearningClient* DBusThreadManager::GetMachineLearningClient() {
+  return clients_common_->machine_learning_client_.get();
+}
+
 MediaAnalyticsClient* DBusThreadManager::GetMediaAnalyticsClient() {
   return clients_browser_ ? clients_browser_->media_analytics_client_.get()
                           : nullptr;
@@ -210,6 +240,10 @@ MediaAnalyticsClient* DBusThreadManager::GetMediaAnalyticsClient() {
 
 ModemMessagingClient* DBusThreadManager::GetModemMessagingClient() {
   return clients_common_->modem_messaging_client_.get();
+}
+
+OobeConfigurationClient* DBusThreadManager::GetOobeConfigurationClient() {
+  return clients_browser_->oobe_configuration_client_.get();
 }
 
 PermissionBrokerClient* DBusThreadManager::GetPermissionBrokerClient() {
@@ -242,7 +276,7 @@ UpdateEngineClient* DBusThreadManager::GetUpdateEngineClient() {
 }
 
 UpstartClient* DBusThreadManager::GetUpstartClient() {
-  return clients_browser_ ? clients_browser_->upstart_client_.get() : nullptr;
+  return clients_common_ ? clients_common_->upstart_client_.get() : nullptr;
 }
 
 VirtualFileProviderClient* DBusThreadManager::GetVirtualFileProviderClient() {
@@ -343,6 +377,18 @@ void DBusThreadManagerSetter::SetBiodClient(
   DBusThreadManager::Get()->clients_common_->biod_client_ = std::move(client);
 }
 
+void DBusThreadManagerSetter::SetCiceroneClient(
+    std::unique_ptr<CiceroneClient> client) {
+  DBusThreadManager::Get()->clients_browser_->cicerone_client_ =
+      std::move(client);
+}
+
+void DBusThreadManagerSetter::SetConciergeClient(
+    std::unique_ptr<ConciergeClient> client) {
+  DBusThreadManager::Get()->clients_browser_->concierge_client_ =
+      std::move(client);
+}
+
 void DBusThreadManagerSetter::SetCrasAudioClient(
     std::unique_ptr<CrasAudioClient> client) {
   DBusThreadManager::Get()->clients_common_->cras_audio_client_ =
@@ -364,6 +410,12 @@ void DBusThreadManagerSetter::SetCryptohomeClient(
 void DBusThreadManagerSetter::SetDebugDaemonClient(
     std::unique_ptr<DebugDaemonClient> client) {
   DBusThreadManager::Get()->clients_browser_->debug_daemon_client_ =
+      std::move(client);
+}
+
+void DBusThreadManagerSetter::SetHammerdClient(
+    std::unique_ptr<HammerdClient> client) {
+  DBusThreadManager::Get()->clients_common_->hammerd_client_ =
       std::move(client);
 }
 
@@ -460,7 +512,7 @@ void DBusThreadManagerSetter::SetUpdateEngineClient(
 
 void DBusThreadManagerSetter::SetUpstartClient(
     std::unique_ptr<UpstartClient> client) {
-  DBusThreadManager::Get()->clients_browser_->upstart_client_ =
+  DBusThreadManager::Get()->clients_common_->upstart_client_ =
       std::move(client);
 }
 

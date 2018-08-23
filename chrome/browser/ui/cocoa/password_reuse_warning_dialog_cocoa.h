@@ -9,6 +9,7 @@
 
 #import "base/mac/scoped_nsobject.h"
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
+#include "components/safe_browsing/password_protection/metrics_util.h"
 #include "content/public/browser/web_contents_observer.h"
 
 @class ConstrainedWindowCustomWindow;
@@ -22,19 +23,16 @@ class PasswordReuseWarningDialogCocoa
   PasswordReuseWarningDialogCocoa(
       content::WebContents* web_contents,
       safe_browsing::ChromePasswordProtectionService* service,
+      ReusedPasswordType password_type,
       safe_browsing::OnWarningDone callback);
 
   ~PasswordReuseWarningDialogCocoa() override;
 
   // ChromePasswordProtectionService::Observer:
-  void OnStartingGaiaPasswordChange() override;
   void OnGaiaPasswordChanged() override;
   void OnMarkingSiteAsLegitimate(const GURL& url) override;
-  void InvokeActionForTesting(
-      safe_browsing::ChromePasswordProtectionService::WarningAction action)
-      override;
-  safe_browsing::ChromePasswordProtectionService::WarningUIType
-  GetObserverType() override;
+  void InvokeActionForTesting(safe_browsing::WarningAction action) override;
+  safe_browsing::WarningUIType GetObserverType() override;
 
   // content::WebContentsObserver:
   void WebContentsDestroyed() override;
@@ -45,6 +43,9 @@ class PasswordReuseWarningDialogCocoa
 
   // Closes the dialog.
   void Close();
+
+  // Called by |controller_| to get the detailed warning text.
+  base::string16 GetWarningDetailText();
 
  private:
   // This class observes the |service_| to check if the password reuse
@@ -65,6 +66,9 @@ class PasswordReuseWarningDialogCocoa
 
   // Controller for the dialog view.
   base::scoped_nsobject<PasswordReuseWarningViewController> controller_;
+
+  // Type of password reuse that triggered this warning dialog.
+  ReusedPasswordType password_type_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordReuseWarningDialogCocoa);
 };

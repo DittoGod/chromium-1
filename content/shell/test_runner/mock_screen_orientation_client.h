@@ -12,10 +12,9 @@
 #include "content/shell/test_runner/test_runner_export.h"
 #include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
-#include "services/device/public/interfaces/screen_orientation.mojom.h"
-#include "third_party/WebKit/public/platform/modules/screen_orientation/WebLockOrientationCallback.h"
-#include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
-#include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationType.h"
+#include "services/device/public/mojom/screen_orientation.mojom.h"
+#include "third_party/blink/public/common/screen_orientation/web_screen_orientation_lock_type.h"
+#include "third_party/blink/public/common/screen_orientation/web_screen_orientation_type.h"
 
 namespace blink {
 class WebLocalFrame;

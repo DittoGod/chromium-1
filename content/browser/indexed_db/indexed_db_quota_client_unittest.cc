@@ -15,7 +15,6 @@
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
 #include "content/browser/indexed_db/indexed_db_quota_client.h"
 #include "content/public/browser/storage_partition.h"
@@ -82,8 +81,8 @@ class IndexedDBQuotaClientTest : public testing::Test {
     usage_ = -1;
     client->GetOriginUsage(
         origin, type,
-        base::Bind(&IndexedDBQuotaClientTest::OnGetOriginUsageComplete,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&IndexedDBQuotaClientTest::OnGetOriginUsageComplete,
+                       weak_factory_.GetWeakPtr()));
     RunAllTasksUntilIdle();
     EXPECT_GT(usage_, -1);
     return usage_;
@@ -93,9 +92,8 @@ class IndexedDBQuotaClientTest : public testing::Test {
                                                  StorageType type) {
     origins_.clear();
     client->GetOriginsForType(
-        type,
-        base::Bind(&IndexedDBQuotaClientTest::OnGetOriginsComplete,
-                   weak_factory_.GetWeakPtr()));
+        type, base::BindOnce(&IndexedDBQuotaClientTest::OnGetOriginsComplete,
+                             weak_factory_.GetWeakPtr()));
     RunAllTasksUntilIdle();
     return origins_;
   }
@@ -105,10 +103,9 @@ class IndexedDBQuotaClientTest : public testing::Test {
                                                  const std::string& host) {
     origins_.clear();
     client->GetOriginsForHost(
-        type,
-        host,
-        base::Bind(&IndexedDBQuotaClientTest::OnGetOriginsComplete,
-                   weak_factory_.GetWeakPtr()));
+        type, host,
+        base::BindOnce(&IndexedDBQuotaClientTest::OnGetOriginsComplete,
+                       weak_factory_.GetWeakPtr()));
     RunAllTasksUntilIdle();
     return origins_;
   }
@@ -119,8 +116,8 @@ class IndexedDBQuotaClientTest : public testing::Test {
     delete_status_ = blink::mojom::QuotaStatusCode::kUnknown;
     client->DeleteOriginData(
         origin, type,
-        base::Bind(&IndexedDBQuotaClientTest::OnDeleteOriginComplete,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&IndexedDBQuotaClientTest::OnDeleteOriginComplete,
+                       weak_factory_.GetWeakPtr()));
     RunAllTasksUntilIdle();
     return delete_status_;
   }

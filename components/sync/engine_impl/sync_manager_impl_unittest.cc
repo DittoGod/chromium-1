@@ -921,7 +921,7 @@ class SyncManagerTest : public testing::Test,
     switches_.encryption_method = EngineComponentsFactory::ENCRYPTION_KEYSTORE;
   }
 
-  virtual ~SyncManagerTest() {}
+  ~SyncManagerTest() override {}
 
   virtual void DoSetUp(bool enable_local_sync_backend) {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
@@ -969,6 +969,8 @@ class SyncManagerTest : public testing::Test,
     args.unrecoverable_error_handler =
         MakeWeakHandle(mock_unrecoverable_error_handler_.GetWeakPtr());
     args.cancelation_signal = &cancelation_signal_;
+    args.short_poll_interval = base::TimeDelta::FromMinutes(60);
+    args.long_poll_interval = base::TimeDelta::FromMinutes(120);
     sync_manager_.Init(&args);
 
     sync_manager_.GetEncryptionHandler()->AddObserver(&encryption_observer_);
@@ -978,9 +980,8 @@ class SyncManagerTest : public testing::Test,
 
     if (initialization_succeeded_) {
       ModelTypeSet enabled_types = GetEnabledTypes();
-      for (auto it = enabled_types.First(); it.Good(); it.Inc()) {
-        type_roots_[it.Get()] =
-            MakeTypeRoot(sync_manager_.GetUserShare(), it.Get());
+      for (ModelType type : enabled_types) {
+        type_roots_[type] = MakeTypeRoot(sync_manager_.GetUserShare(), type);
       }
     }
 
@@ -988,11 +989,11 @@ class SyncManagerTest : public testing::Test,
   }
 
   // Test implementation.
-  void SetUp() { DoSetUp(false); }
+  void SetUp() override { DoSetUp(false); }
 
-  void TearDown() {
+  void TearDown() override {
     sync_manager_.RemoveObserver(&manager_observer_);
-    sync_manager_.ShutdownOnSyncThread(STOP_SYNC);
+    sync_manager_.ShutdownOnSyncThread();
     PumpLoop();
   }
 
@@ -1007,7 +1008,6 @@ class SyncManagerTest : public testing::Test,
     enabled_types.Put(PASSWORDS);
     enabled_types.Put(PREFERENCES);
     enabled_types.Put(PRIORITY_PREFERENCES);
-    enabled_types.Put(ARTICLES);
 
     return enabled_types;
   }
@@ -1119,7 +1119,7 @@ class SyncManagerTest : public testing::Test,
   }
 
   void SimulateInvalidatorEnabledForTest(bool is_enabled) {
-    DCHECK(sync_manager_.thread_checker_.CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sync_manager_.sequence_checker_);
     sync_manager_.SetInvalidatorEnabled(is_enabled);
   }
 
@@ -2577,12 +2577,12 @@ TEST_F(SyncManagerTest, IncrementTransactionVersion) {
   {
     ReadTransaction read_trans(FROM_HERE, sync_manager_.GetUserShare());
     ModelTypeSet enabled_types = GetEnabledTypes();
-    for (auto it = enabled_types.First(); it.Good(); it.Inc()) {
+    for (ModelType type : enabled_types) {
       // Transaction version is incremented when SyncManagerTest::SetUp()
       // creates a node of each type.
-      EXPECT_EQ(1,
-                sync_manager_.GetUserShare()->directory->GetTransactionVersion(
-                    it.Get()));
+      EXPECT_EQ(
+          1,
+          sync_manager_.GetUserShare()->directory->GetTransactionVersion(type));
     }
   }
 
@@ -2597,10 +2597,10 @@ TEST_F(SyncManagerTest, IncrementTransactionVersion) {
   {
     ReadTransaction read_trans(FROM_HERE, sync_manager_.GetUserShare());
     ModelTypeSet enabled_types = GetEnabledTypes();
-    for (auto it = enabled_types.First(); it.Good(); it.Inc()) {
-      EXPECT_EQ(it.Get() == BOOKMARKS ? 2 : 1,
-                sync_manager_.GetUserShare()->directory->GetTransactionVersion(
-                    it.Get()));
+    for (ModelType type : enabled_types) {
+      EXPECT_EQ(
+          type == BOOKMARKS ? 2 : 1,
+          sync_manager_.GetUserShare()->directory->GetTransactionVersion(type));
     }
   }
 }
@@ -2640,7 +2640,7 @@ TEST_F(SyncManagerWithLocalBackendTest, StartSyncInLocalMode) {
 class MockSyncScheduler : public FakeSyncScheduler {
  public:
   MockSyncScheduler() : FakeSyncScheduler() {}
-  virtual ~MockSyncScheduler() {}
+  ~MockSyncScheduler() override {}
 
   MOCK_METHOD2(Start, void(SyncScheduler::Mode, base::Time));
   MOCK_METHOD1(ScheduleConfiguration, void(const ConfigurationParams&));
@@ -2710,7 +2710,7 @@ TEST_F(SyncManagerTestWithMockScheduler, BasicConfiguration) {
                  base::Unretained(&retry_task_counter)));
   EXPECT_EQ(0, ready_task_counter.times_called());
   EXPECT_EQ(0, retry_task_counter.times_called());
-  EXPECT_EQ(sync_pb::GetUpdatesCallerInfo::RECONFIGURATION, params.source);
+  EXPECT_EQ(sync_pb::SyncEnums::RECONFIGURATION, params.origin);
   EXPECT_EQ(types_to_download, params.types_to_download);
 }
 
@@ -2721,9 +2721,8 @@ TEST_F(SyncManagerTestWithMockScheduler, PurgeDisabledTypes) {
   ModelTypeSet disabled_types = Difference(ModelTypeSet::All(), enabled_types);
   // Set data for all types.
   ModelTypeSet protocol_types = ProtocolTypes();
-  for (ModelTypeSet::Iterator iter = protocol_types.First(); iter.Good();
-       iter.Inc()) {
-    SetProgressMarkerForType(iter.Get(), true);
+  for (ModelType type : protocol_types) {
+    SetProgressMarkerForType(type, true);
   }
 
   sync_manager_.PurgeDisabledTypes(disabled_types, ModelTypeSet(),
@@ -2832,9 +2831,8 @@ TEST_F(SyncManagerTest, PurgeDisabledTypes) {
 
   // Set progress markers for all types.
   ModelTypeSet protocol_types = ProtocolTypes();
-  for (ModelTypeSet::Iterator iter = protocol_types.First(); iter.Good();
-       iter.Inc()) {
-    SetProgressMarkerForType(iter.Get(), true);
+  for (ModelType type : protocol_types) {
+    SetProgressMarkerForType(type, true);
   }
 
   // Verify all the enabled types remain after cleanup, and all the disabled
@@ -2874,9 +2872,8 @@ TEST_F(SyncManagerTest, PurgeUnappliedTypes) {
 
   // Set progress markers for all types.
   ModelTypeSet protocol_types = ProtocolTypes();
-  for (ModelTypeSet::Iterator iter = protocol_types.First(); iter.Good();
-       iter.Inc()) {
-    SetProgressMarkerForType(iter.Get(), true);
+  for (ModelType type : protocol_types) {
+    SetProgressMarkerForType(type, true);
   }
 
   // Add the following kinds of items:

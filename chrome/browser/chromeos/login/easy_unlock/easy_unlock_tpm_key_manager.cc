@@ -15,7 +15,7 @@
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -29,6 +29,7 @@
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_nss_types.h"
 
+namespace chromeos {
 namespace {
 
 // The modulus length for RSA keys used by easy sign-in.
@@ -395,3 +396,5 @@ void EasyUnlockTpmKeyManager::OnDataSigned(
     const std::string& signature) {
   callback.Run(signature);
 }
+
+}  // namespace chromeos

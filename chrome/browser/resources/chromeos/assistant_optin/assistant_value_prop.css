@@ -1,0 +1,93 @@
+/* Copyright 2018 The Chromium Authors. All rights reserved.
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the LICENSE file. */
+
+#value-prop-view {
+  display: block;
+  height: 256px;
+  margin: auto;
+}
+
+#intro-text {
+  padding: 0 8px 16px 0;
+}
+
+#value-prop-container {
+  width: 50%;
+}
+
+#consents-container {
+  border-left: 1px solid rgb(218, 220, 224);
+  padding-left: 24px;
+  width: 50%;
+}
+
+#user-name {
+  color: #757575;
+  padding-left: 8px;
+}
+
+#footer-text {
+  color: #757575;
+  padding-top: 16px;
+}
+
+#user-image {
+  border-radius: 50%;
+  height: 20px;
+}
+
+.oobe-popup {
+  border-radius: 8px;
+  box-shadow: unset;
+  width: 512px;
+}
+
+#overlay-text {
+  box-sizing: border-box;
+  font-size: 13px;
+  margin: auto;
+  min-height: 200px;
+  padding: 16px;
+  width: 100%;
+}
+
+#overlay-additional-info-text {
+  color: rgb(128, 134, 139);
+  line-height: 20px;
+  padding-top: 20px;
+}
+
+#overlay-close-top {
+  background-image: url(chrome://theme/IDR_CLOSE_DIALOG);
+  background-position: center;
+  background-repeat: no-repeat;
+  height: 14px;
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  width: 14px;
+  z-index: 1;
+}
+
+#overlay-close-top:hover {
+  background-image: url(chrome://theme/IDR_CLOSE_DIALOG_H);
+}
+
+#overlay-close-top:active {
+  background-image: url(chrome://theme/IDR_CLOSE_DIALOG_P);
+}
+
+#overlay-close-bottom {
+  margin-right: 0;
+}
+
+#close-button-text {
+  padding: 0 16px 0 16px;
+}
+
+.button-strip {
+  display: flex;
+  justify-content: flex-end;
+  margin: 16px;
+}

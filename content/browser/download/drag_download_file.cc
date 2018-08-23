@@ -14,7 +14,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/download/public/common/download_item.h"
-#include "content/browser/download/download_stats.h"
+#include "components/download/public/common/download_stats.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -231,10 +231,10 @@ void DragDownloadFile::Start(ui::DownloadFileObserver* observer) {
   observer_ = observer;
   DCHECK(observer_.get());
 
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&DragDownloadFileUI::InitiateDownload,
-                                         base::Unretained(drag_ui_),
-                                         base::Passed(&file_), file_path_));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&DragDownloadFileUI::InitiateDownload,
+                     base::Unretained(drag_ui_), std::move(file_), file_path_));
 }
 
 bool DragDownloadFile::Wait() {

@@ -61,7 +61,7 @@ RichNotificationData::RichNotificationData(const RichNotificationData& other) =
 
 RichNotificationData::~RichNotificationData() = default;
 
-Notification::Notification() = default;
+Notification::Notification() : serial_number_(g_next_serial_number++) {}
 
 Notification::Notification(NotificationType type,
                            const std::string& id,
@@ -83,8 +83,6 @@ Notification::Notification(NotificationType type,
       notifier_id_(notifier_id),
       optional_fields_(optional_fields),
       serial_number_(g_next_serial_number++),
-      shown_as_popup_(false),
-      is_read_(false),
       delegate_(std::move(delegate)) {}
 
 Notification::Notification(const std::string& id, const Notification& other)
@@ -119,18 +117,6 @@ std::unique_ptr<Notification> Notification::DeepCopy(
                : gfx::Image());
   }
   return notification_copy;
-}
-
-bool Notification::IsRead() const {
-  return is_read_ || optional_fields_.priority == MIN_PRIORITY;
-}
-
-void Notification::CopyState(Notification* base) {
-  shown_as_popup_ = base->shown_as_popup();
-  is_read_ = base->is_read_;
-  if (!delegate_.get())
-    delegate_ = base->delegate();
-  optional_fields_.never_timeout = base->never_timeout();
 }
 
 void Notification::SetButtonIcon(size_t index, const gfx::Image& icon) {
@@ -174,18 +160,16 @@ std::unique_ptr<Notification> Notification::CreateSystemNotification(
     const std::string& notification_id,
     const base::string16& title,
     const base::string16& message,
-    const gfx::Image& icon,
     const std::string& system_component_id,
     const base::RepeatingClosure& click_callback) {
   DCHECK(!click_callback.is_null());
   std::unique_ptr<Notification> notification = CreateSystemNotification(
-      NOTIFICATION_TYPE_SIMPLE, notification_id, title, message, icon,
+      NOTIFICATION_TYPE_SIMPLE, notification_id, title, message,
       base::string16() /* display_source */, GURL(),
       NotifierId(NotifierId::SYSTEM_COMPONENT, system_component_id),
       RichNotificationData(),
       new HandleNotificationClickDelegate(click_callback), gfx::kNoneIcon,
       SystemNotificationWarningLevel::CRITICAL_WARNING);
-  notification->set_clickable(true);
   notification->SetSystemPriority();
   return notification;
 }
@@ -196,7 +180,6 @@ std::unique_ptr<Notification> Notification::CreateSystemNotification(
     const std::string& id,
     const base::string16& title,
     const base::string16& message,
-    const gfx::Image& icon,
     const base::string16& display_source,
     const GURL& origin_url,
     const NotifierId& notifier_id,
@@ -218,8 +201,8 @@ std::unique_ptr<Notification> Notification::CreateSystemNotification(
       break;
   }
   std::unique_ptr<Notification> notification = std::make_unique<Notification>(
-      type, id, title, message, icon, display_source, origin_url, notifier_id,
-      optional_fields, delegate);
+      type, id, title, message, gfx::Image(), display_source, origin_url,
+      notifier_id, optional_fields, delegate);
   notification->set_accent_color(color);
   if (!small_image.is_empty())
     notification->set_vector_small_image(small_image);
@@ -227,10 +210,12 @@ std::unique_ptr<Notification> Notification::CreateSystemNotification(
 }
 
 // static
-void RegisterVectorIcon(const gfx::VectorIcon& vector_icon) {
-  g_vector_icon_registry.Get().insert(
-      std::pair<std::string, const gfx::VectorIcon&>(vector_icon.name,
-                                                     vector_icon));
+void RegisterVectorIcons(
+    const std::vector<const gfx::VectorIcon*>& vector_icons) {
+  for (const gfx::VectorIcon* icon : vector_icons) {
+    g_vector_icon_registry.Get().insert(
+        std::pair<std::string, const gfx::VectorIcon&>(icon->name, *icon));
+  }
 }
 
 // static

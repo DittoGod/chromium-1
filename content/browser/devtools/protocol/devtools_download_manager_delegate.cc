@@ -6,7 +6,7 @@
 
 #include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "content/browser/devtools/protocol/devtools_download_manager_helper.h"
 #include "content/public/browser/browser_context.h"
@@ -121,7 +121,7 @@ bool DevToolsDownloadManagerDelegate::DetermineDownloadTarget(
       base::BindOnce(&DevToolsDownloadManagerDelegate::GenerateFilename,
                      item->GetURL(), item->GetContentDisposition(),
                      item->GetSuggestedFilename(), item->GetMimeType(),
-                     download_path, filename_determined_callback));
+                     download_path, std::move(filename_determined_callback)));
   return true;
 }
 

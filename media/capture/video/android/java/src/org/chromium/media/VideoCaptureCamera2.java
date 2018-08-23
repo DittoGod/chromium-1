@@ -59,11 +59,14 @@ public class VideoCaptureCamera2 extends VideoCapture {
             if (createPreviewObjectsAndStartPreview()) return;
 
             changeCameraStateAndNotify(CameraState.STOPPED);
-            nativeOnError(mNativeVideoCaptureDeviceAndroid, "Error configuring camera");
+            nativeOnError(mNativeVideoCaptureDeviceAndroid,
+                    AndroidVideoCaptureError.ANDROID_API_2_ERROR_CONFIGURING_CAMERA,
+                    "Error configuring camera");
         }
 
         @Override
         public void onDisconnected(CameraDevice cameraDevice) {
+            Log.e(TAG, "cameraDevice was closed unexpectedly");
             cameraDevice.close();
             mCameraDevice = null;
             changeCameraStateAndNotify(CameraState.STOPPED);
@@ -71,10 +74,12 @@ public class VideoCaptureCamera2 extends VideoCapture {
 
         @Override
         public void onError(CameraDevice cameraDevice, int error) {
+            Log.e(TAG, "cameraDevice encountered an error");
             cameraDevice.close();
             mCameraDevice = null;
             changeCameraStateAndNotify(CameraState.STOPPED);
             nativeOnError(mNativeVideoCaptureDeviceAndroid,
+                    AndroidVideoCaptureError.ANDROID_API_2_CAMERA_DEVICE_ERROR_RECEIVED,
                     "Camera device error " + Integer.toString(error));
         }
     };
@@ -124,7 +129,9 @@ public class VideoCaptureCamera2 extends VideoCapture {
             // TODO(mcasas): When signalling error, C++ will tear us down. Is there need for
             // cleanup?
             changeCameraStateAndNotify(CameraState.STOPPED);
-            nativeOnError(mNativeVideoCaptureDeviceAndroid, "Camera session configuration error");
+            nativeOnError(mNativeVideoCaptureDeviceAndroid,
+                    AndroidVideoCaptureError.ANDROID_API_2_CAPTURE_SESSION_CONFIGURE_FAILED,
+                    "Camera session configuration error");
         }
     };
 
@@ -137,17 +144,22 @@ public class VideoCaptureCamera2 extends VideoCapture {
                 if (image == null) return;
 
                 if (image.getFormat() != ImageFormat.YUV_420_888 || image.getPlanes().length != 3) {
-                    nativeOnError(mNativeVideoCaptureDeviceAndroid, "Unexpected image format: "
-                            + image.getFormat() + " or #planes: " + image.getPlanes().length);
+                    nativeOnError(mNativeVideoCaptureDeviceAndroid,
+                            AndroidVideoCaptureError
+                                    .ANDROID_API_2_IMAGE_READER_UNEXPECTED_IMAGE_FORMAT,
+                            "Unexpected image format: " + image.getFormat()
+                                    + " or #planes: " + image.getPlanes().length);
                     throw new IllegalStateException();
                 }
 
                 if (reader.getWidth() != image.getWidth()
                         || reader.getHeight() != image.getHeight()) {
-                    nativeOnError(mNativeVideoCaptureDeviceAndroid, "ImageReader size ("
-                            + reader.getWidth() + "x" + reader.getHeight()
-                            + ") did not match Image size (" + image.getWidth() + "x"
-                            + image.getHeight() + ")");
+                    nativeOnError(mNativeVideoCaptureDeviceAndroid,
+                            AndroidVideoCaptureError
+                                    .ANDROID_API_2_IMAGE_READER_SIZE_DID_NOT_MATCH_IMAGE_SIZE,
+                            "ImageReader size (" + reader.getWidth() + "x" + reader.getHeight()
+                                    + ") did not match Image size (" + image.getWidth() + "x"
+                                    + image.getHeight() + ")");
                     throw new IllegalStateException();
                 }
 
@@ -166,9 +178,12 @@ public class VideoCaptureCamera2 extends VideoCapture {
     // Inner class to extend a Photo Session state change listener.
     // Error paths must signal notifyTakePhotoError().
     private class CrPhotoSessionListener extends CameraCaptureSession.StateCallback {
+        private final ImageReader mImageReader;
         private final CaptureRequest mPhotoRequest;
         private final long mCallbackId;
-        CrPhotoSessionListener(CaptureRequest photoRequest, long callbackId) {
+        CrPhotoSessionListener(
+                ImageReader imageReader, CaptureRequest photoRequest, long callbackId) {
+            mImageReader = imageReader;
             mPhotoRequest = photoRequest;
             mCallbackId = callbackId;
         }
@@ -181,8 +196,12 @@ public class VideoCaptureCamera2 extends VideoCapture {
                 // will get notified via a CrPhotoSessionListener. Since |handler| is null, we'll
                 // work on the current Thread Looper.
                 session.capture(mPhotoRequest, null, null);
-            } catch (CameraAccessException e) {
-                Log.e(TAG, "capture() error");
+            } catch (CameraAccessException ex) {
+                Log.e(TAG, "capture() CameraAccessException", ex);
+                notifyTakePhotoError(mCallbackId);
+                return;
+            } catch (IllegalStateException ex) {
+                Log.e(TAG, "capture() IllegalStateException", ex);
                 notifyTakePhotoError(mCallbackId);
                 return;
             }
@@ -193,6 +212,11 @@ public class VideoCaptureCamera2 extends VideoCapture {
             Log.e(TAG, "failed configuring capture session");
             notifyTakePhotoError(mCallbackId);
             return;
+        }
+
+        @Override
+        public void onClosed(CameraCaptureSession session) {
+            mImageReader.close();
         }
     };
 
@@ -240,7 +264,9 @@ public class VideoCaptureCamera2 extends VideoCapture {
 
             if (createPreviewObjectsAndStartPreview()) return;
 
-            nativeOnError(mNativeVideoCaptureDeviceAndroid, "Error restarting preview");
+            nativeOnError(mNativeVideoCaptureDeviceAndroid,
+                    AndroidVideoCaptureError.ANDROID_API_2_ERROR_RESTARTING_PREVIEW,
+                    "Error restarting preview");
         }
     };
 
@@ -320,7 +346,7 @@ public class VideoCaptureCamera2 extends VideoCapture {
                         Context.CAMERA_SERVICE);
         try {
             return manager.getCameraCharacteristics(Integer.toString(id));
-        } catch (CameraAccessException | IllegalArgumentException ex) {
+        } catch (CameraAccessException | IllegalArgumentException | AssertionError ex) {
             Log.e(TAG, "getCameraCharacteristics: ", ex);
         }
         return null;
@@ -612,6 +638,23 @@ public class VideoCaptureCamera2 extends VideoCapture {
                 return VideoCaptureApi.ANDROID_API2_LIMITED;
             default:
                 return VideoCaptureApi.ANDROID_API2_LEGACY;
+        }
+    }
+
+    static int getFacingMode(int id) {
+        final CameraCharacteristics cameraCharacteristics = getCameraCharacteristics(id);
+        if (cameraCharacteristics == null) {
+            return VideoFacingMode.MEDIA_VIDEO_FACING_NONE;
+        }
+
+        final int facing = cameraCharacteristics.get(CameraCharacteristics.LENS_FACING);
+        switch (facing) {
+            case CameraCharacteristics.LENS_FACING_FRONT:
+                return VideoFacingMode.MEDIA_VIDEO_FACING_USER;
+            case CameraCharacteristics.LENS_FACING_BACK:
+                return VideoFacingMode.MEDIA_VIDEO_FACING_ENVIRONMENT;
+            default:
+                return VideoFacingMode.MEDIA_VIDEO_FACING_NONE;
         }
     }
 
@@ -1124,7 +1167,7 @@ public class VideoCaptureCamera2 extends VideoCapture {
 
         final CaptureRequest photoRequest = photoRequestBuilder.build();
         final CrPhotoSessionListener sessionListener =
-                new CrPhotoSessionListener(photoRequest, callbackId);
+                new CrPhotoSessionListener(imageReader, photoRequest, callbackId);
         try {
             mCameraDevice.createCaptureSession(surfaceList, sessionListener, backgroundHandler);
         } catch (CameraAccessException | IllegalArgumentException | SecurityException ex) {

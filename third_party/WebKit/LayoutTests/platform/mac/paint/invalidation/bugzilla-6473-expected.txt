@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,53 +18,16 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow DIV id='allcontent'",
-          "rect": [8, 130, 784, 50],
-          "reason": "style change"
-        },
-        {
           "object": "LayoutBlockFlow (relative positioned) P",
           "rect": [8, 146, 784, 18],
-          "reason": "geometry"
+          "reason": "chunk disappeared"
         },
         {
-          "object": "LayoutBlockFlow (relative positioned) P",
+          "object": "LayoutBlockFlow HTML",
           "rect": [8, 130, 784, 18],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [8, 146, 70, 18],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [8, 130, 70, 18],
-          "reason": "geometry"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='allcontent'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) P",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'SUCCESS'",
-      "reason": "geometry"
     }
   ]
 }

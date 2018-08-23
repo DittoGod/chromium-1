@@ -10,9 +10,11 @@
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "services/service_manager/public/cpp/service_context.h"
 #include "services/service_manager/public/cpp/service_test.h"
+#include "services/ui/ime/test_ime_driver/public/mojom/constants.mojom.h"
 #include "services/ui/public/interfaces/constants.mojom.h"
 #include "services/ui/public/interfaces/ime/ime.mojom.h"
 #include "ui/events/event.h"
+#include "ui/events/keycodes/dom/dom_code.h"
 
 class TestTextInputClient : public ui::mojom::TextInputClient {
  public:
@@ -33,7 +35,7 @@ class TestTextInputClient : public ui::mojom::TextInputClient {
   void SetCompositionText(const ui::CompositionText& composition) override {}
   void ConfirmCompositionText() override {}
   void ClearCompositionText() override {}
-  void InsertText(const std::string& text) override {}
+  void InsertText(const base::string16& text) override {}
   void InsertChar(std::unique_ptr<ui::Event> event) override {
     receieved_event_ = std::move(event);
     if (run_loop_)
@@ -61,7 +63,7 @@ class IMEAppTest : public service_manager::test::ServiceTest {
   void SetUp() override {
     ServiceTest::SetUp();
     // test_ime_driver will register itself as the current IMEDriver.
-    connector()->StartService("test_ime_driver");
+    connector()->StartService(test_ime_driver::mojom::kServiceName);
     connector()->BindInterface(ui::mojom::kServiceName, &ime_driver_);
   }
 
@@ -102,7 +104,7 @@ TEST_F(IMEAppTest, ProcessKeyEvent) {
   ime_driver_->StartSession(std::move(details));
 
   // Send character key event.
-  ui::KeyEvent char_event('A', ui::VKEY_A, 0);
+  ui::KeyEvent char_event('A', ui::VKEY_A, ui::DomCode::NONE, 0);
   EXPECT_TRUE(ProcessKeyEvent(&input_method, ui::Event::Clone(char_event)));
 
   std::unique_ptr<ui::Event> received_event = client.WaitUntilInsertChar();

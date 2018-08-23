@@ -23,7 +23,9 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
@@ -45,8 +47,7 @@
 #include "url/gurl.h"
 
 namespace base {
-class FilePath;
-class RepeatingTimer;
+class OneShotTimer;
 }
 
 namespace net {
@@ -57,18 +58,17 @@ class URLRequestContextGetter;
 
 namespace network {
 class ResourceScheduler;
+class ScopedThrottlingToken;
 }  // namespace network
 
 namespace storage {
 class FileSystemContext;
-class ShareableFileReference;
 }
 
 namespace content {
 class AppCacheNavigationHandleCore;
 class AppCacheService;
 class LoaderDelegate;
-class NavigationURLLoaderImplCore;
 class NavigationUIData;
 class ResourceContext;
 class ResourceDispatcherHostDelegate;
@@ -107,7 +107,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   // ResourceDispatcherHost implementation:
   void SetDelegate(ResourceDispatcherHostDelegate* delegate) override;
   void SetAllowCrossOriginAuthPrompt(bool value) override;
-  void ClearLoginDelegateForRequest(net::URLRequest* request) override;
   void RegisterInterceptor(const std::string& http_header,
                            const std::string& starts_with,
                            const InterceptorCallback& interceptor) override;
@@ -125,16 +124,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
 
   // Cancels the given request if it still exists.
   void CancelRequest(int child_id, int request_id);
-
-  // Marks the request, with its current |response|, as "parked". This
-  // happens if a request is redirected cross-site and needs to be
-  // resumed by a new process.
-  void MarkAsTransferredNavigation(
-      const GlobalRequestID& id,
-      const base::Closure& on_transfer_complete_callback);
-
-  // Resumes the request without transferring it to a new process.
-  void ResumeDeferredNavigation(const GlobalRequestID& id);
 
   // Returns the number of pending requests. This is designed for the unittests
   int pending_requests() const {
@@ -192,15 +181,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   void CancelBlockedRequestsForRoute(
       const GlobalFrameRoutingId& global_routing_id);
 
-  // Maintains a collection of temp files created in support of
-  // the download_to_file capability. Used to grant access to the
-  // child process and to defer deletion of the file until it's
-  // no longer needed.
-  void RegisterDownloadedTempFile(
-      int child_id, int request_id,
-      const base::FilePath& file_path);
-  void UnregisterDownloadedTempFile(int child_id, int request_id);
-
   // Indicates whether third-party sub-content can pop-up HTTP basic auth
   // dialog boxes.
   bool allow_cross_origin_auth_prompt();
@@ -225,15 +205,13 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   // resource response to another application (e.g. a web page) without being
   // handled by the browser itself. If the request should be intercepted as a
   // stream, a StreamResourceHandler is returned which provides access to the
-  // response. |plugin_path| is the path to the plugin which is handling the
-  // URL request. This may be empty if there is no plugin handling the request.
+  // response.
   //
   // This function must be called after the ResourceRequestInfo has been created
   // and associated with the request. If |payload| is set to a non-empty value,
   // the caller must send it to the old resource handler instead of cancelling
   // it.
   virtual std::unique_ptr<ResourceHandler> MaybeInterceptAsStream(
-      const base::FilePath& plugin_path,
       net::URLRequest* request,
       network::ResourceResponse* response,
       std::string* payload);
@@ -252,22 +230,20 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   void FinishedWithResourcesForRequest(net::URLRequest* request);
 
   // PlzNavigate: Begins a request for NavigationURLLoader. |loader| is the
-  // loader to attach to the leaf resource handler.
-  // After calling this function, |global_request_id| will contains the
-  // request's global id.
+  // loader to attach to the leaf resource handler. |global_request_id| needs to
+  // be created by MakeGlobalRequestID() before calling this method.
   void BeginNavigationRequest(
       ResourceContext* resource_context,
       net::URLRequestContext* request_context,
       storage::FileSystemContext* upload_file_system_context,
       const NavigationRequestInfo& info,
       std::unique_ptr<NavigationUIData> navigation_ui_data,
-      NavigationURLLoaderImplCore* loader,
       network::mojom::URLLoaderClientPtr url_loader_client,
       network::mojom::URLLoaderRequest url_loader_request,
       ServiceWorkerNavigationHandleCore* service_worker_handle_core,
       AppCacheNavigationHandleCore* appcache_handle_core,
       uint32_t url_loader_options,
-      GlobalRequestID* global_request_id);
+      const GlobalRequestID& global_request_id);
 
   int num_in_flight_requests_for_testing() const {
     return num_in_flight_requests_;
@@ -324,6 +300,11 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   // of |request_id_| for the details. Must be called on the IO thread.
   int MakeRequestID();
 
+  // Creates a new global request ID for browser initiated requests. The ID
+  // is consistent with the request id created by MakeRequestID(). Must be
+  // called on the IO thread.
+  GlobalRequestID MakeGlobalRequestID();
+
   // Cancels a request as requested by a renderer. This function is called when
   // a mojo connection is lost.
   // Note that this cancel is subtly different from the other CancelRequest
@@ -342,8 +323,14 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
     return &keepalive_statistics_recorder_;
   }
 
+  // Checks if needs to prompt for login.
+  bool DoNotPromptForLogin(ResourceType resource_type,
+                           const GURL& url,
+                           const GURL& site_for_cookies);
+
  private:
   class ScheduledResourceRequestAdapter;
+  friend class NetworkServiceClient;
   friend class ResourceDispatcherHostTest;
 
   FRIEND_TEST_ALL_PREFIXES(ResourceDispatcherHostTest,
@@ -377,7 +364,11 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
     ~LoadInfo();
 
     ResourceRequestInfo::WebContentsGetter web_contents_getter;
-    GURL url;
+
+    // Comes directly from GURL::host() to avoid copying an entire GURL between
+    // threads.
+    std::string host;
+
     net::LoadStateWithParam load_state;
     uint64_t upload_position;
     uint64_t upload_size;
@@ -405,7 +396,7 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   typedef std::map<std::string, HeaderInterceptorInfo> HeaderInterceptorMap;
 
   // ResourceLoaderDelegate implementation:
-  ResourceDispatcherHostLoginDelegate* CreateLoginDelegate(
+  scoped_refptr<LoginDelegate> CreateLoginDelegate(
       ResourceLoader* loader,
       net::AuthChallengeInfo* auth_info) override;
   bool HandleExternalProtocol(ResourceLoader* loader, const GURL& url) override;
@@ -424,9 +415,11 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   void OnShutdown();
 
   // Helper function for URL requests.
-  void BeginRequestInternal(std::unique_ptr<net::URLRequest> request,
-                            std::unique_ptr<ResourceHandler> handler,
-                            bool is_initiated_by_fetch_api);
+  void BeginRequestInternal(
+      std::unique_ptr<net::URLRequest> request,
+      std::unique_ptr<ResourceHandler> handler,
+      bool is_initiated_by_fetch_api,
+      std::unique_ptr<network::ScopedThrottlingToken> throttling_token);
 
   void StartLoading(ResourceRequestInfoImpl* info,
                     std::unique_ptr<ResourceLoader> loader);
@@ -461,13 +454,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   OustandingRequestsStats IncrementOutstandingRequestsCount(
       int count,
       ResourceRequestInfoImpl* info);
-
-  // Called from IncrementOutstandingRequestsCount to update the per-tab
-  // request stats in |outstanding_requests_per_tab_map_|.
-  // TODO(ksakamoto): This is just for temporary metrics collection for the
-  // Loading Dispatcher v0 (crbug.com/723233), and will be removed soon.
-  void IncrementOutstandingRequestsPerTab(int count,
-                                          const ResourceRequestInfoImpl& info);
 
   // Estimate how much heap space |request| will consume to run.
   static int CalculateApproximateMemoryCost(net::URLRequest* request);
@@ -519,15 +505,25 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   static std::unique_ptr<LoadInfoMap> PickMoreInterestingLoadInfos(
       std::unique_ptr<LoadInfoList> infos);
 
-  // Gets all the LoadInfos for each pending request.
-  std::unique_ptr<LoadInfoList> GetLoadInfoForAllRoutes();
+  // Gets the most interesting LoadInfos for each GlobalFrameRoutingIds.
+  // Includes the LoadInfo for all navigation requests, which may not have valid
+  // frame ids.
+  //
+  // We aggregate per-frame on the IO thread, and per-WebContents on the UI
+  // thread. The IO thread aggregation is used to avoid copying state for every
+  // request across threads.
+  std::unique_ptr<LoadInfoList> GetInterestingPerFrameLoadInfos();
 
   // Checks all pending requests and updates the load info if necessary.
   void UpdateLoadInfo();
 
-  // Records statistics about outstanding requests since the last call, and
-  // reset the stats.
-  void RecordOutstandingRequestsStats();
+  // Invoked on the IO thread once load state has been updated on the UI thread,
+  // starts timer call UpdateLoadInfo() again, if needed.
+  void AckUpdateLoadInfo();
+
+  // Starts the timer to call UpdateLoadInfo(), if timer isn't already running,
+  // |waiting_on_load_state_ack_| is false, and there are live ResourceLoaders.
+  void MaybeStartUpdateLoadInfoTimer();
 
   // Resumes or cancels (if |cancel_requests| is true) any blocked requests.
   void ProcessBlockedRequestsForRoute(
@@ -540,37 +536,19 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
       int request_id,
       bool is_sync_load,
       const network::ResourceRequest& request_data,
+      uint32_t url_loader_options,
       network::mojom::URLLoaderRequest mojo_request,
       network::mojom::URLLoaderClientPtr url_loader_client,
       const net::NetworkTrafficAnnotationTag& traffic_annotation);
 
   bool IsRequestIDInUse(const GlobalRequestID& id) const;
 
-  // Update the ResourceRequestInfo and internal maps when a request is
-  // transferred from one process to another.
-  void UpdateRequestForTransfer(
-      ResourceRequesterInfo* requester_info,
-      int route_id,
-      int request_id,
-      const network::ResourceRequest& request_data,
-      LoaderMap::iterator iter,
-      network::mojom::URLLoaderRequest mojo_request,
-      network::mojom::URLLoaderClientPtr url_loader_client);
-
-  // If |request_data| is for a request being transferred from another process,
-  // then CompleteTransfer method can be used to complete the transfer.
-  void CompleteTransfer(ResourceRequesterInfo* requester_info,
-                        int request_id,
-                        const network::ResourceRequest& request_data,
-                        int route_id,
-                        network::mojom::URLLoaderRequest mojo_request,
-                        network::mojom::URLLoaderClientPtr url_loader_client);
-
   void BeginRequest(ResourceRequesterInfo* requester_info,
                     int request_id,
                     const network::ResourceRequest& request_data,
                     bool is_sync_load,
                     int route_id,
+                    uint32_t url_loader_options,
                     network::mojom::URLLoaderRequest mojo_request,
                     network::mojom::URLLoaderClientPtr url_loader_client,
                     const net::NetworkTrafficAnnotationTag& traffic_annotation);
@@ -590,6 +568,7 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
       bool is_sync_load,
       int route_id,
       const net::HttpRequestHeaders& headers,
+      uint32_t url_loader_options,
       network::mojom::URLLoaderRequest mojo_request,
       network::mojom::URLLoaderClientPtr url_loader_client,
       BlobHandles blob_handles,
@@ -605,34 +584,24 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
       int route_id,
       int child_id,
       ResourceContext* resource_context,
+      uint32_t url_loader_options,
       network::mojom::URLLoaderRequest mojo_request,
       network::mojom::URLLoaderClientPtr url_loader_client);
-
-  // Creates either MojoAsyncResourceHandler or AsyncResourceHandler.
-  std::unique_ptr<ResourceHandler> CreateBaseResourceHandler(
-      net::URLRequest* request,
-      network::mojom::URLLoaderRequest mojo_request,
-      network::mojom::URLLoaderClientPtr url_loader_client,
-      ResourceType resource_type);
 
   // Wraps |handler| in the standard resource handlers for normal resource
   // loading and navigation requests. This adds MimeTypeResourceHandler and
   // ResourceThrottles.
-  // PlzNavigate: |navigation_loader_core| and |stream_handle| are used to
-  // properly initialized the NavigationResourceHandler placed in navigation
-  // requests. They should be non-null in that case.
   std::unique_ptr<ResourceHandler> AddStandardHandlers(
       net::URLRequest* request,
       ResourceType resource_type,
       ResourceContext* resource_context,
       network::mojom::FetchRequestMode fetch_request_mode,
       RequestContextType fetch_request_context_type,
+      uint32_t url_loader_options,
       AppCacheService* appcache_service,
       int child_id,
       int route_id,
-      std::unique_ptr<ResourceHandler> handler,
-      NavigationURLLoaderImplCore* navigation_loader_core,
-      std::unique_ptr<StreamHandle> stream_handle);
+      std::unique_ptr<ResourceHandler> handler);
 
   // Creates ResourceRequestInfoImpl for a download or page save.
   // |download| should be true if the request is a file download.
@@ -655,13 +624,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
 
   HttpAuthRelationType HttpAuthRelationTypeOf(const GURL& request_url,
                                               const GURL& first_party);
-
-  // Returns whether the URLRequest identified by |transferred_request_id| is
-  // currently in the process of being transferred to a different renderer.
-  // This happens if a request is redirected cross-site and needs to be resumed
-  // by a new process.
-  bool IsTransferredNavigation(
-      const GlobalRequestID& transferred_request_id) const;
 
   ResourceLoader* GetLoader(const GlobalRequestID& id) const;
   ResourceLoader* GetLoader(int child_id, int request_id) const;
@@ -688,30 +650,25 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
       bool must_download,
       bool is_new_request);
 
-  // Returns true if there are two or more tabs that are not network 2-quiet
-  // (i.e. have at least three outstanding requests).
-  bool HasRequestsFromMultipleActiveTabs();
+  void RunAuthRequiredCallback(
+      GlobalRequestID request_id,
+      const base::Optional<net::AuthCredentials>& credentials);
+
+  static void RecordFetchRequestMode(const GURL& url,
+                                     base::StringPiece method,
+                                     network::mojom::FetchRequestMode mode);
 
   static net::NetworkTrafficAnnotationTag GetTrafficAnnotation();
 
   LoaderMap pending_loaders_;
 
-  // Collection of temp files downloaded for child processes via
-  // the download_to_file mechanism. We avoid deleting them until
-  // the client no longer needs them.
-  typedef std::map<int, scoped_refptr<storage::ShareableFileReference> >
-      DeletableFilesMap;  // key is request id
-  typedef std::map<int, DeletableFilesMap>
-      RegisteredTempFiles;  // key is child process id
-  RegisteredTempFiles registered_temp_files_;
-
-  // A timer that periodically calls UpdateLoadInfo while pending_loaders_ is
-  // not empty and at least one RenderViewHost is loading.
-  std::unique_ptr<base::RepeatingTimer> update_load_states_timer_;
-
-  // A timer that periodically calls RecordOutstandingRequestsStats.
-  std::unique_ptr<base::RepeatingTimer>
-      record_outstanding_requests_stats_timer_;
+  // A timer that periodically calls UpdateLoadInfo while |pending_loaders_| is
+  // not empty, at least one RenderViewHost is loading, and not waiting on an
+  // ACK from the UI thread for the last sent LoadInfoList.
+  std::unique_ptr<base::OneShotTimer> update_load_info_timer_;
+  // True if a LoadInfoList has been sent to the UI thread, but has yet to be
+  // acknowledged.
+  bool waiting_on_load_state_ack_ = false;
 
   // Request ID for browser initiated requests. request_ids generated by
   // child processes are counted up from 0, while browser created requests
@@ -737,14 +694,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   typedef std::map<int, OustandingRequestsStats> OutstandingRequestsStatsMap;
   OutstandingRequestsStatsMap outstanding_requests_stats_map_;
 
-  // Maps (child_id, route_id) to the number of outstanding requests.
-  // Used only when OOPIF is not enabled, since in OOPIF modes routing_id
-  // doesn't represent tabs.
-  // TODO(ksakamoto): This is just for temporary metrics collection for the
-  // Loading Dispatcher v0 (crbug.com/723233), and will be removed soon.
-  typedef std::map<std::pair<int, int>, int> OutstandingRequestsPerTabMap;
-  OutstandingRequestsPerTabMap outstanding_requests_per_tab_map_;
-
   // |num_in_flight_requests_| is the total number of requests currently issued
   // summed across all renderers.
   int num_in_flight_requests_;
@@ -769,21 +718,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   //   (max_outstanding_requests_cost_per_process_ /
   //       kAvgBytesPerOutstandingRequest)
   int max_outstanding_requests_cost_per_process_;
-
-  // Largest number of outstanding requests seen so far across all processes.
-  int largest_outstanding_request_count_seen_;
-
-  // Largest number of outstanding requests seen so far in any single process.
-  int largest_outstanding_request_per_process_count_seen_;
-
-  // Largest number of outstanding requests seen since the last call to
-  // RecordOutstandingRequestsStats.
-  int peak_outstanding_request_count_ = 0;
-
-  // Largest number of outstanding requests seen while there are outstanding
-  // requests from two or more tabs, since the last call to
-  // RecordOutstandingRequestsStats.
-  int peak_outstanding_request_count_multitab_ = 0;
 
   // Time of the last user gesture. Stored so that we can add a load
   // flag to requests occurring soon after a gesture to indicate they
@@ -812,9 +746,9 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   // Task runner for the IO thead.
   scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner_;
 
-  static constexpr int kMaxKeepaliveConnections = 256;
-  static constexpr int kMaxKeepaliveConnectionsPerProcess = 20;
-  static constexpr int kMaxKeepaliveConnectionsPerProcessForFetchAPI = 10;
+  // Used on the IO thread to allow PostTaskAndReply replies to the IO thread
+  // to be abandoned if they run after OnShutdown().
+  base::WeakPtrFactory<ResourceDispatcherHostImpl> weak_factory_on_io_;
 
   DISALLOW_COPY_AND_ASSIGN(ResourceDispatcherHostImpl);
 };

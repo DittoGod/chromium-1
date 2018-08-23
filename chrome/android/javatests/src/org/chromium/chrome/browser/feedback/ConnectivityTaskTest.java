@@ -12,6 +12,7 @@ import android.support.test.filters.SmallTest;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
@@ -39,6 +40,8 @@ public class ConnectivityTaskTest {
     @Rule
     public ConnectivityCheckerTestRule mConnectivityCheckerTestRule =
             new ConnectivityCheckerTestRule();
+    @Rule
+    public ExpectedException thrown = ExpectedException.none();
 
     private static final int RESULT_CHECK_INTERVAL_MS = 10;
 
@@ -72,16 +75,16 @@ public class ConnectivityTaskTest {
     }
 
     private static void verifyConnections(FeedbackData feedback, int expectedHttpsValue) {
-        Map<Type, Integer> results = feedback.getConnections();
+        Map<Integer, Integer> results = feedback.getConnections();
         Assert.assertEquals("Should have 4 results.", 4, results.size());
-        for (Map.Entry<Type, Integer> result : results.entrySet()) {
+        for (Map.Entry<Integer, Integer> result : results.entrySet()) {
             switch (result.getKey()) {
-                case CHROME_HTTP:
-                case SYSTEM_HTTP:
+                case Type.CHROME_HTTP:
+                case Type.SYSTEM_HTTP:
                     assertResult(ConnectivityCheckResult.CONNECTED, result);
                     break;
-                case CHROME_HTTPS:
-                case SYSTEM_HTTPS:
+                case Type.CHROME_HTTPS:
+                case Type.SYSTEM_HTTPS:
                     assertResult(expectedHttpsValue, result);
                     break;
                 default:
@@ -92,7 +95,7 @@ public class ConnectivityTaskTest {
                 "The elapsed time should be non-negative.", feedback.getElapsedTimeMs() >= 0);
     }
 
-    private static void assertResult(int expectedValue, Map.Entry<Type, Integer> actualEntry) {
+    private static void assertResult(int expectedValue, Map.Entry<Integer, Integer> actualEntry) {
         Assert.assertEquals("Wrong result for " + actualEntry.getKey(),
                 ConnectivityTask.getHumanReadableResult(expectedValue),
                 ConnectivityTask.getHumanReadableResult(actualEntry.getValue()));
@@ -183,17 +186,13 @@ public class ConnectivityTaskTest {
                                 null);
                     }
                 });
-        try {
-            CriteriaHelper.pollUiThread(new Criteria() {
-                @Override
-                public boolean isSatisfied() {
-                    return task.isDone();
-                }
-            }, TIMEOUT_MS / 5, RESULT_CHECK_INTERVAL_MS);
-            Assert.fail("Should not be finished by now.");
-        } catch (AssertionError e) {
-            // TODO(tedchoc): This is horrible and should never timeout to determine success.
-        }
+        thrown.expect(AssertionError.class);
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return task.isDone();
+            }
+        }, TIMEOUT_MS / 5, RESULT_CHECK_INTERVAL_MS);
         FeedbackData feedback = getResult(task);
         verifyConnections(feedback, ConnectivityCheckResult.UNKNOWN);
         Assert.assertEquals("The timeout value is wrong.", TIMEOUT_MS, feedback.getTimeoutMs());
@@ -203,7 +202,7 @@ public class ConnectivityTaskTest {
     @SmallTest
     @Feature({"Feedback"})
     public void testFeedbackDataConversion() {
-        Map<Type, Integer> connectionMap = new HashMap<>();
+        Map<Integer, Integer> connectionMap = new HashMap<>();
         connectionMap.put(Type.CHROME_HTTP, ConnectivityCheckResult.NOT_CONNECTED);
         connectionMap.put(Type.CHROME_HTTPS, ConnectivityCheckResult.CONNECTED);
         connectionMap.put(Type.SYSTEM_HTTP, ConnectivityCheckResult.UNKNOWN);

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "components/download/public/common/download_url_parameters.h"
+#include "components/download/public/common/input_stream.h"
 #include "content/public/browser/download_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -100,13 +101,15 @@ class MockDownloadManager : public DownloadManager {
   MOCK_METHOD1(Init, bool(BrowserContext* browser_context));
 
   // Gasket for handling scoped_ptr arguments.
-  void StartDownload(std::unique_ptr<DownloadCreateInfo> info,
-                     std::unique_ptr<DownloadManager::InputStream> stream,
+  void StartDownload(std::unique_ptr<download::DownloadCreateInfo> info,
+                     std::unique_ptr<download::InputStream> stream,
+                     scoped_refptr<download::DownloadURLLoaderFactoryGetter>
+                         url_loader_factory_getter,
                      const download::DownloadUrlParameters::OnStartedCallback&
                          callback) override;
 
   MOCK_METHOD2(MockStartDownload,
-               void(DownloadCreateInfo*, DownloadManager::InputStream*));
+               void(download::DownloadCreateInfo*, download::InputStream*));
   MOCK_METHOD3(RemoveDownloadsByURLAndTime,
                int(const base::Callback<bool(const GURL&)>& url_filter,
                    base::Time remove_begin,
@@ -114,11 +117,12 @@ class MockDownloadManager : public DownloadManager {
   MOCK_METHOD1(DownloadUrlMock, void(download::DownloadUrlParameters*));
   void DownloadUrl(
       std::unique_ptr<download::DownloadUrlParameters> params) override {
-    DownloadUrl(std::move(params), nullptr);
+    DownloadUrl(std::move(params), nullptr, nullptr);
   }
-  void DownloadUrl(
-      std::unique_ptr<download::DownloadUrlParameters> params,
-      std::unique_ptr<storage::BlobDataHandle> blob_data_handle) override {
+  void DownloadUrl(std::unique_ptr<download::DownloadUrlParameters> params,
+                   std::unique_ptr<storage::BlobDataHandle> blob_data_handle,
+                   scoped_refptr<network::SharedURLLoaderFactory>
+                       blob_url_loader_factory) override {
     DownloadUrlMock(params.get());
   }
   MOCK_METHOD1(AddObserver, void(Observer* observer));
@@ -164,6 +168,9 @@ class MockDownloadManager : public DownloadManager {
   MOCK_METHOD0(CheckForHistoryFilesRemoval, void());
   MOCK_METHOD1(GetDownload, download::DownloadItem*(uint32_t id));
   MOCK_METHOD1(GetDownloadByGuid, download::DownloadItem*(const std::string&));
+
+  void OnHistoryQueryComplete(
+      base::OnceClosure load_history_downloads_cb) override;
 };
 
 }  // namespace content

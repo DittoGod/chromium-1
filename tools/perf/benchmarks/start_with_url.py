@@ -31,7 +31,8 @@ class _StartupPerfBenchmark(perf_benchmark.PerfBenchmark):
     return options
 
 
-@benchmark.Owner(emails=['pasko@chromium.org'])
+@benchmark.Info(emails=['pasko@chromium.org',
+                         'chrome-android-perf-status@chromium.org'])
 class StartWithUrlColdTBM(_StartupPerfBenchmark):
   """Measures time to start Chrome cold with startup URLs."""
 
@@ -48,7 +49,8 @@ class StartWithUrlColdTBM(_StartupPerfBenchmark):
     return 'start_with_url.cold.startup_pages'
 
 
-@benchmark.Owner(emails=['pasko@chromium.org'])
+@benchmark.Info(emails=['pasko@chromium.org',
+                         'chrome-android-perf-status@chromium.org'])
 class StartWithUrlWarmTBM(_StartupPerfBenchmark):
   """Measures stimetime to start Chrome warm with startup URLs."""
 
@@ -68,7 +70,8 @@ class StartWithUrlWarmTBM(_StartupPerfBenchmark):
     return not from_first_story_run
 
 
-@benchmark.Owner(emails=['pasko@chromium.org'])
+@benchmark.Info(emails=['pasko@chromium.org',
+                         'chrome-android-perf-status@chromium.org'])
 class ExperimentalStartWithUrlCold(perf_benchmark.PerfBenchmark):
   """Measures time to start Chrome cold with startup URLs (TBMv2 version)."""
   # TODO(pasko): also add the .warm version of the TBMv2 benchmark after the
@@ -91,8 +94,8 @@ class ExperimentalStartWithUrlCold(perf_benchmark.PerfBenchmark):
   def CreateCoreTimelineBasedMeasurementOptions(self):
     startup_category_filter = (
         chrome_trace_category_filter.ChromeTraceCategoryFilter(
-            filter_string=('loading,net,netlog,network,offline_pages,'
-                'startup,toplevel,Java,EarlyJava')))
+            filter_string=('navigation,loading,net,netlog,network,'
+                'offline_pages,startup,toplevel,Java,EarlyJava')))
     options = timeline_based_measurement.Options(
         overhead_level=startup_category_filter)
     options.config.enable_chrome_trace = True

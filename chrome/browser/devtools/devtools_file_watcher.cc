@@ -16,7 +16,7 @@
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/lazy_task_runner.h"
+#include "base/task/lazy_task_runner.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -79,6 +79,10 @@ void DevToolsFileWatcher::SharedFileWatcher::RemoveListener(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto it = std::find(listeners_.begin(), listeners_.end(), watcher);
   listeners_.erase(it);
+  if (listeners_.empty()) {
+    file_path_times_.clear();
+    pending_paths_.clear();
+  }
 }
 
 void DevToolsFileWatcher::SharedFileWatcher::AddWatch(
@@ -181,8 +185,8 @@ void DevToolsFileWatcher::SharedFileWatcher::DispatchNotifications() {
 
 namespace {
 base::SequencedTaskRunner* impl_task_runner() {
-  constexpr base::TaskTraits kImplTaskTraits = {base::MayBlock(),
-                                                base::TaskPriority::BACKGROUND};
+  constexpr base::TaskTraits kImplTaskTraits = {
+      base::MayBlock(), base::TaskPriority::BEST_EFFORT};
   static base::LazySequencedTaskRunner s_file_task_runner =
       LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(kImplTaskTraits);
 
@@ -231,7 +235,7 @@ void DevToolsFileWatcher::AddWatch(base::FilePath path) {
 
 void DevToolsFileWatcher::RemoveWatch(base::FilePath path) {
   impl_task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&DevToolsFileWatcher::AddWatchOnImpl,
+      FROM_HERE, base::BindOnce(&DevToolsFileWatcher::RemoveWatchOnImpl,
                                 base::Unretained(this), std::move(path)));
 }
 

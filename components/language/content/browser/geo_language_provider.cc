@@ -5,11 +5,11 @@
 #include "components/language/content/browser/geo_language_provider.h"
 
 #include "base/memory/singleton.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "services/device/public/interfaces/constants.mojom.h"
-#include "services/device/public/interfaces/public_ip_address_geolocation_provider.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/public_ip_address_geolocation_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace language {
@@ -22,10 +22,9 @@ constexpr base::TimeDelta kMinUpdatePeriod = base::TimeDelta::FromDays(1);
 }  // namespace
 
 GeoLanguageProvider::GeoLanguageProvider()
-    : languages_(),
-      creation_task_runner_(base::SequencedTaskRunnerHandle::Get()),
+    : creation_task_runner_(base::SequencedTaskRunnerHandle::Get()),
       background_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})) {
   // Constructor is not required to run on |background_task_runner_|:
   DETACH_FROM_SEQUENCE(background_sequence_checker_);
@@ -33,8 +32,7 @@ GeoLanguageProvider::GeoLanguageProvider()
 
 GeoLanguageProvider::GeoLanguageProvider(
     scoped_refptr<base::SequencedTaskRunner> background_task_runner)
-    : languages_(),
-      creation_task_runner_(base::SequencedTaskRunnerHandle::Get()),
+    : creation_task_runner_(base::SequencedTaskRunnerHandle::Get()),
       background_task_runner_(background_task_runner) {
   // Constructor is not required to run on |background_task_runner_|:
   DETACH_FROM_SEQUENCE(background_sequence_checker_);

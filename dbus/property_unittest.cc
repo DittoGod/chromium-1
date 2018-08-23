@@ -68,7 +68,7 @@ class PropertyTest : public testing::Test {
     options.dbus_task_runner = dbus_thread_->task_runner();
     test_service_.reset(new TestService(options));
     ASSERT_TRUE(test_service_->StartService());
-    ASSERT_TRUE(test_service_->WaitUntilServiceIsStarted());
+    test_service_->WaitUntilServiceIsStarted();
     ASSERT_TRUE(test_service_->HasDBusThread());
 
     // Create the client, using the D-Bus thread.
@@ -461,7 +461,7 @@ TEST(PropertyTestStatic, ReadWriteStringToByteVectorMap) {
   writer.CloseContainer(&variant_writer);
 
   MessageReader reader(message.get());
-  Property<std::unordered_map<std::string, std::vector<uint8_t>>> test_property;
+  Property<std::map<std::string, std::vector<uint8_t>>> test_property;
   EXPECT_TRUE(test_property.PopValueFromReader(&reader));
 
   ASSERT_EQ(arraysize(keys), test_property.value().size());
@@ -470,7 +470,7 @@ TEST(PropertyTestStatic, ReadWriteStringToByteVectorMap) {
 }
 
 TEST(PropertyTestStatic, SerializeStringToByteVectorMap) {
-  std::unordered_map<std::string, std::vector<uint8_t>> test_map;
+  std::map<std::string, std::vector<uint8_t>> test_map;
   test_map["Hi"] = {1, 2, 3};
   test_map["Map"] = {0xab, 0xcd};
   test_map["Random"] = {0x0};
@@ -478,7 +478,7 @@ TEST(PropertyTestStatic, SerializeStringToByteVectorMap) {
   std::unique_ptr<Response> message(Response::CreateEmpty());
   MessageWriter writer(message.get());
 
-  Property<std::unordered_map<std::string, std::vector<uint8_t>>> test_property;
+  Property<std::map<std::string, std::vector<uint8_t>>> test_property;
   test_property.ReplaceSetValueForTesting(test_map);
   test_property.AppendSetValueToWriter(&writer);
 
@@ -516,7 +516,7 @@ TEST(PropertyTestStatic, ReadWriteUInt16ToByteVectorMap) {
   writer.CloseContainer(&variant_writer);
 
   MessageReader reader(message.get());
-  Property<std::unordered_map<uint16_t, std::vector<uint8_t>>> test_property;
+  Property<std::map<uint16_t, std::vector<uint8_t>>> test_property;
   EXPECT_TRUE(test_property.PopValueFromReader(&reader));
 
   ASSERT_EQ(arraysize(keys), test_property.value().size());
@@ -525,7 +525,7 @@ TEST(PropertyTestStatic, ReadWriteUInt16ToByteVectorMap) {
 }
 
 TEST(PropertyTestStatic, SerializeUInt16ToByteVectorMap) {
-  std::unordered_map<uint16_t, std::vector<uint8_t>> test_map;
+  std::map<uint16_t, std::vector<uint8_t>> test_map;
   test_map[11] = {1, 2, 3};
   test_map[12] = {0xab, 0xcd};
   test_map[13] = {0x0};
@@ -533,7 +533,7 @@ TEST(PropertyTestStatic, SerializeUInt16ToByteVectorMap) {
   std::unique_ptr<Response> message(Response::CreateEmpty());
   MessageWriter writer(message.get());
 
-  Property<std::unordered_map<uint16_t, std::vector<uint8_t>>> test_property;
+  Property<std::map<uint16_t, std::vector<uint8_t>>> test_property;
   test_property.ReplaceSetValueForTesting(test_map);
   test_property.AppendSetValueToWriter(&writer);
 

@@ -10,7 +10,6 @@
 #include "net/base/net_export.h"
 #include "net/base/proxy_server.h"
 #include "net/proxy_resolution/proxy_bypass_rules.h"
-#include "net/proxy_resolution/proxy_config_source.h"
 #include "net/proxy_resolution/proxy_list.h"
 #include "url/gurl.h"
 
@@ -148,23 +147,13 @@ class NET_EXPORT ProxyConfig {
     const ProxyList* GetProxyListForWebSocketScheme() const;
   };
 
-  typedef int ID;
-
-  // Indicates an invalid proxy config.
-  static const ID kInvalidConfigID = 0;
-
   ProxyConfig();
   ProxyConfig(const ProxyConfig& config);
   ~ProxyConfig();
   ProxyConfig& operator=(const ProxyConfig& config);
 
-  // Used to numerically identify this configuration.
-  ID id() const { return id_; }
-  void set_id(ID id) { id_ = id; }
-  bool is_valid() const { return id_ != kInvalidConfigID; }
-
   // Returns true if the given config is equivalent to this config.  The
-  // comparison ignores differences in |id()| and |source()|.
+  // comparison ignores differences in |source()|.
   bool Equals(const ProxyConfig& other) const;
 
   // Returns true if this config contains any "automatic" settings. See the
@@ -212,14 +201,6 @@ class NET_EXPORT ProxyConfig {
     return auto_detect_;
   }
 
-  void set_source(ProxyConfigSource source) {
-    source_ = source;
-  }
-
-  ProxyConfigSource source() const {
-    return source_;
-  }
-
   // Helpers to construct some common proxy configurations.
 
   static ProxyConfig CreateDirect() {
@@ -247,17 +228,12 @@ class NET_EXPORT ProxyConfig {
   // If non-empty, indicates the URL of the proxy auto-config file to use.
   GURL pac_url_;
 
-  // If true, blocks all traffic in case fetching the pac script from |pac_url_|
+  // If true, blocks all traffic in case fetching the PAC script from |pac_url_|
   // fails. Only valid if |pac_url_| is non-empty.
   bool pac_mandatory_;
 
   // Manual proxy settings.
   ProxyRules proxy_rules_;
-
-  // Source of proxy settings.
-  ProxyConfigSource source_;
-
-  ID id_;
 };
 
 }  // namespace net

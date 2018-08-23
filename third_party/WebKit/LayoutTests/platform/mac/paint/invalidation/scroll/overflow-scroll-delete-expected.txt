@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,25 +18,26 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'Passed'",
           "rect": [8, 112, 44, 35],
-          "reason": "full"
+          "reason": "appeared"
+        },
+        {
+          "object": "InlineTextBox 'Test'",
+          "rect": [8, 112, 44, 35],
+          "reason": "appeared"
+        },
+        {
+          "object": "InlineTextBox 'Failed'",
+          "rect": [8, 112, 40, 35],
+          "reason": "disappeared"
+        },
+        {
+          "object": "InlineTextBox 'Test'",
+          "rect": [8, 112, 40, 35],
+          "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'Passed'",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'Test'",
-      "reason": "full"
     }
   ]
 }

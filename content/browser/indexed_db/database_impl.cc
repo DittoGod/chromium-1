@@ -4,7 +4,6 @@
 
 #include "content/browser/indexed_db/database_impl.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_math.h"
 #include "base/sequence_checker.h"
@@ -16,11 +15,14 @@
 #include "content/browser/indexed_db/indexed_db_dispatcher_host.h"
 #include "content/browser/indexed_db/indexed_db_transaction.h"
 #include "content/browser/indexed_db/indexed_db_value.h"
+#include "content/public/browser/browser_thread.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
-#include "third_party/WebKit/common/quota/quota_types.mojom.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBDatabaseException.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_database_exception.h"
 
+using blink::IndexedDBIndexKeys;
+using blink::IndexedDBKey;
 using std::swap;
 
 namespace content {
@@ -77,8 +79,7 @@ class DatabaseImpl::IDBSequenceHelper {
               scoped_refptr<IndexedDBCallbacks> callbacks);
   void Put(int64_t transaction_id,
            int64_t object_store_id,
-           ::indexed_db::mojom::ValuePtr value,
-           std::vector<std::unique_ptr<storage::BlobDataHandle>> handles,
+           ::blink::mojom::IDBValuePtr value,
            std::vector<IndexedDBBlobInfo> blob_info,
            const IndexedDBKey& key,
            blink::WebIDBPutMode mode,
@@ -245,7 +246,7 @@ void DatabaseImpl::Get(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::Get, base::Unretained(helper_),
                      transaction_id, object_store_id, index_id, key_range,
-                     key_only, base::Passed(&callbacks)));
+                     key_only, std::move(callbacks)));
 }
 
 void DatabaseImpl::GetAll(
@@ -263,13 +264,13 @@ void DatabaseImpl::GetAll(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::GetAll, base::Unretained(helper_),
                      transaction_id, object_store_id, index_id, key_range,
-                     key_only, max_count, base::Passed(&callbacks)));
+                     key_only, max_count, std::move(callbacks)));
 }
 
 void DatabaseImpl::Put(
     int64_t transaction_id,
     int64_t object_store_id,
-    ::indexed_db::mojom::ValuePtr value,
+    ::blink::mojom::IDBValuePtr value,
     const IndexedDBKey& key,
     blink::WebIDBPutMode mode,
     const std::vector<IndexedDBIndexKeys>& index_keys,
@@ -281,12 +282,10 @@ void DatabaseImpl::Put(
       new IndexedDBCallbacks(dispatcher_host_->AsWeakPtr(), origin_,
                              std::move(callbacks_info), idb_runner_));
 
-  std::vector<std::unique_ptr<storage::BlobDataHandle>> handles(
-      value->blob_or_file_info.size());
   base::CheckedNumeric<uint64_t> total_blob_size = 0;
   std::vector<IndexedDBBlobInfo> blob_info(value->blob_or_file_info.size());
   for (size_t i = 0; i < value->blob_or_file_info.size(); ++i) {
-    ::indexed_db::mojom::BlobInfoPtr& info = value->blob_or_file_info[i];
+    ::blink::mojom::IDBBlobInfoPtr& info = value->blob_or_file_info[i];
 
     std::unique_ptr<storage::BlobDataHandle> handle =
         dispatcher_host_->blob_storage_context()->GetBlobDataFromUUID(
@@ -303,13 +302,12 @@ void DatabaseImpl::Put(
       idb_runner_->PostTask(
           FROM_HERE, base::BindOnce(&IDBSequenceHelper::AbortWithError,
                                     base::Unretained(helper_), transaction_id,
-                                    base::Passed(&callbacks), error));
+                                    std::move(callbacks), error));
       return;
     }
     uint64_t size = handle->size();
     UMA_HISTOGRAM_MEMORY_KB("Storage.IndexedDB.PutBlobSizeKB", size / 1024ull);
     total_blob_size += size;
-    handles[i] = std::move(handle);
 
     if (info->file) {
       if (!info->file->path.empty() &&
@@ -318,14 +316,15 @@ void DatabaseImpl::Put(
         mojo::ReportBadMessage(kInvalidBlobFilePath);
         return;
       }
-      blob_info[i] = IndexedDBBlobInfo(info->uuid, info->file->path,
+      blob_info[i] = IndexedDBBlobInfo(std::move(handle), info->file->path,
                                        info->file->name, info->mime_type);
       if (info->size != -1) {
         blob_info[i].set_last_modified(info->file->last_modified);
         blob_info[i].set_size(info->size);
       }
     } else {
-      blob_info[i] = IndexedDBBlobInfo(info->uuid, info->mime_type, info->size);
+      blob_info[i] =
+          IndexedDBBlobInfo(std::move(handle), info->mime_type, info->size);
     }
   }
   UMA_HISTOGRAM_COUNTS_1000("WebCore.IndexedDB.PutBlobsCount",
@@ -339,9 +338,9 @@ void DatabaseImpl::Put(
   idb_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::Put, base::Unretained(helper_),
-                     transaction_id, object_store_id, base::Passed(&value),
-                     base::Passed(&handles), base::Passed(&blob_info), key,
-                     mode, index_keys, base::Passed(&callbacks)));
+                     transaction_id, object_store_id, std::move(value),
+                     std::move(blob_info), key, mode, index_keys,
+                     std::move(callbacks)));
 }
 
 void DatabaseImpl::SetIndexKeys(
@@ -380,7 +379,7 @@ void DatabaseImpl::OpenCursor(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::OpenCursor, base::Unretained(helper_),
                      transaction_id, object_store_id, index_id, key_range,
-                     direction, key_only, task_type, base::Passed(&callbacks)));
+                     direction, key_only, task_type, std::move(callbacks)));
 }
 
 void DatabaseImpl::Count(
@@ -396,7 +395,7 @@ void DatabaseImpl::Count(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::Count, base::Unretained(helper_),
                      transaction_id, object_store_id, index_id, key_range,
-                     base::Passed(&callbacks)));
+                     std::move(callbacks)));
 }
 
 void DatabaseImpl::DeleteRange(
@@ -411,7 +410,7 @@ void DatabaseImpl::DeleteRange(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::DeleteRange, base::Unretained(helper_),
                      transaction_id, object_store_id, key_range,
-                     base::Passed(&callbacks)));
+                     std::move(callbacks)));
 }
 
 void DatabaseImpl::Clear(
@@ -422,9 +421,9 @@ void DatabaseImpl::Clear(
       new IndexedDBCallbacks(dispatcher_host_->AsWeakPtr(), origin_,
                              std::move(callbacks_info), idb_runner_));
   idb_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&IDBSequenceHelper::Clear,
-                                base::Unretained(helper_), transaction_id,
-                                object_store_id, base::Passed(&callbacks)));
+      FROM_HERE,
+      base::BindOnce(&IDBSequenceHelper::Clear, base::Unretained(helper_),
+                     transaction_id, object_store_id, std::move(callbacks)));
 }
 
 void DatabaseImpl::CreateIndex(int64_t transaction_id,
@@ -656,8 +655,7 @@ void DatabaseImpl::IDBSequenceHelper::GetAll(
 void DatabaseImpl::IDBSequenceHelper::Put(
     int64_t transaction_id,
     int64_t object_store_id,
-    ::indexed_db::mojom::ValuePtr mojo_value,
-    std::vector<std::unique_ptr<storage::BlobDataHandle>> handles,
+    ::blink::mojom::IDBValuePtr mojo_value,
     std::vector<IndexedDBBlobInfo> blob_info,
     const IndexedDBKey& key,
     blink::WebIDBPutMode mode,
@@ -681,7 +679,7 @@ void DatabaseImpl::IDBSequenceHelper::Put(
   IndexedDBValue value;
   swap(value.bits, mojo_value->bits);
   swap(value.blob_info, blob_info);
-  connection_->database()->Put(transaction, object_store_id, &value, &handles,
+  connection_->database()->Put(transaction, object_store_id, &value,
                                std::make_unique<IndexedDBKey>(key), mode,
                                std::move(callbacks), index_keys);
 
@@ -910,10 +908,10 @@ void DatabaseImpl::IDBSequenceHelper::Commit(int64_t transaction_id) {
   }
 
   indexed_db_context_->quota_manager_proxy()->GetUsageAndQuota(
-      indexed_db_context_->TaskRunner(), origin_.GetURL(),
+      indexed_db_context_->TaskRunner(), origin_,
       blink::mojom::StorageType::kTemporary,
-      base::Bind(&IDBSequenceHelper::OnGotUsageAndQuotaForCommit,
-                 weak_factory_.GetWeakPtr(), transaction_id));
+      base::BindOnce(&IDBSequenceHelper::OnGotUsageAndQuotaForCommit,
+                     weak_factory_.GetWeakPtr(), transaction_id));
 }
 
 void DatabaseImpl::IDBSequenceHelper::OnGotUsageAndQuotaForCommit(

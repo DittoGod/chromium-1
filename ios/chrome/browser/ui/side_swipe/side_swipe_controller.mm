@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/feature_list.h"
+#import "base/ios/block_types.h"
 #include "base/scoped_observer.h"
 #include "components/reading_list/core/reading_list_model.h"
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
@@ -29,8 +30,10 @@
 #import "ios/chrome/browser/ui/side_swipe_gesture_recognizer.h"
 #import "ios/chrome/browser/ui/tabs/requirements/tab_strip_highlighting.h"
 #include "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_interacting.h"
+#import "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_interacting.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/web/page_placeholder_tab_helper.h"
+#import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -135,8 +138,8 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 
 @synthesize inSwipe = inSwipe_;
 @synthesize swipeDelegate = swipeDelegate_;
-@synthesize primaryToolbarInteractionHandler =
-    _primaryToolbarInteractionHandler;
+@synthesize toolbarInteractionHandler = _toolbarInteractionHandler;
+@synthesize primaryToolbarSnapshotProvider = _primaryToolbarSnapshotProvider;
 @synthesize secondaryToolbarSnapshotProvider =
     _secondaryToolbarSnapshotProvider;
 @synthesize snapshotDelegate = snapshotDelegate_;
@@ -237,22 +240,20 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 
   CGPoint location = [gesture locationInView:gesture.view];
 
-  // Both the toolbar frame and the contentView frame below are inset by
-  // -1 because CGRectContainsPoint does include points on the max X and Y
-  // edges, which will happen frequently with edge swipes from the right side.
   // Since the toolbar and the contentView can overlap, check the toolbar frame
   // first, and confirm the right gesture recognizer is firing.
-  CGRect toolbarFrame = CGRectInset(
-      [self.primaryToolbarInteractionHandler toolbarView].frame, -1, -1);
-  if (CGRectContainsPoint(toolbarFrame, location)) {
+  if ([self.toolbarInteractionHandler isInsideToolbar:location]) {
     if (![gesture isEqual:panGestureRecognizer_]) {
       return NO;
     }
 
-    return [self.primaryToolbarInteractionHandler canBeginToolbarSwipe];
+    return [swipeDelegate_ canBeginToolbarSwipe];
   }
 
   // Otherwise, only allow contentView touches with |swipeGestureRecognizer_|.
+  // The content view frame is inset by -1 because CGRectContainsPoint does
+  // include points on the max X and Y edges, which will happen frequently with
+  // edge swipes from the right side.
   CGRect contentViewFrame =
       CGRectInset([[swipeDelegate_ sideSwipeContentView] frame], -1, -1);
   if (CGRectContainsPoint(contentViewFrame, location)) {
@@ -426,6 +427,7 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
         std::make_unique<AnimatedScopedFullscreenDisabler>(
             FullscreenControllerFactory::GetInstance()->GetForBrowserState(
                 browserState_));
+    animatedFullscreenDisabler_->StartAnimation();
 
     inSwipe_ = YES;
     [swipeDelegate_ updateAccessoryViewsForSideSwipeWithVisibility:NO];
@@ -450,9 +452,8 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
         rotateForward:[currentContentProvider_ rotateForwardIcon]];
     [pageSideSwipeView_ setTargetView:[swipeDelegate_ sideSwipeContentView]];
 
-    [gesture.view
-        insertSubview:pageSideSwipeView_
-         belowSubview:[self.primaryToolbarInteractionHandler toolbarView]];
+    [gesture.view insertSubview:pageSideSwipeView_
+                   belowSubview:[swipeDelegate_ topToolbarView]];
   } else if (gesture.state == UIGestureRecognizerStateCancelled ||
              gesture.state == UIGestureRecognizerStateEnded ||
              gesture.state == UIGestureRecognizerStateFailed) {
@@ -472,7 +473,13 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
           [currentContentProvider_ goForward:webState];
         }
 
-        if (webState && webState->IsLoading()) {
+        // Checking -IsLoading() is likely incorrect, but to narrow the scope of
+        // fixes for slim navigation manager, only ignore this state when
+        // slim is disabled.  With slim navigation enabled, this false when
+        // pages can be served from WKWebView's page cache.
+        if (webState &&
+            (web::GetWebClient()->IsSlimNavigationManagerEnabled() ||
+             webState->IsLoading())) {
           scopedWebStateObserver_->RemoveAll();
           scopedWebStateObserver_->Add(webState);
           [self addCurtainWithCompletionHandler:^{
@@ -513,7 +520,7 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
                                                          topMargin:headerHeight
                                                              model:model_];
       tabSideSwipeView_.topToolbarSnapshotProvider =
-          self.primaryToolbarInteractionHandler;
+          self.primaryToolbarSnapshotProvider;
       tabSideSwipeView_.bottomToolbarSnapshotProvider =
           self.secondaryToolbarSnapshotProvider;
 
@@ -579,7 +586,20 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 
 #pragma mark - CRWWebStateObserver Methods
 
+// Checking -webStateDidStopLoading is likely incorrect, but to narrow the scope
+// of fixes for slim navigation manager, only ignore this callback when slim is
+// disabled.
 - (void)webStateDidStopLoading:(web::WebState*)webState {
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled())
+    return;
+  [self dismissCurtainWithCompletionHandler:^{
+    inSwipe_ = NO;
+  }];
+}
+
+- (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
+  if (!web::GetWebClient()->IsSlimNavigationManagerEnabled())
+    return;
   [self dismissCurtainWithCompletionHandler:^{
     inSwipe_ = NO;
   }];

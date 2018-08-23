@@ -11,7 +11,6 @@
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/banners/app_banner_manager.h"
 #include "chrome/browser/banners/app_banner_metrics.h"
@@ -75,14 +74,14 @@ std::unique_ptr<base::DictionaryValue> GetOriginAppBannerData(
     HostContentSettingsMap* settings,
     const GURL& origin_url) {
   if (!settings)
-    return base::MakeUnique<base::DictionaryValue>();
+    return std::make_unique<base::DictionaryValue>();
 
   std::unique_ptr<base::DictionaryValue> dict =
       base::DictionaryValue::From(settings->GetWebsiteSetting(
           origin_url, origin_url, CONTENT_SETTINGS_TYPE_APP_BANNER,
           std::string(), NULL));
   if (!dict)
-    return base::MakeUnique<base::DictionaryValue>();
+    return std::make_unique<base::DictionaryValue>();
 
   return dict;
 }
@@ -418,7 +417,7 @@ AppBannerSettingsHelper::GetHomescreenLanguageOption() {
   if (param.empty() || !base::StringToUint(param, &language_option) ||
       language_option < LANGUAGE_OPTION_MIN ||
       language_option > LANGUAGE_OPTION_MAX) {
-    return LANGUAGE_OPTION_ADD;
+    return LANGUAGE_OPTION_DEFAULT;
   }
 
   return static_cast<LanguageOption>(language_option);

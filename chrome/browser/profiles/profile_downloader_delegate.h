@@ -18,10 +18,11 @@ class ProfileDownloaderDelegate {
  public:
   // Error codes passed to OnProfileDownloadFailure.
   enum FailureReason {
-    TOKEN_ERROR,         // Cannot fetch OAuth2 token.
-    NETWORK_ERROR,       // Network failure while downloading profile.
-    SERVICE_ERROR,       // Service returned an error or malformed reply.
-    IMAGE_DECODE_FAILED  // Cannot decode fetched image.
+    TOKEN_ERROR,          // Cannot fetch OAuth2 token.
+    NETWORK_ERROR,        // Network failure while downloading profile.
+    SERVICE_ERROR,        // Service returned an error or malformed reply.
+    IMAGE_DECODE_FAILED,  // Cannot decode fetched image.
+    INVALID_PROFILE_PICTURE_URL  // The profile picture URL is invalid.
   };
 
   virtual ~ProfileDownloaderDelegate() {}
@@ -34,9 +35,9 @@ class ProfileDownloaderDelegate {
   virtual int GetDesiredImageSideLength() const = 0;
 
   // Returns the cached URL. If the cache URL matches the new image URL
-  // the image will not be downloaded. Return an empty string when there is no
+  // the image will not be downloaded. Return an empty URL when there is no
   // cached URL.
-  virtual std::string GetCachedPictureURL() const = 0;
+  virtual GURL GetCachedPictureURL() const = 0;
 
   // Returns the browser profile associated with this download request.
   virtual Profile* GetBrowserProfile() = 0;

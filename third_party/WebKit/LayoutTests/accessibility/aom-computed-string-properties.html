@@ -19,13 +19,13 @@ test(function(t) {
     assert_true(internals.runtimeFlags.accessibilityObjectModelEnabled);
 }, "Make sure that Accessibility Object Model is enabled");
 
-test(async function(test) {
+promise_test(async function(test) {
     var element = document.getElementById("button1");
     var computedAXNode = await window.getComputedAccessibleNode(element);
     assert_equals(computedAXNode.role, "button");
 }, "ComputedAccessibleNode.role");
 
-test(async function(test) {
+promise_test(async function(test) {
     var element = document.getElementById("button1");
     var computedAXNode = await window.getComputedAccessibleNode(element);
     assert_equals(computedAXNode.name, "Click");
@@ -37,7 +37,7 @@ test(async function(test) {
 
 <script>
 
-test(async function(test) {
+promise_test(async function(test) {
     var element = document.getElementById("button2");
     var computedAXNode = await window.getComputedAccessibleNode(element);
     assert_equals(computedAXNode.name, "axButton");
@@ -49,7 +49,7 @@ test(async function(test) {
 
 <script>
 
-test(async function(test) {
+promise_test(async function(test) {
     var element = document.getElementById("shortcut");
     var computedAXNode = await window.getComputedAccessibleNode(element);
     assert_equals(computedAXNode.keyShortcuts, "Alt+Shift+P");
@@ -61,7 +61,7 @@ test(async function(test) {
 
 <script>
 
-test(async function(test) {
+promise_test(async function(test) {
     var element = document.getElementById("fullname");
     computedAXNode = await window.getComputedAccessibleNode(element);
     assert_equals(computedAXNode.placeholder, "Jordan Doe");
@@ -73,7 +73,7 @@ test(async function(test) {
 
 <script>
 
-test(async function(test) {
+promise_test(async function(test) {
     var element = document.getElementById("button3");
     computedAXNode = await window.getComputedAccessibleNode(element);
     assert_equals(computedAXNode.role, "button");
@@ -86,7 +86,7 @@ test(async function(test) {
 <input id="no-autocomplete" role="combobox" aria-autocomplete="none"></input>
 <script>
 
-test(async function(test) {
+promise_test(async function(test) {
     var bothElement = document.getElementById("both-autocomplete");
     var noneElement = document.getElementById("no-autocomplete");
     var bothCAXNode = await window.getComputedAccessibleNode(bothElement);
@@ -96,4 +96,36 @@ test(async function(test) {
     test.done();
 }, "ComputedAccessibleNode.autocomplete");
 
+</script>
+
+<div role="checkbox" id="group-checkbox" aria-checked="mixed" aria-controls="cond1 cond2" tabindex="0">
+    All condiments
+</div>
+    <ul id="checkboxes">
+      <li>
+        <label>
+          <input type="checkbox" id="cond1"> Lettuce
+        </label>
+      </li>
+      <li>
+        <label>
+          <input type="checkbox" id="cond2" checked=""> Tomato
+        </label>
+      </li>
+</ul>
+
+<script>
+
+promise_test(async function(test) {
+    var groupElement = document.getElementById("group-checkbox");
+    var cond1Element = document.getElementById("cond1");
+    var cond2Element = document.getElementById("cond2");
+
+    var groupCaxNode = await window.getComputedAccessibleNode(groupElement);
+    var cond1CaxNode = await window.getComputedAccessibleNode(cond1Element);
+    var cond2CaxNode = await window.getComputedAccessibleNode(cond2Element);
+    assert_equals(groupCaxNode.checked, "mixed");
+    assert_equals(cond1CaxNode.checked, "false");
+    assert_equals(cond2CaxNode.checked, "true");
+}, "ComputedAccessibleNode.checked.");
 </script>

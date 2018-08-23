@@ -15,13 +15,14 @@
 #import "ios/chrome/browser/ui/browser_view_controller.h"
 #include "ios/chrome/browser/ui/icons/chrome_icon.h"
 #import "ios/chrome/browser/ui/location_bar/location_bar_coordinator.h"
+#import "ios/chrome/browser/ui/location_bar/location_bar_legacy_coordinator.h"
 #import "ios/chrome/browser/ui/location_bar/location_bar_url_loader.h"
 #include "ios/chrome/browser/ui/omnibox/location_bar_delegate.h"
 #include "ios/chrome/browser/ui/qr_scanner/camera_controller.h"
 #include "ios/chrome/browser/ui/qr_scanner/qr_scanner_view.h"
 #include "ios/chrome/browser/ui/qr_scanner/qr_scanner_view_controller.h"
 #import "ios/chrome/browser/ui/toolbar/clean/toolbar_coordinator.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_base_feature.h"
+#import "ios/chrome/browser/ui/toolbar/public/features.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
@@ -105,7 +106,8 @@ id<GREYMatcher> QrScannerViewportCaption() {
 id<GREYMatcher> DialogCancelButton() {
   return grey_allOf(
       grey_text(l10n_util::GetNSString(IDS_IOS_QR_SCANNER_ALERT_CANCEL)),
-      grey_accessibilityTrait(UIAccessibilityTraitStaticText), nil);
+      grey_accessibilityTrait(UIAccessibilityTraitStaticText),
+      grey_sufficientlyVisible(), nil);
 }
 
 // Opens the QR Scanner view.
@@ -116,6 +118,8 @@ void ShowQRScanner() {
       grey_minimumVisiblePercent(0.2), nil);
   [[EarlGrey selectElementWithMatcher:locationbarButton]
       performAction:grey_tap()];
+  [ChromeEarlGrey
+      waitForElementWithMatcherSufficientlyVisible:chrome_test_util::Omnibox()];
 
   // Tap the QR Code scanner button in the keyboard accessory view.
   id<GREYMatcher> matcher =
@@ -410,22 +414,38 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
 // Swizzles the LocationBarCoordinator loadGURLFromLocationBarBlock:transition:
 // method to load |searchURL| instead of the generated search URL.
 - (void)swizzleLocationBarCoordinatorLoadGURLFromLocationBar:
-    (const GURL&)searchURL {
-  void (^loadGURLFromLocationBarBlock)(LocationBarCoordinator*, const GURL&,
-                                       ui::PageTransition) =
-      ^void(LocationBarCoordinator* self, const GURL& url,
-            ui::PageTransition transition) {
-        [self.URLLoader loadURL:searchURL
-                       referrer:web::Referrer()
-                     transition:transition
-              rendererInitiated:NO];
-        [self cancelOmniboxEdit];
-      };
-
-  load_GURL_from_location_bar_swizzler_.reset(
-      new ScopedBlockSwizzler([LocationBarCoordinator class],
-                              @selector(loadGURLFromLocationBar:transition:),
-                              loadGURLFromLocationBarBlock));
+    (const GURL&)replacementURL {
+  // The specific class to swizzle depends on whether the UIRefresh experiment
+  // is enabled.
+  if (IsRefreshLocationBarEnabled()) {
+    void (^loadGURLFromLocationBarBlock)(LocationBarCoordinator*, const GURL&,
+                                         ui::PageTransition) =
+        ^void(LocationBarCoordinator* self, const GURL& url,
+              ui::PageTransition transition) {
+          web::NavigationManager::WebLoadParams params(replacementURL);
+          params.transition_type = transition;
+          [self.URLLoader loadURLWithParams:params];
+          [self cancelOmniboxEdit];
+        };
+    load_GURL_from_location_bar_swizzler_.reset(
+        new ScopedBlockSwizzler([LocationBarCoordinator class],
+                                @selector(loadGURLFromLocationBar:transition:),
+                                loadGURLFromLocationBarBlock));
+  } else {
+    void (^loadGURLFromLocationBarBlock)(LocationBarLegacyCoordinator*,
+                                         const GURL&, ui::PageTransition) =
+        ^void(LocationBarLegacyCoordinator* self, const GURL& url,
+              ui::PageTransition transition) {
+          web::NavigationManager::WebLoadParams params(replacementURL);
+          params.transition_type = transition;
+          [self.URLLoader loadURLWithParams:params];
+          [self cancelOmniboxEdit];
+        };
+    load_GURL_from_location_bar_swizzler_.reset(
+        new ScopedBlockSwizzler([LocationBarLegacyCoordinator class],
+                                @selector(loadGURLFromLocationBar:transition:),
+                                loadGURLFromLocationBarBlock));
+  }
 }
 
 // Creates a new CameraController mock with camera permission granted if
@@ -564,6 +584,13 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
 // switched off and the correct button indicating that the torch is off is shown
 // when the scanner is opened again.
 - (void)testTorchButtonIsResetWhenQRScannerIsReopened {
+// TODO(crbug.com/869176): Re-enable this test on iOS 10 iPad device.
+#if !TARGET_IPHONE_SIMULATOR
+  if (!base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 10 iPad device.");
+  }
+#endif
+
   id cameraControllerMock =
       [self getCameraControllerMockWithAuthorizationStatus:
                 AVAuthorizationStatusAuthorized];
@@ -597,6 +624,12 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
 // Tests that the torch button is disabled when the camera reports that torch
 // became unavailable.
 - (void)testTorchButtonIsDisabledWhenTorchBecomesUnavailable {
+// TODO(crbug.com/869176): Re-enable this test on iOS 10 iPad device.
+#if !TARGET_IPHONE_SIMULATOR
+  if (!base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 10 iPad device.");
+  }
+#endif
   id cameraControllerMock =
       [self getCameraControllerMockWithAuthorizationStatus:
                 AVAuthorizationStatusAuthorized];
@@ -644,6 +677,12 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
 // Tests that a UIAlertController is presented by the QRScannerViewController if
 // the camera state changes after the QRScannerViewController is presented.
 - (void)testDialogIsDisplayedIfCameraStateChanges {
+// TODO(crbug.com/869176): Re-enable this test on iOS 10 iPad device.
+#if !TARGET_IPHONE_SIMULATOR
+  if (!base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 10 iPad device.");
+  }
+#endif
   id cameraControllerMock =
       [self getCameraControllerMockWithAuthorizationStatus:
                 AVAuthorizationStatusAuthorized];
@@ -707,6 +746,13 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
 
 // Tests that an error dialog is dismissed if the camera becomes available.
 - (void)testDialogDismissedIfCameraBecomesAvailable {
+// TODO(crbug.com/869176): Re-enable this test on iOS 10 iPad device.
+#if !TARGET_IPHONE_SIMULATOR
+  if (!base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 10 iPad device.");
+  }
+#endif
+
   id cameraControllerMock =
       [self getCameraControllerMockWithAuthorizationStatus:
                 AVAuthorizationStatusAuthorized];
@@ -777,6 +823,12 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
 
 // Test that the correct page is loaded if the scanner result is a URL.
 - (void)testReceivingQRScannerURLResult {
+// TODO(crbug.com/869176): Re-enable this test on iOS 10 iPad device.
+#if !TARGET_IPHONE_SIMULATOR
+  if (!base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 10 iPad device.");
+  }
+#endif
   [self doTestReceivingResult:_testURL.GetContent()
                      response:kTestURLResponse
                          edit:nil];
@@ -785,6 +837,12 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
 // Test that the correct page is loaded if the scanner result is a URL which is
 // then manually edited.
 - (void)testReceivingQRScannerURLResultAndEditingTheURL {
+// TODO(crbug.com/869176): Re-enable this test on iOS 10 iPad device.
+#if !TARGET_IPHONE_SIMULATOR
+  if (!base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 10 iPad device.");
+  }
+#endif
   // TODO(crbug.com/753098): Re-enable this test on iOS 11 iPad once
   // grey_typeText works on iOS 11.
   if (base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
@@ -805,6 +863,12 @@ void TapKeyboardReturnKeyInOmniboxWithText(std::string text) {
 // Test that the correct page is loaded if the scanner result is a search query
 // which is then manually edited.
 - (void)testReceivingQRScannerSearchQueryResultAndEditingTheQuery {
+// TODO(crbug.com/869176): Re-enable this test on iOS 10 iPad device.
+#if !TARGET_IPHONE_SIMULATOR
+  if (!base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 10 iPad device.");
+  }
+#endif
   // TODO(crbug.com/753098): Re-enable this test on iOS 11 iPad once
   // grey_typeText works on iOS 11.
   if (base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {

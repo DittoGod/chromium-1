@@ -18,10 +18,12 @@
 #include "base/files/file_util.h"
 #include "base/i18n/time_formatting.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/syslog_logging.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -152,18 +154,22 @@ class ScreenshotGrabberNotificationDelegate
         screenshot_path_(screenshot_path) {}
 
   // message_center::NotificationDelegate:
-  void Click() override {
-    if (!success_)
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override {
+    if (!button_index) {
+      // TODO(estade): this conditional can be a DCHECK after
+      // NotificationDelegate::Click() is not called for notifications that are
+      // not set clickable.
+      if (success_) {
+        platform_util::ShowItemInFolder(profile_, screenshot_path_);
+        NotificationDisplayService::GetForProfile(profile_)->Close(
+            NotificationHandler::Type::TRANSIENT, kNotificationId);
+      }
       return;
-    platform_util::ShowItemInFolder(profile_, screenshot_path_);
-    NotificationDisplayService::GetForProfile(profile_)->Close(
-        NotificationHandler::Type::TRANSIENT, kNotificationId);
-  }
-
-  void ButtonClick(int button_index) override {
+    }
     DCHECK(success_);
 
-    switch (button_index) {
+    switch (*button_index) {
       case BUTTON_COPY_TO_CLIPBOARD: {
         // To avoid keeping the screenshot image in memory, re-read the
         // screenshot file and copy it to the clipboard.
@@ -188,7 +194,7 @@ class ScreenshotGrabberNotificationDelegate
         break;
       }
       default:
-        NOTREACHED() << "Unhandled button index " << button_index;
+        NOTREACHED() << "Unhandled button index " << *button_index;
     }
   }
 
@@ -257,11 +263,6 @@ void EnsureDirectoryExistsCallback(
         base::BindOnce(callback, ScreenshotFileResult::CHECK_DIR_FAILED,
                        base::FilePath()));
   }
-}
-
-bool ScreenshotsDisabled() {
-  return g_browser_process->local_state()->GetBoolean(
-      prefs::kDisableScreenshots);
 }
 
 bool ShouldUse24HourClock() {
@@ -398,7 +399,7 @@ ChromeScreenshotGrabber* ChromeScreenshotGrabber::Get() {
 }
 
 void ChromeScreenshotGrabber::HandleTakeScreenshotForAllRootWindows() {
-  if (ScreenshotsDisabled()) {
+  if (!ScreenshotsAllowed()) {
     OnScreenshotCompleted(ScreenshotResult::DISABLED, base::FilePath());
     return;
   }
@@ -430,7 +431,7 @@ void ChromeScreenshotGrabber::HandleTakeScreenshotForAllRootWindows() {
 void ChromeScreenshotGrabber::HandleTakePartialScreenshot(
     aura::Window* window,
     const gfx::Rect& rect) {
-  if (ScreenshotsDisabled()) {
+  if (!ScreenshotsAllowed()) {
     OnScreenshotCompleted(ScreenshotResult::DISABLED, base::FilePath());
     return;
   }
@@ -444,7 +445,7 @@ void ChromeScreenshotGrabber::HandleTakePartialScreenshot(
 }
 
 void ChromeScreenshotGrabber::HandleTakeWindowScreenshot(aura::Window* window) {
-  if (ScreenshotsDisabled()) {
+  if (!ScreenshotsAllowed()) {
     OnScreenshotCompleted(ScreenshotResult::DISABLED, base::FilePath());
     return;
   }
@@ -472,7 +473,7 @@ void ChromeScreenshotGrabber::OnTookScreenshot(
     return;
   }
 
-  if (ScreenshotsDisabled()) {
+  if (!ScreenshotsAllowed()) {
     OnScreenshotCompleted(ScreenshotResult::DISABLED, base::FilePath());
     return;
   }
@@ -538,6 +539,10 @@ void ChromeScreenshotGrabber::OnScreenshotCompleted(
             weak_factory_.GetWeakPtr(), result, screenshot_path, gfx::Image()));
     return;
   }
+
+#if defined(OS_CHROMEOS)
+  SYSLOG(INFO) << "Screenshot taken";
+#endif
 
   if (drive::util::IsUnderDriveMountPoint(screenshot_path)) {
     drive::FileSystemInterface* file_system =
@@ -686,7 +691,6 @@ void ChromeScreenshotGrabber::OnReadScreenshotFileForPreviewCompleted(
           kNotificationId,
           l10n_util::GetStringUTF16(GetScreenshotNotificationTitle(result)),
           l10n_util::GetStringUTF16(GetScreenshotNotificationText(result)),
-          gfx::Image(),
           l10n_util::GetStringUTF16(IDS_SCREENSHOT_NOTIFICATION_NOTIFIER_NAME),
           GURL(kNotificationOriginUrl),
           message_center::NotifierId(
@@ -697,7 +701,6 @@ void ChromeScreenshotGrabber::OnReadScreenshotFileForPreviewCompleted(
                                                     screenshot_path),
           ash::kNotificationImageIcon,
           message_center::SystemNotificationWarningLevel::NORMAL);
-  notification->set_clickable(success);
 
   NotificationDisplayService::GetForProfile(GetProfile())
       ->Display(NotificationHandler::Type::TRANSIENT, *notification);
@@ -705,4 +708,15 @@ void ChromeScreenshotGrabber::OnReadScreenshotFileForPreviewCompleted(
 
 Profile* ChromeScreenshotGrabber::GetProfile() {
   return ProfileManager::GetActiveUserProfile();
+}
+
+bool ChromeScreenshotGrabber::ScreenshotsAllowed() const {
+  // Have two ways to disable screenshots:
+  // - local state pref whose value is set from policy;
+  // - simple flag which is set/unset when entering/exiting special modes where
+  // screenshots should be disabled (pref is problematic because it's kept
+  // across reboots, hence if the device crashes it may get stuck with the wrong
+  // value).
+  return screenshots_allowed_ && !g_browser_process->local_state()->GetBoolean(
+      prefs::kDisableScreenshots);
 }

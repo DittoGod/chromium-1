@@ -14,11 +14,11 @@
 #include "base/files/file_path.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/origin_trials/chrome_origin_trial_policy.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "content/public/common/content_client.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/common/pepper_plugin_info.h"
@@ -30,14 +30,19 @@ std::string GetUserAgent();
 class ChromeContentClient : public content::ContentClient {
  public:
 #if defined(GOOGLE_CHROME_BUILD)
-  // kNotPresent is a placeholder plugin location for plugins that are not
+  // |kNotPresent| is a placeholder plugin location for plugins that are not
   // currently present in this installation of Chrome, but which can be fetched
   // on-demand and therefore should still appear in navigator.plugins.
-  static const char kNotPresent[];
+  static const base::FilePath::CharType kNotPresent[];
 #endif
+
+#if BUILDFLAG(ENABLE_NACL)
+  static const base::FilePath::CharType kNaClPluginFileName[];
+#endif
+
   static const char kPDFExtensionPluginName[];
   static const char kPDFInternalPluginName[];
-  static const char kPDFPluginPath[];
+  static const base::FilePath::CharType kPDFPluginPath[];
 
   ChromeContentClient();
   ~ChromeContentClient() override;
@@ -87,11 +92,12 @@ class ChromeContentClient : public content::ContentClient {
   base::RefCountedMemory* GetDataResourceBytes(
       int resource_id) const override;
   gfx::Image& GetNativeImageNamed(int resource_id) const override;
+  base::DictionaryValue GetNetLogConstants() const override;
   std::string GetProcessTypeNameInEnglish(int type) override;
 
   bool AllowScriptExtensionForServiceWorker(const GURL& script_url) override;
 
-  content::OriginTrialPolicy* GetOriginTrialPolicy() override;
+  blink::OriginTrialPolicy* GetOriginTrialPolicy() override;
 
 #if defined(OS_ANDROID)
   media::MediaDrmBridgeClient* GetMediaDrmBridgeClient() override;

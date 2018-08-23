@@ -4,10 +4,9 @@
 
 #include "ash/metrics/pointer_metrics_recorder.h"
 
-#include "ash/display/screen_orientation_controller_chromeos.h"
+#include "ash/display/screen_orientation_controller.h"
 #include "ash/public/cpp/app_types.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/metrics/histogram_macros.h"
 #include "ui/aura/client/aura_constants.h"
@@ -47,12 +46,10 @@ void RecordUMA(ui::EventPointerType type, views::Widget* target) {
   if (Shell::Get()
           ->tablet_mode_controller()
           ->IsTabletModeWindowManagerEnabled()) {
-    blink::WebScreenOrientationLockType screen_orientation =
+    OrientationLockType screen_orientation =
         Shell::Get()->screen_orientation_controller()->GetCurrentOrientation();
-    if (screen_orientation ==
-            blink::kWebScreenOrientationLockLandscapePrimary ||
-        screen_orientation ==
-            blink::kWebScreenOrientationLockLandscapeSecondary) {
+    if (screen_orientation == OrientationLockType::kLandscapePrimary ||
+        screen_orientation == OrientationLockType::kLandscapeSecondary) {
       form_factor = DownEventFormFactor::kTabletModeLandscape;
     } else {
       form_factor = DownEventFormFactor::kTabletModePortrait;
@@ -87,12 +84,11 @@ void RecordUMA(ui::EventPointerType type, views::Widget* target) {
 }  // namespace
 
 PointerMetricsRecorder::PointerMetricsRecorder() {
-  ShellPort::Get()->AddPointerWatcher(this,
-                                      views::PointerWatcherEventTypes::BASIC);
+  Shell::Get()->AddPointerWatcher(this, views::PointerWatcherEventTypes::BASIC);
 }
 
 PointerMetricsRecorder::~PointerMetricsRecorder() {
-  ShellPort::Get()->RemovePointerWatcher(this);
+  Shell::Get()->RemovePointerWatcher(this);
 }
 
 void PointerMetricsRecorder::OnPointerEventObserved(

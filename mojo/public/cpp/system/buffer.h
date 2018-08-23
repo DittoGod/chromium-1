@@ -55,6 +55,13 @@ class MOJO_CPP_SYSTEM_EXPORT SharedBufferHandle : public Handle {
   // Copying and assignment allowed.
 
   // Creates a new SharedBufferHandle. Returns an invalid handle on failure.
+  //
+  // Note for those converting legacy shared memory to the
+  // base::*SharedMemoryRegion API: if SharedBufferHandle::Create is used for
+  // your shared memory regions, the mojo::Create*SahredMemoryRegion methods in
+  // mojo/public/cpp/base/shared_memory_utils.h should be used. These know how
+  // to use a broker to create regions in unprivileged contexts in the same way
+  // as this SharedBufferHandle::Create method.
   static ScopedSharedBufferHandle Create(uint64_t num_bytes);
 
   // Clones this shared buffer handle. If |access_mode| is READ_ONLY or this is
@@ -69,6 +76,9 @@ class MOJO_CPP_SYSTEM_EXPORT SharedBufferHandle : public Handle {
   // Maps |size| bytes of this shared buffer, starting |offset| bytes into the
   // buffer. On failure, this will return a null mapping.
   ScopedSharedBufferMapping MapAtOffset(uint64_t size, uint64_t offset) const;
+
+  // Get the size of this shared buffer.
+  uint64_t GetSize() const;
 };
 
 static_assert(sizeof(SharedBufferHandle) == sizeof(Handle),

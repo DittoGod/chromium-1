@@ -20,7 +20,6 @@
 #include "ipc/ipc_message_macros.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
-#include "net/base/rand_callback.h"
 #include "net/log/net_log_source.h"
 #include "net/socket/udp_socket.h"
 #include "ppapi/c/pp_errors.h"
@@ -399,9 +398,8 @@ void PepperUDPSocketMessageFilter::DoBind(
     return;
   }
 
-  std::unique_ptr<net::UDPSocket> socket(
-      new net::UDPSocket(net::DatagramSocket::DEFAULT_BIND,
-                         net::RandIntCallback(), nullptr, net::NetLogSource()));
+  auto socket = std::make_unique<net::UDPSocket>(
+      net::DatagramSocket::DEFAULT_BIND, nullptr, net::NetLogSource());
 
   net::IPAddressBytes address;
   uint16_t port;
@@ -560,8 +558,8 @@ void PepperUDPSocketMessageFilter::DoRecvFrom() {
   int net_result = socket_->RecvFrom(
       recvfrom_buffer_.get(), UDPSocketResourceConstants::kMaxReadSize,
       &recvfrom_address_,
-      base::Bind(&PepperUDPSocketMessageFilter::OnRecvFromCompleted,
-                 base::Unretained(this)));
+      base::BindOnce(&PepperUDPSocketMessageFilter::OnRecvFromCompleted,
+                     base::Unretained(this)));
   if (net_result != net::ERR_IO_PENDING)
     OnRecvFromCompleted(net_result);
 }
@@ -622,11 +620,10 @@ int PepperUDPSocketMessageFilter::StartPendingSend() {
   // See OnMsgRecvFrom() for the reason why we use base::Unretained(this)
   // when calling |socket_| methods.
   int net_result = socket_->SendTo(
-      pending_send.buffer.get(),
-      pending_send.buffer->size(),
+      pending_send.buffer.get(), pending_send.buffer->size(),
       net::IPEndPoint(pending_send.address, pending_send.port),
-      base::Bind(&PepperUDPSocketMessageFilter::OnSendToCompleted,
-                 base::Unretained(this)));
+      base::BindOnce(&PepperUDPSocketMessageFilter::OnSendToCompleted,
+                     base::Unretained(this)));
   return net_result;
 }
 

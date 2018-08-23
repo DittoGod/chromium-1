@@ -2,17 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/extensions/extension_action_view_controller.h"
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
+#include "base/strings/stringprintf.h"
+#include "base/test/scoped_feature_list.h"
+#include "chrome/browser/extensions/extension_action.h"
+#include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
-#include "chrome/browser/ui/extensions/extension_action_view_controller.h"
+#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/scripting_permissions_modifier.h"
+#include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/extensions/icon_with_badge_image_source.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar_unittest.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension_builder.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/user_script.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -27,8 +39,7 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionWantsToRunAppearance) {
 
   AddTab(browser(), GURL("chrome://newtab"));
 
-  gfx::Size size(ToolbarActionsBar::IconWidth(false),
-                 ToolbarActionsBar::IconHeight());
+  const gfx::Size size = toolbar_actions_bar()->GetViewSize();
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ExtensionActionViewController* action =
@@ -65,6 +76,11 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionWantsToRunAppearance) {
 }
 
 TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
+  // Blocked actions are only present with the runtime host permissions feature.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      extensions::features::kRuntimeHostPermissions);
+
   scoped_refptr<const extensions::Extension> browser_action_ext =
       CreateAndAddExtension(
           "browser action",
@@ -80,10 +96,9 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(web_contents);
-  const gfx::Size kSize(ToolbarActionsBar::IconWidth(false),
-                        ToolbarActionsBar::IconHeight());
+  const gfx::Size size = toolbar_actions_bar()->GetViewSize();
   std::unique_ptr<IconWithBadgeImageSource> image_source =
-      browser_action->GetIconImageSourceForTesting(web_contents, kSize);
+      browser_action->GetIconImageSourceForTesting(web_contents, size);
   EXPECT_FALSE(image_source->grayscale());
   EXPECT_FALSE(image_source->paint_page_action_decoration());
   EXPECT_FALSE(image_source->paint_blocked_actions_decoration());
@@ -93,16 +108,16 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
   ASSERT_TRUE(action_runner);
   action_runner->RequestScriptInjectionForTesting(
       browser_action_ext.get(), extensions::UserScript::DOCUMENT_IDLE,
-      base::Bind(&base::DoNothing));
+      base::DoNothing());
   image_source =
-      browser_action->GetIconImageSourceForTesting(web_contents, kSize);
+      browser_action->GetIconImageSourceForTesting(web_contents, size);
   EXPECT_FALSE(image_source->grayscale());
   EXPECT_FALSE(image_source->paint_page_action_decoration());
   EXPECT_TRUE(image_source->paint_blocked_actions_decoration());
 
   action_runner->RunBlockedActions(browser_action_ext.get());
   image_source =
-      browser_action->GetIconImageSourceForTesting(web_contents, kSize);
+      browser_action->GetIconImageSourceForTesting(web_contents, size);
   EXPECT_FALSE(image_source->grayscale());
   EXPECT_FALSE(image_source->paint_page_action_decoration());
   EXPECT_FALSE(image_source->paint_blocked_actions_decoration());
@@ -116,15 +131,15 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
           toolbar_actions_bar()->GetActions()[1]);
   EXPECT_EQ(browser_action_ext.get(), browser_action->extension());
 
-  image_source = page_action->GetIconImageSourceForTesting(web_contents, kSize);
+  image_source = page_action->GetIconImageSourceForTesting(web_contents, size);
   EXPECT_TRUE(image_source->grayscale());
   EXPECT_FALSE(image_source->paint_page_action_decoration());
   EXPECT_FALSE(image_source->paint_blocked_actions_decoration());
 
   action_runner->RequestScriptInjectionForTesting(
       page_action_ext.get(), extensions::UserScript::DOCUMENT_IDLE,
-      base::Bind(&base::DoNothing));
-  image_source = page_action->GetIconImageSourceForTesting(web_contents, kSize);
+      base::DoNothing());
+  image_source = page_action->GetIconImageSourceForTesting(web_contents, size);
   EXPECT_FALSE(image_source->grayscale());
   EXPECT_FALSE(image_source->paint_page_action_decoration());
   EXPECT_TRUE(image_source->paint_blocked_actions_decoration());
@@ -141,7 +156,7 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
   SetActionWantsToRunOnTab(overflow_page_action->extension_action(),
                            web_contents, true);
   image_source =
-      overflow_page_action->GetIconImageSourceForTesting(web_contents, kSize);
+      overflow_page_action->GetIconImageSourceForTesting(web_contents, size);
   EXPECT_FALSE(image_source->grayscale());
   EXPECT_FALSE(image_source->paint_page_action_decoration());
   EXPECT_TRUE(image_source->paint_blocked_actions_decoration());
@@ -151,7 +166,7 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
   toolbar_model()->SetVisibleIconCount(2u);
 
   action_runner->RunBlockedActions(page_action_ext.get());
-  image_source = page_action->GetIconImageSourceForTesting(web_contents, kSize);
+  image_source = page_action->GetIconImageSourceForTesting(web_contents, size);
   EXPECT_TRUE(image_source->grayscale());
   EXPECT_FALSE(image_source->paint_page_action_decoration());
   EXPECT_FALSE(image_source->paint_blocked_actions_decoration());
@@ -190,4 +205,119 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionContextMenu) {
   run_loop.Run();
   check_visibility_string(toolbar_actions_bar()->GetActions()[0],
                           IDS_EXTENSIONS_KEEP_BUTTON_IN_TOOLBAR);
+}
+
+// Tests the behavior for icon grayscaling with the runtime host permissions
+// feature enabled.
+TEST_P(ToolbarActionsBarUnitTest, GrayscaleIcon) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      extensions::features::kRuntimeHostPermissions);
+
+  scoped_refptr<const extensions::Extension> extension =
+      extensions::ExtensionBuilder("extension")
+          .SetAction(extensions::ExtensionBuilder::ActionType::BROWSER_ACTION)
+          .SetLocation(extensions::Manifest::INTERNAL)
+          .AddPermission("https://www.google.com/*")
+          .Build();
+  extensions::ExtensionService* service =
+      extensions::ExtensionSystem::Get(profile())->extension_service();
+  service->GrantPermissions(extension.get());
+  service->AddExtension(extension.get());
+
+  extensions::ScriptingPermissionsModifier permissions_modifier(profile(),
+                                                                extension);
+  permissions_modifier.SetWithholdHostPermissions(true);
+  ASSERT_EQ(1u, toolbar_actions_bar()->GetIconCount());
+  const GURL kUrl("https://www.google.com/");
+  AddTab(browser(), kUrl);
+
+  enum class ActionState {
+    kEnabled,
+    kDisabled,
+  };
+  enum class PageAccess {
+    kGranted,
+    kPending,
+    kNone,
+  };
+  enum class Opacity {
+    kGrayscale,
+    kFull,
+  };
+  enum class BlockedActions {
+    kPainted,
+    kNotPainted,
+  };
+
+  struct {
+    ActionState action_state;
+    PageAccess page_access;
+    Opacity expected_opacity;
+    BlockedActions expected_blocked_actions;
+  } test_cases[] = {
+      {ActionState::kEnabled, PageAccess::kNone, Opacity::kFull,
+       BlockedActions::kNotPainted},
+      {ActionState::kEnabled, PageAccess::kPending, Opacity::kFull,
+       BlockedActions::kPainted},
+      {ActionState::kEnabled, PageAccess::kGranted, Opacity::kFull,
+       BlockedActions::kNotPainted},
+
+      {ActionState::kDisabled, PageAccess::kNone, Opacity::kGrayscale,
+       BlockedActions::kNotPainted},
+      {ActionState::kDisabled, PageAccess::kPending, Opacity::kFull,
+       BlockedActions::kPainted},
+      {ActionState::kDisabled, PageAccess::kGranted, Opacity::kFull,
+       BlockedActions::kNotPainted},
+  };
+
+  auto* controller = static_cast<ExtensionActionViewController*>(
+      toolbar_actions_bar()->GetActions()[0]);
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ExtensionAction* extension_action =
+      extensions::ExtensionActionManager::Get(profile())->GetExtensionAction(
+          *extension);
+  extensions::ExtensionActionRunner* action_runner =
+      extensions::ExtensionActionRunner::GetForWebContents(web_contents);
+  int tab_id = SessionTabHelper::IdForTab(web_contents).id();
+  const gfx::Size kSize = toolbar_actions_bar()->GetViewSize();
+
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
+    SCOPED_TRACE(
+        base::StringPrintf("Running test case %d", static_cast<int>(i)));
+    const auto& test_case = test_cases[i];
+
+    // Set up the proper state.
+    extension_action->SetIsVisible(
+        tab_id, test_case.action_state == ActionState::kEnabled);
+    switch (test_case.page_access) {
+      case PageAccess::kNone:
+        // Page access should already be "none", but verify.
+        EXPECT_EQ(extensions::PermissionsData::PageAccess::kWithheld,
+                  extension->permissions_data()->GetPageAccess(
+                      kUrl, tab_id, /*error=*/nullptr));
+        break;
+      case PageAccess::kPending:
+        action_runner->RequestScriptInjectionForTesting(
+            extension.get(), extensions::UserScript::DOCUMENT_IDLE,
+            base::DoNothing());
+        break;
+      case PageAccess::kGranted:
+        permissions_modifier.GrantHostPermission(kUrl);
+        break;
+    }
+
+    std::unique_ptr<IconWithBadgeImageSource> image_source =
+        controller->GetIconImageSourceForTesting(web_contents, kSize);
+    EXPECT_EQ(test_case.expected_opacity == Opacity::kGrayscale,
+              image_source->grayscale());
+    EXPECT_EQ(test_case.expected_blocked_actions == BlockedActions::kPainted,
+              image_source->paint_blocked_actions_decoration());
+
+    // Clean up permissions state.
+    if (test_case.page_access == PageAccess::kGranted)
+      permissions_modifier.RemoveGrantedHostPermission(kUrl);
+    action_runner->ClearInjectionsForTesting(*extension);
+  }
 }

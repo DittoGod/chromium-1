@@ -18,10 +18,6 @@
 enum class PermissionAction;
 class PermissionRequest;
 
-namespace safe_browsing {
-class PermissionReporterBrowserTest;
-}
-
 namespace test {
 class PermissionRequestManagerTestApi;
 }
@@ -99,7 +95,6 @@ class PermissionRequestManager
   friend class MockPermissionPromptFactory;
   friend class PermissionContextBaseTests;
   friend class PermissionRequestManagerTest;
-  friend class safe_browsing::PermissionReporterBrowserTest;
   friend class content::WebContentsUserData<PermissionRequestManager>;
   FRIEND_TEST_ALL_PREFIXES(DownloadTest, TestMultipleDownloadsBubble);
 
@@ -181,7 +176,7 @@ class PermissionRequestManager
   std::unordered_multimap<PermissionRequest*, PermissionRequest*>
       duplicate_requests_;
 
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
   AutoResponseType auto_response_for_test_;
 
   base::WeakPtrFactory<PermissionRequestManager> weak_factory_;

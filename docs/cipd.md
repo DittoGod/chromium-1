@@ -133,6 +133,7 @@ Once you have those, you can create your package like so:
 ```
 # Assuming that the third-party dependency in question is at version 1.2.3
 # and this is the first chromium revision of that version.
+$ cipd auth-login  # One-time auth.
 $ cipd create --pkg-def cipd.yaml -tag version:1.2.3-cr0
 ```
 
@@ -197,6 +198,12 @@ $ cipd acl-list chromium
 By default, [cria/project-chromium-cipd-owners][4] own all CIPD packages
 under `chromium/`. If you're adding a package, talk to one of them.
 
+To obtain write access to a new package, ask an owner to run:
+
+```
+$ cipd acl-edit chromium/third_party/sample_cipd_dep -owner user:email@address.com
+```
+
 ## Troubleshooting
 
  - **A file maintained by CIPD is missing, and gclient sync doesn't recreate it.**
@@ -205,9 +212,9 @@ CIPD currently caches installation state. Modifying packages managed by CIPD
 will invalidate this cache in a way that CIPD doesn't detect - i.e., CIPD will
 assume that anything it installed is still installed, even if you deleted it.
 To clear the cache and force a full reinstallation, delete your
-`$SRC_ROOT/.cipd` directory.
+`$GCLIENT_ROOT/.cipd` directory.
 
-Note that there is a [bug](crbug.com/794764) on file to add a mode to CIPD
+Note that there is a [bug](https://crbug.com/794764) on file to add a mode to CIPD
 that is not so trusting of its own cache.
 
 [1]: https://chromium.googlesource.com/infra/luci/luci-go/+/master/cipd/

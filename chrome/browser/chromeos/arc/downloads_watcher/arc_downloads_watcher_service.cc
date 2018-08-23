@@ -18,8 +18,8 @@
 #include "base/memory/singleton.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_prefs.h"
@@ -345,9 +345,8 @@ void ArcDownloadsWatcherService::DownloadsWatcher::OnBuildTimestampMap(
   for (size_t i = 0; i < changed_paths.size(); ++i) {
     string_paths[i] = changed_paths[i].value();
   }
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::BindOnce(callback_, base::Passed(std::move(string_paths))));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(callback_, std::move(string_paths)));
   if (last_notify_time_ > snapshot_time)
     DelayBuildTimestampMap();
   else

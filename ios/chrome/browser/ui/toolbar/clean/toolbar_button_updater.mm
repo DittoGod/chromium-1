@@ -4,13 +4,20 @@
 
 #import "ios/chrome/browser/ui/toolbar/clean/toolbar_button_updater.h"
 
-#import "ios/chrome/browser/ui/toolbar/clean/toolbar_button_factory.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_constants.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_button_factory.h"
+#include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/voice/voice_search_notification_names.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+namespace {
+enum ToolbarButtonMode {
+  ToolbarButtonModeNormal,
+  ToolbarButtonModeReversed,
+};
+}  // namespace
 
 @interface ToolbarButtonUpdater ()
 
@@ -65,11 +72,9 @@
                             forState:UIControlStateHighlighted];
   }
   if (self.TTSPlaying && UIAccessibilityIsVoiceOverRunning()) {
-    // Moving VoiceOver without RunBlockAfterDelay results in VoiceOver not
-    // staying on |voiceSearchButton| and instead moving to views inside the
-    // WebView.
-    // Use |voiceSearchButton| in the block to prevent |self| from being
-    // retained.
+    // Moving VoiceOver without delay results in VoiceOver not staying on
+    // |voiceSearchButton| and instead moving to views inside the WebView. Use
+    // |voiceSearchButton| in the block to prevent |self| from being retained.
     UIButton* voiceSearchButton = self.voiceSearchButton;
     dispatch_async(dispatch_get_main_queue(), ^{
       UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification,

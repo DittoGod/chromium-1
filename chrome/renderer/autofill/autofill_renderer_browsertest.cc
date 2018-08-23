@@ -20,17 +20,17 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/service_manager/public/cpp/interface_provider.h"
+#include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
-#include "third_party/WebKit/public/web/WebInputElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_form_element.h"
+#include "third_party/blink/public/web/web_input_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 
 using autofill::features::kAutofillEnforceMinRequiredFieldsForHeuristics;
 using autofill::features::kAutofillEnforceMinRequiredFieldsForQuery;
@@ -55,7 +55,7 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
   FakeContentAutofillDriver() : called_field_change_(false) {}
   ~FakeContentAutofillDriver() override {}
 
-  void BindRequest(mojom::AutofillDriverRequest request) {
+  void BindRequest(mojom::AutofillDriverAssociatedRequest request) {
     bindings_.AddBinding(this, std::move(request));
   }
 
@@ -92,10 +92,15 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
                           const FormFieldData& field,
                           const gfx::RectF& bounding_box) override {}
 
+  void SelectControlDidChange(const FormData& form,
+                              const FormFieldData& field,
+                              const gfx::RectF& bounding_box) override {}
+
   void QueryFormFieldAutofill(int32_t id,
                               const FormData& form,
                               const FormFieldData& field,
-                              const gfx::RectF& bounding_box) override {}
+                              const gfx::RectF& bounding_box,
+                              bool autoselect_first_suggestion) override {}
 
   void HidePopup() override {}
 
@@ -115,12 +120,14 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
   void SetDataList(const std::vector<base::string16>& values,
                    const std::vector<base::string16>& labels) override {}
 
+  void SelectFieldOptionsDidChange(const autofill::FormData& form) override {}
+
   // Records whether TextFieldDidChange() get called.
   bool called_field_change_;
   // Records data received via FormSeen() call.
   std::unique_ptr<std::vector<FormData>> forms_;
 
-  mojo::BindingSet<mojom::AutofillDriver> bindings_;
+  mojo::AssociatedBindingSet<mojom::AutofillDriver> bindings_;
 };
 
 }  // namespace
@@ -140,17 +147,17 @@ class AutofillRendererTest : public ChromeRenderViewTest {
 
     // We only use the fake driver for main frame
     // because our test cases only involve the main frame.
-    service_manager::InterfaceProvider* remote_interfaces =
-        view_->GetMainRenderFrame()->GetRemoteInterfaces();
-    service_manager::InterfaceProvider::TestApi test_api(remote_interfaces);
-    test_api.SetBinderForName(
+    blink::AssociatedInterfaceProvider* remote_interfaces =
+        view_->GetMainRenderFrame()->GetRemoteAssociatedInterfaces();
+    remote_interfaces->OverrideBinderForTesting(
         mojom::AutofillDriver::Name_,
-        base::Bind(&AutofillRendererTest::BindAutofillDriver,
-                   base::Unretained(this)));
+        base::BindRepeating(&AutofillRendererTest::BindAutofillDriver,
+                            base::Unretained(this)));
   }
 
-  void BindAutofillDriver(mojo::ScopedMessagePipeHandle handle) {
-    fake_driver_.BindRequest(mojom::AutofillDriverRequest(std::move(handle)));
+  void BindAutofillDriver(mojo::ScopedInterfaceEndpointHandle handle) {
+    fake_driver_.BindRequest(
+        mojom::AutofillDriverAssociatedRequest(std::move(handle)));
   }
 
   FakeContentAutofillDriver fake_driver_;

@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/global_error/global_error_bubble_view_base.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/button.h"
 
 class Browser;
@@ -21,7 +21,7 @@ class GlobalErrorBubbleView : public views::BubbleDialogDelegateView,
  public:
   GlobalErrorBubbleView(
       views::View* anchor_view,
-      const gfx::Point& anchor_point,
+      const gfx::Rect& anchor_rect,
       views::BubbleBorder::Arrow arrow,
       Browser* browser,
       const base::WeakPtr<GlobalErrorWithStandardBubble>& error);
@@ -39,6 +39,7 @@ class GlobalErrorBubbleView : public views::BubbleDialogDelegateView,
   void UpdateButton(views::LabelButton* button, ui::DialogButton type) override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   int GetDialogButtons() const override;
+  int GetDefaultDialogButton() const override;
   views::View* CreateExtraView() override;
   bool Cancel() override;
   bool Accept() override;

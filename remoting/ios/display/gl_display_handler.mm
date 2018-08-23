@@ -11,7 +11,7 @@
 
 #import "remoting/ios/display/gl_display_handler.h"
 
-#import "base/mac/bind_objc_block.h"
+#import "base/bind.h"
 #import "remoting/client/display/sys_opengl.h"
 #import "remoting/ios/display/eagl_view.h"
 #import "remoting/ios/display/gl_demo_screen.h"
@@ -44,8 +44,6 @@ class Core : public protocol::CursorShapeStub, public GlRendererDelegate {
 
   void SetHandlerDelegate(id<GlDisplayHandlerDelegate> delegate);
 
-  std::unique_ptr<RendererProxy> GrabRendererProxy();
-
   // CursorShapeStub interface.
   void SetCursorShape(const protocol::CursorShapeInfo& cursor_shape) override;
 
@@ -56,11 +54,14 @@ class Core : public protocol::CursorShapeStub, public GlRendererDelegate {
 
   void OnFrameReceived(std::unique_ptr<webrtc::DesktopFrame> frame,
                        const base::Closure& done);
-  void Stop();
-  void SurfaceCreated(EAGLView* view);
-  void SurfaceChanged(int width, int height);
+  void CreateRendererContext(EAGLView* view);
+  void DestroyRendererContext();
+  void SetSurfaceSize(int width, int height);
 
   std::unique_ptr<protocol::FrameConsumer> GrabFrameConsumer();
+
+  // The renderer proxy should be used on the UI thread.
+  RendererProxy* renderer_proxy() { return renderer_proxy_.get(); }
 
   // Returns a weak pointer to be used on the display thread.
   base::WeakPtr<Core> GetWeakPtr();
@@ -68,19 +69,19 @@ class Core : public protocol::CursorShapeStub, public GlRendererDelegate {
  private:
   remoting::ChromotingClientRuntime* runtime_;
 
-  // Will be std::move'd when GrabRendererProxy() is called.
-  std::unique_ptr<RendererProxy> owned_renderer_proxy_;
-  base::WeakPtr<RendererProxy> renderer_proxy_;
-
   // Will be std::move'd when GrabFrameConsumer() is called.
   std::unique_ptr<DualBufferFrameConsumer> owned_frame_consumer_;
   base::WeakPtr<DualBufferFrameConsumer> frame_consumer_;
 
-  // TODO(yuweih): Release references once the surface is destroyed.
   EAGLContext* eagl_context_;
   std::unique_ptr<GlRenderer> renderer_;
-  //  GlDemoScreen *demo_screen_;
   __weak id<GlDisplayHandlerDelegate> handler_delegate_;
+
+  // This should be used and deleted on the UI thread.
+  std::unique_ptr<RendererProxy> renderer_proxy_;
+
+  // Valid only when the surface is created.
+  __weak EAGLView* view_;
 
   // Used on display thread.
   base::WeakPtr<Core> weak_ptr_;
@@ -91,7 +92,7 @@ class Core : public protocol::CursorShapeStub, public GlRendererDelegate {
 
 Core::Core() : weak_factory_(this) {
   runtime_ = ChromotingClientRuntime::GetInstance();
-  DCHECK(!runtime_->display_task_runner()->BelongsToCurrentThread());
+  DCHECK(runtime_->ui_task_runner()->BelongsToCurrentThread());
 
   weak_ptr_ = weak_factory_.GetWeakPtr();
 
@@ -102,9 +103,8 @@ Core::Core() : weak_factory_(this) {
       protocol::FrameConsumer::PixelFormat::FORMAT_RGBA));
   frame_consumer_ = owned_frame_consumer_->GetWeakPtr();
 
-  owned_renderer_proxy_.reset(
-      new RendererProxy(runtime_->display_task_runner()));
-  renderer_proxy_ = owned_renderer_proxy_->GetWeakPtr();
+  renderer_proxy_ =
+      std::make_unique<RendererProxy>(runtime_->display_task_runner());
 
   runtime_->display_task_runner()->PostTask(
       FROM_HERE, base::Bind(&Core::Initialize, GetWeakPtr()));
@@ -112,6 +112,7 @@ Core::Core() : weak_factory_(this) {
 
 Core::~Core() {
   DCHECK(runtime_->display_task_runner()->BelongsToCurrentThread());
+  runtime_->ui_task_runner()->DeleteSoon(FROM_HERE, renderer_proxy_.release());
 }
 
 void Core::Initialize() {
@@ -133,19 +134,19 @@ void Core::Initialize() {
 
   renderer_ = remoting::GlRenderer::CreateGlRendererWithDesktop();
 
-  renderer_proxy_->Initialize(renderer_->GetWeakPtr());
-
   renderer_->SetDelegate(weak_ptr_);
+
+  // Safe to use base::Unretained because |renderer_proxy_| is destroyed on UI
+  // after Core is destroyed.
+  runtime_->ui_task_runner()->PostTask(
+      FROM_HERE, base::BindOnce(&RendererProxy::Initialize,
+                                base::Unretained(renderer_proxy_.get()),
+                                renderer_->GetWeakPtr()));
 }
 
 void Core::SetHandlerDelegate(id<GlDisplayHandlerDelegate> delegate) {
   DCHECK(runtime_->display_task_runner()->BelongsToCurrentThread());
   handler_delegate_ = delegate;
-}
-
-std::unique_ptr<RendererProxy> Core::GrabRendererProxy() {
-  DCHECK(owned_renderer_proxy_);
-  return std::move(owned_renderer_proxy_);
 }
 
 void Core::SetCursorShape(const protocol::CursorShapeInfo& cursor_shape) {
@@ -176,7 +177,7 @@ void Core::OnFrameRendered() {
   // block to dereference |this|, which is thread unsafe because it doesn't
   // support ARC.
   __weak id<GlDisplayHandlerDelegate> handler_delegate = handler_delegate_;
-  runtime_->ui_task_runner()->PostTask(FROM_HERE, base::BindBlockArc(^() {
+  runtime_->ui_task_runner()->PostTask(FROM_HERE, base::BindOnce(^{
                                          [handler_delegate rendererTicked];
                                        }));
 }
@@ -185,26 +186,25 @@ void Core::OnSizeChanged(int width, int height) {
   DCHECK(runtime_->display_task_runner()->BelongsToCurrentThread());
   __weak id<GlDisplayHandlerDelegate> handler_delegate = handler_delegate_;
   runtime_->ui_task_runner()->PostTask(
-      FROM_HERE, base::BindBlockArc(^() {
+      FROM_HERE, base::BindOnce(^{
         [handler_delegate canvasSizeChanged:CGSizeMake(width, height)];
       }));
 }
 
-void Core::Stop() {
-  DCHECK(runtime_->display_task_runner()->BelongsToCurrentThread());
-
-  eagl_context_ = nil;
-  // demo_screen_ = nil;
-}
-
-void Core::SurfaceCreated(EAGLView* view) {
+void Core::CreateRendererContext(EAGLView* view) {
   DCHECK(runtime_->display_task_runner()->BelongsToCurrentThread());
   DCHECK(eagl_context_);
 
-  runtime_->ui_task_runner()->PostTask(FROM_HERE, base::BindBlockArc(^() {
+  if (view_) {
+    return;
+  }
+  view_ = view;
+
+  runtime_->ui_task_runner()->PostTask(FROM_HERE, base::BindOnce(^{
                                          [view startWithContext:eagl_context_];
                                        }));
 
+  // TODO(yuweih): Rename methods in GlRenderer.
   renderer_->OnSurfaceCreated(
       std::make_unique<GlCanvas>(static_cast<int>([eagl_context_ API])));
 
@@ -215,7 +215,22 @@ void Core::SurfaceCreated(EAGLView* view) {
                             frame_consumer_));
 }
 
-void Core::SurfaceChanged(int width, int height) {
+void Core::DestroyRendererContext() {
+  DCHECK(runtime_->display_task_runner()->BelongsToCurrentThread());
+
+  if (!view_) {
+    return;
+  }
+
+  renderer_->OnSurfaceDestroyed();
+  __weak EAGLView* view = view_;
+  runtime_->ui_task_runner()->PostTask(FROM_HERE, base::BindOnce(^{
+                                         [view stop];
+                                       }));
+  view_ = nil;
+}
+
+void Core::SetSurfaceSize(int width, int height) {
   DCHECK(runtime_->display_task_runner()->BelongsToCurrentThread());
   renderer_->OnSurfaceChanged(width, height);
 }
@@ -250,40 +265,42 @@ base::WeakPtr<remoting::GlDisplayHandler::Core> Core::GetWeakPtr() {
 
 #pragma mark - Public
 
-- (void)stop {
-  _runtime->display_task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&remoting::GlDisplayHandler::Core::Stop, _core->GetWeakPtr()));
-}
-
-- (std::unique_ptr<remoting::RendererProxy>)CreateRendererProxy {
-  return _core->GrabRendererProxy();
-}
-
-- (std::unique_ptr<remoting::protocol::VideoRenderer>)CreateVideoRenderer {
+- (std::unique_ptr<remoting::protocol::VideoRenderer>)createVideoRenderer {
   return std::make_unique<remoting::SoftwareVideoRenderer>(
       _core->GrabFrameConsumer());
 }
 
-- (std::unique_ptr<remoting::protocol::CursorShapeStub>)CreateCursorShapeStub {
+- (std::unique_ptr<remoting::protocol::CursorShapeStub>)createCursorShapeStub {
   return std::make_unique<remoting::CursorShapeStubProxy>(
       _core->GetWeakPtr(), _runtime->display_task_runner());
 }
 
-- (void)onSurfaceCreated:(EAGLView*)view {
-  _runtime->display_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&remoting::GlDisplayHandler::Core::SurfaceCreated,
-                            _core->GetWeakPtr(), view));
-}
-
-- (void)onSurfaceChanged:(const CGRect&)frame {
+- (void)createRendererContext:(EAGLView*)view {
   _runtime->display_task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&remoting::GlDisplayHandler::Core::SurfaceChanged,
-                 _core->GetWeakPtr(), frame.size.width, frame.size.height));
+      base::BindOnce(&remoting::GlDisplayHandler::Core::CreateRendererContext,
+                     _core->GetWeakPtr(), view));
+}
+
+- (void)destroyRendererContext {
+  _runtime->display_task_runner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&remoting::GlDisplayHandler::Core::DestroyRendererContext,
+                     _core->GetWeakPtr()));
+}
+
+- (void)setSurfaceSize:(const CGRect&)frame {
+  _runtime->display_task_runner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&remoting::GlDisplayHandler::Core::SetSurfaceSize,
+                     _core->GetWeakPtr(), frame.size.width, frame.size.height));
 }
 
 #pragma mark - Properties
+
+- (remoting::RendererProxy*)rendererProxy {
+  return _core->renderer_proxy();
+}
 
 - (void)setDelegate:(id<GlDisplayHandlerDelegate>)delegate {
   _runtime->display_task_runner()->PostTask(

@@ -45,14 +45,11 @@ class HeadlessBrowserContextOptions {
   // See HeadlessBrowser::Options::incognito_mode.
   bool incognito_mode() const;
 
+  // See HeadlessBrowser::Options::site_per_process.
+  bool site_per_process() const;
+
   // See HeadlessBrowser::Options::block_new_web_contents.
   bool block_new_web_contents() const;
-
-  // If set the renderer will be constructed with virtual time enabled and in it
-  // base::Time::Now will be overridden to initially return this value.
-  base::Optional<base::Time> initial_virtual_time() const;
-
-  bool allow_cookies() const;
 
   // See HeadlessBrowser::Options::font_render_hinting.
   gfx::FontRenderParams::Hinting font_render_hinting() const;
@@ -65,7 +62,7 @@ class HeadlessBrowserContextOptions {
 
   // Callback that is invoked to override WebPreferences for RenderViews
   // created within this HeadlessBrowserContext.
-  const base::Callback<void(WebPreferences*)>&
+  base::RepeatingCallback<void(WebPreferences*)>
   override_web_preferences_callback() const;
 
  private:
@@ -83,10 +80,9 @@ class HeadlessBrowserContextOptions {
   base::Optional<gfx::Size> window_size_;
   base::Optional<base::FilePath> user_data_dir_;
   base::Optional<bool> incognito_mode_;
+  base::Optional<bool> site_per_process_;
   base::Optional<bool> block_new_web_contents_;
-  base::Optional<base::Time> initial_virtual_time_;
-  base::Optional<bool> allow_cookies_;
-  base::Optional<base::Callback<void(WebPreferences*)>>
+  base::Optional<base::RepeatingCallback<void(WebPreferences*)>>
       override_web_preferences_callback_;
 
   ProtocolHandlerMap protocol_handlers_;

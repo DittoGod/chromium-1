@@ -11,7 +11,6 @@
 #include <utility>
 
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -503,18 +502,9 @@ Status ExecuteGetCurrentUrl(Session* session,
     return status;
   if (url == kUnreachableWebDataURL ||
       url == kDeprecatedUnreachableWebDataURL) {
-    // https://bugs.chromium.org/p/chromedriver/issues/detail?id=1272
-    const BrowserInfo* browser_info = session->chrome->GetBrowserInfo();
-    bool is_kitkat_webview = browser_info->browser_name == "webview" &&
-                             browser_info->major_version <= 30 &&
-                             browser_info->is_android;
-    if (!is_kitkat_webview) {
-      // Page.getNavigationHistory isn't implemented in WebView for KitKat and
-      // older Android releases.
-      status = web_view->GetUrl(&url);
-      if (status.IsError())
-        return status;
-    }
+    status = web_view->GetUrl(&url);
+    if (status.IsError())
+      return status;
   }
   value->reset(new base::Value(url));
   return Status(kOk);
@@ -556,6 +546,28 @@ Status ExecuteRefresh(Session* session,
   if (status.IsError())
     return status;
   session->SwitchToTopFrame();
+  return Status(kOk);
+}
+
+Status ExecuteFreeze(Session* session,
+                     WebView* web_view,
+                     const base::DictionaryValue& params,
+                     std::unique_ptr<base::Value>* value,
+                     Timeout* timeout) {
+  timeout->SetDuration(session->page_load_timeout);
+  Status status = web_view->Freeze(timeout);
+  return status;
+}
+
+Status ExecuteResume(Session* session,
+                     WebView* web_view,
+                     const base::DictionaryValue& params,
+                     std::unique_ptr<base::Value>* value,
+                     Timeout* timeout) {
+  timeout->SetDuration(session->page_load_timeout);
+  Status status = web_view->Resume(timeout);
+  if (status.IsError())
+    return status;
   return Status(kOk);
 }
 
@@ -706,10 +718,6 @@ Status ExecuteTouchScroll(Session* session,
                           const base::DictionaryValue& params,
                           std::unique_ptr<base::Value>* value,
                           Timeout* timeout) {
-  if (session->chrome->GetBrowserInfo()->build_no < 2286) {
-    // TODO(samuong): remove this once we stop supporting M41.
-    return Status(kUnknownCommand, "Touch scroll action requires Chrome 42+");
-  }
   WebPoint location = session->mouse_position;
   std::string element;
   if (params.GetString("element", &element)) {
@@ -733,10 +741,6 @@ Status ExecuteTouchPinch(Session* session,
                          const base::DictionaryValue& params,
                          std::unique_ptr<base::Value>* value,
                          Timeout* timeout) {
-  if (session->chrome->GetBrowserInfo()->build_no < 2286) {
-    // TODO(samuong): remove this once we stop supporting M41.
-    return Status(kUnknownCommand, "Pinch action requires Chrome 42+");
-  }
   WebPoint location;
   if (!params.GetInteger("x", &location.x))
     return Status(kUnknownError, "'x' must be an integer");
@@ -817,7 +821,7 @@ Status ProcessInputActionSequence(Session* session,
     }
 
     session->active_input_sources->Append(
-        base::MakeUnique<base::DictionaryValue>(std::move(tmp_source)));
+        std::make_unique<base::DictionaryValue>(std::move(tmp_source)));
 
     base::DictionaryValue tmp_state;
     if (type == "key") {
@@ -844,7 +848,7 @@ Status ProcessInputActionSequence(Session* session,
       tmp_state.SetInteger("y", y);
     }
     session->input_state_table->SetDictionary(
-        id, base::MakeUnique<base::DictionaryValue>(std::move(tmp_state)));
+        id, std::make_unique<base::DictionaryValue>(std::move(tmp_state)));
   }
 
   const base::ListValue* actions;

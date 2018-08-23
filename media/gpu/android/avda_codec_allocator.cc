@@ -11,8 +11,8 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/sys_info.h"
+#include "base/task/task_traits.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/task_traits.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -63,7 +63,8 @@ std::unique_ptr<MediaCodecBridge> CreateMediaCodecInternal(
       codec_config->initial_expected_coded_size,
       codec_config->surface_bundle->GetJavaSurface(), media_crypto,
       codec_config->csd0, codec_config->csd1,
-      codec_config->container_color_space, codec_config->hdr_metadata, true));
+      codec_config->container_color_space, codec_config->hdr_metadata, true,
+      codec_config->on_buffers_available_cb));
 
   return codec;
 }
@@ -81,7 +82,8 @@ void DeleteMediaCodecAndSignal(std::unique_ptr<MediaCodecBridge> codec,
 CodecConfig::CodecConfig() {}
 CodecConfig::~CodecConfig() {}
 
-AVDACodecAllocator::HangDetector::HangDetector(base::TickClock* tick_clock)
+AVDACodecAllocator::HangDetector::HangDetector(
+    const base::TickClock* tick_clock)
     : tick_clock_(tick_clock) {}
 
 void AVDACodecAllocator::HangDetector::WillProcessTask(
@@ -187,7 +189,7 @@ void AVDACodecAllocator::StopThread(AVDACodecAllocatorClient* client) {
     if (threads_[i]->thread.IsRunning() &&
         !threads_[i]->hang_detector.IsThreadLikelyHung()) {
       threads_[i]->thread.task_runner()->PostTaskAndReply(
-          FROM_HERE, base::Bind(&base::DoNothing),
+          FROM_HERE, base::DoNothing(),
           base::Bind(&AVDACodecAllocator::StopThreadTask,
                      weak_this_factory_.GetWeakPtr(), i));
     }
@@ -448,14 +450,14 @@ bool AVDACodecAllocator::WaitForPendingRelease(AndroidOverlay* overlay) {
 AVDACodecAllocator::AVDACodecAllocator(
     AVDACodecAllocator::CodecFactoryCB factory_cb,
     scoped_refptr<base::SequencedTaskRunner> task_runner,
-    base::TickClock* tick_clock,
+    const base::TickClock* tick_clock,
     base::WaitableEvent* stop_event)
     : task_runner_(task_runner),
       stop_event_for_testing_(stop_event),
       factory_cb_(std::move(factory_cb)),
       weak_this_factory_(this) {
   // We leak the clock we create, but that's okay because we're a singleton.
-  auto* clock = tick_clock ? tick_clock : new base::DefaultTickClock();
+  auto* clock = tick_clock ? tick_clock : base::DefaultTickClock::GetInstance();
 
   // Create threads with names and indices that match up with TaskType.
   threads_.push_back(new ThreadAndHangDetector("AVDAAutoThread", clock));

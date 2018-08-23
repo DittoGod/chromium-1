@@ -62,19 +62,24 @@ class CoordinatorImpl : public Coordinator,
       base::trace_event::MemoryDumpType,
       base::trace_event::MemoryDumpLevelOfDetail,
       const std::vector<std::string>& allocator_dump_names,
-      const RequestGlobalMemoryDumpCallback&) override;
+      RequestGlobalMemoryDumpCallback) override;
   void RequestGlobalMemoryDumpForPid(
       base::ProcessId,
-      const RequestGlobalMemoryDumpForPidCallback&) override;
+      const std::vector<std::string>& allocator_dump_names,
+      RequestGlobalMemoryDumpForPidCallback) override;
+  void RequestPrivateMemoryFootprint(
+      base::ProcessId,
+      RequestPrivateMemoryFootprintCallback) override;
   void RequestGlobalMemoryDumpAndAppendToTrace(
       base::trace_event::MemoryDumpType,
       base::trace_event::MemoryDumpLevelOfDetail,
-      const RequestGlobalMemoryDumpAndAppendToTraceCallback&) override;
+      RequestGlobalMemoryDumpAndAppendToTraceCallback) override;
+  void RegisterHeapProfiler(mojom::HeapProfilerPtr heap_profiler) override;
 
   // mojom::HeapProfilerHelper implementation.
   void GetVmRegionsForHeapProfiler(
       const std::vector<base::ProcessId>& pids,
-      const GetVmRegionsForHeapProfilerCallback&) override;
+      GetVmRegionsForHeapProfilerCallback) override;
 
  protected:
   // virtual for testing.
@@ -85,10 +90,9 @@ class CoordinatorImpl : public Coordinator,
   ~CoordinatorImpl() override;
 
  private:
-  using OSMemDumpMap =
-      std::unordered_map<base::ProcessId, mojom::RawOSMemDumpPtr>;
+  using OSMemDumpMap = base::flat_map<base::ProcessId, mojom::RawOSMemDumpPtr>;
   using RequestGlobalMemoryDumpInternalCallback =
-      base::Callback<void(bool, uint64_t, mojom::GlobalMemoryDumpPtr)>;
+      base::OnceCallback<void(bool, uint64_t, mojom::GlobalMemoryDumpPtr)>;
   friend std::default_delete<CoordinatorImpl>;  // For testing
   friend class CoordinatorImplTest;             // For testing
 
@@ -106,7 +110,7 @@ class CoordinatorImpl : public Coordinator,
 
   void RequestGlobalMemoryDumpInternal(
       const QueuedRequest::Args& args,
-      const RequestGlobalMemoryDumpInternalCallback& callback);
+      RequestGlobalMemoryDumpInternalCallback callback);
 
   // Callback of RequestChromeMemoryDump.
   void OnChromeMemoryDumpResponse(
@@ -129,10 +133,16 @@ class CoordinatorImpl : public Coordinator,
 
   void FinalizeVmRegionDumpIfAllManagersReplied(uint64_t dump_guid);
 
+  // Callback of DumpProcessesForTracing.
+  void OnDumpProcessesForTracing(
+      uint64_t dump_guid,
+      std::vector<mojom::SharedBufferWithSizePtr> buffers);
+
   void RemovePendingResponse(mojom::ClientProcess*,
                              QueuedRequest::PendingResponse::Type);
 
   void OnQueuedRequestTimedOut(uint64_t dump_guid);
+  void OnHeapDumpTimeOut(uint64_t dump_guid);
 
   void PerformNextQueuedGlobalMemoryDump();
   void FinalizeGlobalMemoryDumpIfAllManagersReplied();
@@ -187,7 +197,11 @@ class CoordinatorImpl : public Coordinator,
   // Timeout for registered client processes to respond to dump requests.
   base::TimeDelta client_process_timeout_;
 
+  // When not null, can be queried for heap dumps.
+  mojom::HeapProfilerPtr heap_profiler_;
+
   THREAD_CHECKER(thread_checker_);
+  base::WeakPtrFactory<CoordinatorImpl> weak_ptr_factory_;
   DISALLOW_COPY_AND_ASSIGN(CoordinatorImpl);
 };
 

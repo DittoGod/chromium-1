@@ -7,12 +7,15 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <sys/resource.h>
 #include <sys/time.h>
 #include <unistd.h>
 
 #include "base/logging.h"
 #include "build/build_config.h"
+
+#if !defined(OS_FUCHSIA)
+#include <sys/resource.h>
+#endif
 
 #if defined(OS_MACOSX)
 #include <malloc/malloc.h>
@@ -68,11 +71,12 @@ size_t GetMaxFds() {
   return static_cast<size_t>(max_fds);
 }
 
-
-void SetFdLimit(unsigned int max_descriptors) {
+void IncreaseFdLimitTo(unsigned int max_descriptors) {
   struct rlimit limits;
   if (getrlimit(RLIMIT_NOFILE, &limits) == 0) {
     unsigned int new_limit = max_descriptors;
+    if (max_descriptors <= limits.rlim_cur)
+      return;
     if (limits.rlim_max > 0 && limits.rlim_max < max_descriptors) {
       new_limit = limits.rlim_max;
     }

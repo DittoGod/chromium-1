@@ -20,7 +20,7 @@
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/native_widget_types.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/test/native_widget_factory.h"
@@ -45,6 +45,13 @@
 
 #if defined(OS_MACOSX)
 #include "base/mac/mac_util.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "ui/wm/core/base_focus_rules.h"
+#include "ui/wm/core/focus_controller.h"
+#include "ui/wm/core/shadow_controller.h"
+#include "ui/wm/core/shadow_controller_delegate.h"
 #endif
 
 namespace views {
@@ -633,17 +640,8 @@ TEST_F(WidgetWithDestroyedNativeViewTest, Test) {
 
 class WidgetObserverTest : public WidgetTest, public WidgetObserver {
  public:
-  WidgetObserverTest()
-      : active_(nullptr),
-        widget_closed_(nullptr),
-        widget_activated_(nullptr),
-        widget_shown_(nullptr),
-        widget_hidden_(nullptr),
-        widget_bounds_changed_(nullptr),
-        widget_to_close_on_hide_(nullptr) {
-  }
-
-  ~WidgetObserverTest() override {}
+  WidgetObserverTest() = default;
+  ~WidgetObserverTest() override = default;
 
   // Set a widget to Close() the next time the Widget being observed is hidden.
   void CloseOnNextHide(Widget* widget) {
@@ -714,16 +712,16 @@ class WidgetObserverTest : public WidgetTest, public WidgetObserver {
   const Widget* widget_bounds_changed() const { return widget_bounds_changed_; }
 
  private:
-  Widget* active_;
+  Widget* active_ = nullptr;
 
-  Widget* widget_closed_;
-  Widget* widget_activated_;
-  Widget* widget_deactivated_;
-  Widget* widget_shown_;
-  Widget* widget_hidden_;
-  Widget* widget_bounds_changed_;
+  Widget* widget_closed_ = nullptr;
+  Widget* widget_activated_ = nullptr;
+  Widget* widget_deactivated_ = nullptr;
+  Widget* widget_shown_ = nullptr;
+  Widget* widget_hidden_ = nullptr;
+  Widget* widget_bounds_changed_ = nullptr;
 
-  Widget* widget_to_close_on_hide_;
+  Widget* widget_to_close_on_hide_ = nullptr;
 };
 
 // This test appears to be flaky on Mac.
@@ -734,17 +732,14 @@ class WidgetObserverTest : public WidgetTest, public WidgetObserver {
 #endif
 
 TEST_F(WidgetObserverTest, MAYBE_ActivationChange) {
-  WidgetAutoclosePtr toplevel(CreateTopLevelPlatformWidget());
   WidgetAutoclosePtr toplevel1(NewWidget());
   WidgetAutoclosePtr toplevel2(NewWidget());
 
   toplevel1->Show();
   toplevel2->Show();
-
   reset();
 
   toplevel1->Activate();
-
   RunPendingMessages();
   EXPECT_EQ(toplevel1.get(), widget_activated());
 
@@ -940,6 +935,65 @@ TEST_F(WidgetObserverTest, WidgetBoundsChangedNative) {
   // No bounds change when closing.
   widget->CloseNow();
   EXPECT_FALSE(widget_bounds_changed());
+}
+
+namespace {
+
+class MoveTrackingTestDesktopWidgetDelegate : public TestDesktopWidgetDelegate {
+ public:
+  int move_count() const { return move_count_; }
+
+  // WidgetDelegate:
+  void OnWidgetMove() override { ++move_count_; }
+
+ private:
+  int move_count_ = 0;
+};
+
+}  // namespace
+
+// An extension to the WidgetBoundsChangedNative test above to ensure move
+// notifications propagate to the WidgetDelegate.
+TEST_F(WidgetObserverTest, OnWidgetMovedWhenOriginChangesNative) {
+  MoveTrackingTestDesktopWidgetDelegate delegate;
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  delegate.InitWidget(params);
+  Widget* widget = delegate.GetWidget();
+  widget->Show();
+  widget->SetBounds(gfx::Rect(100, 100, 300, 200));
+
+  const int moves_during_init = delegate.move_count();
+
+#if defined(OS_WIN)
+  // Windows reliably notifies twice per origin change. https://crbug.com/864938
+  constexpr int kDeltaPerMove = 2;
+#else
+  constexpr int kDeltaPerMove = 1;
+#endif
+
+  // Resize without changing origin. No move.
+  widget->SetBounds(gfx::Rect(100, 100, 310, 210));
+  EXPECT_EQ(moves_during_init, delegate.move_count());
+
+  // Move without changing size. Moves.
+  widget->SetBounds(gfx::Rect(110, 110, 310, 210));
+  EXPECT_EQ(moves_during_init + kDeltaPerMove, delegate.move_count());
+
+  // Changing both moves.
+  widget->SetBounds(gfx::Rect(90, 90, 330, 230));
+  EXPECT_EQ(moves_during_init + 2 * kDeltaPerMove, delegate.move_count());
+
+  // Just grow vertically. On Mac, this changes the AppKit origin since it is
+  // from the bottom left of the screen, but there is no move as far as views is
+  // concerned.
+  widget->SetBounds(gfx::Rect(90, 90, 330, 240));
+  // No change.
+  EXPECT_EQ(moves_during_init + 2 * kDeltaPerMove, delegate.move_count());
+
+  // For a similar reason, move the widget down by the same amount that it grows
+  // vertically. The AppKit origin does not change, but it is a move.
+  widget->SetBounds(gfx::Rect(90, 100, 330, 250));
+  EXPECT_EQ(moves_during_init + 3 * kDeltaPerMove, delegate.move_count());
 }
 
 // Test correct behavior when widgets close themselves in response to visibility
@@ -1877,7 +1931,8 @@ TEST_F(WidgetTest, DestroyedWithCaptureViaEventMonitor) {
   widget->SetCapture(view_handler);
 
   ClosingEventHandler monitor_handler(widget);
-  auto monitor = EventMonitor::CreateApplicationMonitor(&monitor_handler);
+  auto monitor = EventMonitor::CreateApplicationMonitor(
+      &monitor_handler, widget->GetNativeWindow());
 
   ui::test::EventGenerator generator(
       IsMus() ? widget->GetNativeWindow() : GetContext(),
@@ -2226,6 +2281,14 @@ TEST_F(WidgetTest, NoCrashOnWidgetDelete) {
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   widget->Init(params);
+}
+
+TEST_F(WidgetTest, NoCrashOnResizeConstraintsWindowTitleOnPopup) {
+  std::unique_ptr<Widget> widget(new Widget);
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget->Init(params);
+  widget->OnSizeConstraintsChanged();
 }
 
 // Tests that we do not crash when a Widget is destroyed before it finishes
@@ -3220,13 +3283,7 @@ class FullscreenAwareFrame : public views::NonClientFrameView {
 
 // Tests that frame Layout is called when a widget goes fullscreen without
 // changing its size or title.
-// Fails on Mac, but only on bots. http://crbug.com/607403.
-#if defined(OS_MACOSX)
-#define MAYBE_FullscreenFrameLayout DISABLED_FullscreenFrameLayout
-#else
-#define MAYBE_FullscreenFrameLayout FullscreenFrameLayout
-#endif
-TEST_F(WidgetTest, MAYBE_FullscreenFrameLayout) {
+TEST_F(WidgetTest, FullscreenFrameLayout) {
   WidgetAutoclosePtr widget(CreateTopLevelPlatformWidget());
   FullscreenAwareFrame* frame = new FullscreenAwareFrame(widget.get());
   widget->non_client_view()->SetFrameView(frame);  // Owns |frame|.
@@ -3729,6 +3786,142 @@ TEST_F(WidgetTest, MouseWheelEvent) {
 
   event_generator.MoveMouseWheel(1, 1);
   EXPECT_EQ(1, event_count_view->GetEventCount(ui::ET_MOUSEWHEEL));
+}
+
+class WidgetShadowTest : public WidgetTest {
+ public:
+  WidgetShadowTest() { InitControllers(); }
+
+  // WidgetTest:
+  Widget::InitParams CreateParams(Widget::InitParams::Type type) override {
+    Widget::InitParams params =
+        WidgetTest::CreateParams(override_type_.value_or(type));
+    params.shadow_type = Widget::InitParams::SHADOW_TYPE_DROP;
+    params.shadow_elevation = 10;
+    params.name = name_;
+    params.child = force_child_;
+    return params;
+  }
+
+ protected:
+  base::Optional<Widget::InitParams::Type> override_type_;
+  std::string name_;
+  bool force_child_ = false;
+
+ private:
+#if !defined(OS_CHROMEOS)
+  void InitControllers() {}
+#else
+  class TestFocusRules : public wm::BaseFocusRules {
+   public:
+    TestFocusRules() = default;
+
+    bool SupportsChildActivation(aura::Window* window) const override {
+      return true;
+    }
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(TestFocusRules);
+  };
+
+  void InitControllers() {
+    // Add bits usually managed by the ash::Shell. Under Mus,
+    // DesktopNativeWidgetAura provides these in-process instead.
+    if (IsMus())
+      return;
+
+    focus_controller_ =
+        std::make_unique<wm::FocusController>(new TestFocusRules);
+    shadow_controller_ = std::make_unique<wm::ShadowController>(
+        focus_controller_.get(), nullptr);
+  }
+
+  std::unique_ptr<wm::FocusController> focus_controller_;
+  std::unique_ptr<wm::ShadowController> shadow_controller_;
+#endif  // OS_CHROMEOS
+
+  DISALLOW_COPY_AND_ASSIGN(WidgetShadowTest);
+};
+
+// Disabled on Mac: All drop shadows are managed out of process for now.
+#if defined(OS_MACOSX) && !defined(USE_AURA)
+#define MAYBE_ShadowsInRootWindow DISABLED_ShadowsInRootWindow
+#else
+#define MAYBE_ShadowsInRootWindow ShadowsInRootWindow
+#endif
+
+// Test that shadows are not added to root windows when created or upon
+// activation. Test that shadows are added to non-root windows even if not
+// activated.
+TEST_F(WidgetShadowTest, MAYBE_ShadowsInRootWindow) {
+  // A desktop window clips to its bounds, so it shouldn't have a shadow.
+  bool top_level_window_should_have_shadow = false;
+
+#if defined(OS_CHROMEOS)
+  // In Mus, the shadow should be in the WindowServer process only. In non-mus
+  // CreateNativeDesktopWidget() creates a non-root window, so it should have
+  // a shadow.
+  top_level_window_should_have_shadow = !IsMus();
+#endif
+
+  // To start, just create a Widget. This constructs the first ShadowController
+  // which will start observing the environment for additional aura::Window
+  // initialization. The very first ShadowController in DesktopNativeWidgetAura
+  // is created after the call to aura::Window::Init(), so the ShadowController
+  // Impl class won't ever see this first Window being initialized.
+  name_ = "other_top_level";
+  Widget* other_top_level = CreateNativeDesktopWidget();
+
+  name_ = "top_level";
+  Widget* top_level = CreateNativeDesktopWidget();
+  top_level->SetBounds(gfx::Rect(100, 100, 320, 200));
+
+  EXPECT_FALSE(WidgetHasInProcessShadow(top_level));
+  EXPECT_FALSE(top_level->IsVisible());
+  top_level->ShowInactive();
+  EXPECT_EQ(top_level_window_should_have_shadow,
+            WidgetHasInProcessShadow(top_level));
+  top_level->Show();
+  EXPECT_EQ(top_level_window_should_have_shadow,
+            WidgetHasInProcessShadow(top_level));
+
+  name_ = "control";
+  Widget* control = CreateChildNativeWidgetWithParent(top_level);
+  control->SetBounds(gfx::Rect(20, 20, 160, 100));
+
+  // Widgets of TYPE_CONTROL become visible during Init, so start with a shadow.
+  EXPECT_TRUE(WidgetHasInProcessShadow(control));
+  control->ShowInactive();
+  EXPECT_TRUE(WidgetHasInProcessShadow(control));
+  control->Show();
+  EXPECT_TRUE(WidgetHasInProcessShadow(control));
+
+  name_ = "child";
+  override_type_ = Widget::InitParams::TYPE_POPUP;
+  force_child_ = true;
+  Widget* child = CreateChildNativeWidgetWithParent(top_level);
+  child->SetBounds(gfx::Rect(20, 20, 160, 100));
+
+  // Now false: the Widget hasn't been shown yet.
+  EXPECT_FALSE(WidgetHasInProcessShadow(child));
+  child->ShowInactive();
+  EXPECT_TRUE(WidgetHasInProcessShadow(child));
+  child->Show();
+  EXPECT_TRUE(WidgetHasInProcessShadow(child));
+
+  other_top_level->Show();
+
+  // Re-activate the top level window. This handles a hypothetical case where
+  // a shadow is added via the ActivationChangeObserver rather than by the
+  // aura::WindowObserver. Activation changes only modify an existing shadow
+  // (if there is one), but should never install a Shadow, even if the Window
+  // properties otherwise say it should have one.
+  top_level->Show();
+  EXPECT_EQ(top_level_window_should_have_shadow,
+            WidgetHasInProcessShadow(top_level));
+
+  top_level->Close();
+  other_top_level->Close();
 }
 
 #if defined(OS_WIN)

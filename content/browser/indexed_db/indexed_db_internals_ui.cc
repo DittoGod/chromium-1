@@ -12,7 +12,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/platform_thread.h"
 #include "base/values.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
@@ -41,7 +41,7 @@ namespace {
 bool AllowWhitelistedPaths(const std::vector<base::FilePath>& allowed_paths,
                            const base::FilePath& candidate_path) {
   for (const base::FilePath& allowed_path : allowed_paths) {
-    if (allowed_path.IsParent(candidate_path))
+    if (candidate_path == allowed_path || allowed_path.IsParent(candidate_path))
       return true;
   }
   return false;
@@ -52,20 +52,21 @@ bool AllowWhitelistedPaths(const std::vector<base::FilePath>& allowed_paths,
 IndexedDBInternalsUI::IndexedDBInternalsUI(WebUI* web_ui)
     : WebUIController(web_ui) {
   web_ui->RegisterMessageCallback(
-      "getAllOrigins",
-      base::Bind(&IndexedDBInternalsUI::GetAllOrigins, base::Unretained(this)));
+      "getAllOrigins", base::BindRepeating(&IndexedDBInternalsUI::GetAllOrigins,
+                                           base::Unretained(this)));
 
   web_ui->RegisterMessageCallback(
       "downloadOriginData",
-      base::Bind(&IndexedDBInternalsUI::DownloadOriginData,
-                 base::Unretained(this)));
+      base::BindRepeating(&IndexedDBInternalsUI::DownloadOriginData,
+                          base::Unretained(this)));
   web_ui->RegisterMessageCallback(
-      "forceClose",
-      base::Bind(&IndexedDBInternalsUI::ForceCloseOrigin,
-                 base::Unretained(this)));
+      "forceClose", base::BindRepeating(&IndexedDBInternalsUI::ForceCloseOrigin,
+                                        base::Unretained(this)));
 
   WebUIDataSource* source =
       WebUIDataSource::Create(kChromeUIIndexedDBInternalsHost);
+  source->OverrideContentSecurityPolicyScriptSrc(
+      "script-src chrome://resources 'self' 'unsafe-eval';");
   source->SetJsonPath("strings.js");
   source->AddResourcePath("indexeddb_internals.js",
                           IDR_INDEXED_DB_INTERNALS_JS);
@@ -99,7 +100,7 @@ void IndexedDBInternalsUI::GetAllOrigins(const base::ListValue* args) {
   BrowserContext::StoragePartitionCallback cb =
       base::Bind(&IndexedDBInternalsUI::AddContextFromStoragePartition,
                  base::Unretained(this));
-  BrowserContext::ForEachStoragePartition(browser_context, cb);
+  BrowserContext::ForEachStoragePartition(browser_context, std::move(cb));
 }
 
 void IndexedDBInternalsUI::GetAllOriginsOnIndexedDBThread(
@@ -117,7 +118,7 @@ void IndexedDBInternalsUI::GetAllOriginsOnIndexedDBThread(
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::BindOnce(&IndexedDBInternalsUI::OnOriginsReady,
-                     base::Unretained(this), base::Passed(&info_list),
+                     base::Unretained(this), std::move(info_list),
                      is_incognito ? base::FilePath() : context_path));
 }
 
@@ -170,7 +171,7 @@ bool IndexedDBInternalsUI::GetOriginContext(
   StoragePartition* result_partition;
   BrowserContext::StoragePartitionCallback cb =
       base::Bind(&FindContext, path, &result_partition, context);
-  BrowserContext::ForEachStoragePartition(browser_context, cb);
+  BrowserContext::ForEachStoragePartition(browser_context, std::move(cb));
 
   if (!result_partition || !(context->get()))
     return false;
@@ -231,7 +232,7 @@ void IndexedDBInternalsUI::DownloadOriginDataOnIndexedDBThread(
   // This will get cleaned up after the download has completed.
   base::FilePath temp_path = temp_dir.Take();
 
-  std::string origin_id = storage::GetIdentifierFromOrigin(origin.GetURL());
+  std::string origin_id = storage::GetIdentifierFromOrigin(origin);
   base::FilePath zip_path =
       temp_path.AppendASCII(origin_id).AddExtension(FILE_PATH_LITERAL("zip"));
 
@@ -361,10 +362,10 @@ void FileDeleter::OnDownloadUpdated(download::DownloadItem* item) {
 
 FileDeleter::~FileDeleter() {
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
                             base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
-                           base::Bind(base::IgnoreResult(&base::DeleteFile),
-                                      std::move(temp_dir_), true));
+                           base::BindOnce(base::IgnoreResult(&base::DeleteFile),
+                                          std::move(temp_dir_), true));
 }
 
 void IndexedDBInternalsUI::OnDownloadStarted(

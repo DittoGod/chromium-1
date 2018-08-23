@@ -10,7 +10,6 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
 #include "chrome/browser/media/router/presentation/presentation_navigation_policy.h"
@@ -23,11 +22,9 @@
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/process_manager.h"
-#include "third_party/WebKit/public/web/WebPresentationReceiverFlags.h"
+#include "third_party/blink/public/web/web_presentation_receiver_flags.h"
 
 using content::WebContents;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(extensions::OffscreenTabsOwner);
 
 namespace {
 
@@ -37,8 +34,8 @@ const int kMaxOffscreenTabsPerExtension = 4;
 
 // Time intervals used by the logic that detects when the capture of an
 // offscreen tab has stopped, to automatically tear it down and free resources.
-const int kMaxSecondsToWaitForCapture = 60;
-const int kPollIntervalInSeconds = 1;
+constexpr base::TimeDelta kMaxWaitForCapture = base::TimeDelta::FromMinutes(1);
+constexpr base::TimeDelta kPollInterval = base::TimeDelta::FromSeconds(1);
 
 }  // namespace
 
@@ -95,7 +92,6 @@ OffscreenTab::OffscreenTab(OffscreenTabsOwner* owner)
                       owner->extension_web_contents()->GetBrowserContext()),
                   base::BindOnce(&OffscreenTab::DieIfOriginalProfileDestroyed,
                                  base::Unretained(this)))),
-      capture_poll_timer_(false, false),
       content_capture_was_detected_(false),
       navigation_policy_(
           std::make_unique<media_router::DefaultNavigationPolicy>()) {
@@ -119,7 +115,7 @@ void OffscreenTab::Start(const GURL& start_url,
   if (!optional_presentation_id.empty())
     params.starting_sandbox_flags = blink::kPresentationReceiverSandboxFlags;
 
-  offscreen_tab_web_contents_.reset(WebContents::Create(params));
+  offscreen_tab_web_contents_ = WebContents::Create(params);
   offscreen_tab_web_contents_->SetDelegate(this);
   WebContentsObserver::Observe(offscreen_tab_web_contents_.get());
 
@@ -263,8 +259,10 @@ bool OffscreenTab::EmbedsFullscreenWidget() const {
   return true;
 }
 
-void OffscreenTab::EnterFullscreenModeForTab(WebContents* contents,
-                                             const GURL& origin) {
+void OffscreenTab::EnterFullscreenModeForTab(
+    WebContents* contents,
+    const GURL& origin,
+    const blink::WebFullscreenOptions& options) {
   DCHECK_EQ(offscreen_tab_web_contents_.get(), contents);
 
   if (in_fullscreen_mode())
@@ -300,9 +298,9 @@ blink::WebDisplayMode OffscreenTab::GetDisplayMode(
 }
 
 void OffscreenTab::RequestMediaAccessPermission(
-      WebContents* contents,
-      const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback) {
+    WebContents* contents,
+    const content::MediaStreamRequest& request,
+    content::MediaResponseCallback callback) {
   DCHECK_EQ(offscreen_tab_web_contents_.get(), contents);
 
   // This method is being called to check whether an extension is permitted to
@@ -328,31 +326,33 @@ void OffscreenTab::RequestMediaAccessPermission(
           request.render_process_id,
           request.render_frame_id,
           extension_id)) {
-    if (request.audio_type == content::MEDIA_TAB_AUDIO_CAPTURE) {
+    if (request.audio_type == content::MEDIA_GUM_TAB_AUDIO_CAPTURE) {
       devices.push_back(content::MediaStreamDevice(
-          content::MEDIA_TAB_AUDIO_CAPTURE, std::string(), std::string()));
+          content::MEDIA_GUM_TAB_AUDIO_CAPTURE, std::string(), std::string()));
     }
-    if (request.video_type == content::MEDIA_TAB_VIDEO_CAPTURE) {
+    if (request.video_type == content::MEDIA_GUM_TAB_VIDEO_CAPTURE) {
       devices.push_back(content::MediaStreamDevice(
-          content::MEDIA_TAB_VIDEO_CAPTURE, std::string(), std::string()));
+          content::MEDIA_GUM_TAB_VIDEO_CAPTURE, std::string(), std::string()));
     }
   }
 
   DVLOG(2) << "Allowing " << devices.size()
            << " capture devices for OffscreenTab content.";
 
-  callback.Run(devices, devices.empty() ? content::MEDIA_DEVICE_INVALID_STATE
-                                        : content::MEDIA_DEVICE_OK,
-               std::unique_ptr<content::MediaStreamUI>(nullptr));
+  std::move(callback).Run(devices,
+                          devices.empty() ? content::MEDIA_DEVICE_INVALID_STATE
+                                          : content::MEDIA_DEVICE_OK,
+                          std::unique_ptr<content::MediaStreamUI>(nullptr));
 }
 
 bool OffscreenTab::CheckMediaAccessPermission(
-    WebContents* contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     content::MediaStreamType type) {
-  DCHECK_EQ(offscreen_tab_web_contents_.get(), contents);
-  return type == content::MEDIA_TAB_AUDIO_CAPTURE ||
-      type == content::MEDIA_TAB_VIDEO_CAPTURE;
+  DCHECK_EQ(offscreen_tab_web_contents_.get(),
+            content::WebContents::FromRenderFrameHost(render_frame_host));
+  return type == content::MEDIA_GUM_TAB_AUDIO_CAPTURE ||
+         type == content::MEDIA_GUM_TAB_VIDEO_CAPTURE;
 }
 
 void OffscreenTab::DidShowFullscreenWidget() {
@@ -392,8 +392,7 @@ void OffscreenTab::DieIfContentCaptureEnded() {
     DVLOG(2) << "Capture of OffscreenTab content has started for start_url="
              << start_url_.spec();
     content_capture_was_detected_ = true;
-  } else if (base::TimeTicks::Now() - start_time_ >
-                 base::TimeDelta::FromSeconds(kMaxSecondsToWaitForCapture)) {
+  } else if (base::TimeTicks::Now() - start_time_ > kMaxWaitForCapture) {
     // More than a minute has elapsed since this OffscreenTab was started and
     // content capture still hasn't started.  As a safety precaution, assume
     // that content capture is never going to start and die to free up
@@ -405,11 +404,9 @@ void OffscreenTab::DieIfContentCaptureEnded() {
   }
 
   // Schedule the timer to check again in a second.
-  capture_poll_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromSeconds(kPollIntervalInSeconds),
-      base::Bind(&OffscreenTab::DieIfContentCaptureEnded,
-                 base::Unretained(this)));
+  capture_poll_timer_.Start(FROM_HERE, kPollInterval,
+                            base::Bind(&OffscreenTab::DieIfContentCaptureEnded,
+                                       base::Unretained(this)));
 }
 
 void OffscreenTab::DieIfOriginalProfileDestroyed(Profile* profile) {

@@ -11,7 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -242,6 +241,7 @@ AppWindow::AppWindow(BrowserContext* context,
                      const Extension* extension)
     : browser_context_(context),
       extension_id_(extension->id()),
+      session_id_(SessionID::NewUnique()),
       app_delegate_(app_delegate),
       image_loader_ptr_factory_(this) {
   ExtensionsBrowserClient* client = ExtensionsBrowserClient::Get();
@@ -309,9 +309,7 @@ void AppWindow::Init(const GURL& url,
     // notifies observers of the window being hidden.
     Hide();
   } else {
-    // Panels are not activated by default.
-    Show(window_type_is_panel() || !new_params.focused ? SHOW_INACTIVE
-                                                       : SHOW_ACTIVE);
+    Show(SHOW_INACTIVE);
 
     // These states may cause the window to show, so they are ignored if the
     // window is initially hidden.
@@ -321,6 +319,8 @@ void AppWindow::Init(const GURL& url,
       Maximize();
     else if (new_params.state == ui::SHOW_STATE_MINIMIZED)
       Minimize();
+
+    Show(new_params.focused ? SHOW_ACTIVE : SHOW_INACTIVE);
   }
 
   OnNativeWindowChanged();
@@ -342,16 +342,20 @@ AppWindow::~AppWindow() {
 void AppWindow::RequestMediaAccessPermission(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
-    const content::MediaResponseCallback& callback) {
+    content::MediaResponseCallback callback) {
   DCHECK_EQ(AppWindow::web_contents(), web_contents);
-  helper_->RequestMediaAccessPermission(request, callback);
+  helper_->RequestMediaAccessPermission(request, std::move(callback));
 }
 
-bool AppWindow::CheckMediaAccessPermission(content::WebContents* web_contents,
-                                           const GURL& security_origin,
-                                           content::MediaStreamType type) {
-  DCHECK_EQ(AppWindow::web_contents(), web_contents);
-  return helper_->CheckMediaAccessPermission(security_origin, type);
+bool AppWindow::CheckMediaAccessPermission(
+    content::RenderFrameHost* render_frame_host,
+    const GURL& security_origin,
+    content::MediaStreamType type) {
+  DCHECK_EQ(web_contents(),
+            content::WebContents::FromRenderFrameHost(render_frame_host)
+                ->GetOutermostWebContents());
+  return helper_->CheckMediaAccessPermission(render_frame_host, security_origin,
+                                             type);
 }
 
 WebContents* AppWindow::OpenURLFromTab(WebContents* source,
@@ -361,14 +365,14 @@ WebContents* AppWindow::OpenURLFromTab(WebContents* source,
 }
 
 void AppWindow::AddNewContents(WebContents* source,
-                               WebContents* new_contents,
+                               std::unique_ptr<WebContents> new_contents,
                                WindowOpenDisposition disposition,
                                const gfx::Rect& initial_rect,
                                bool user_gesture,
                                bool* was_blocked) {
   DCHECK(new_contents->GetBrowserContext() == browser_context_);
-  app_delegate_->AddNewContents(browser_context_, new_contents, disposition,
-                                initial_rect, user_gesture);
+  app_delegate_->AddNewContents(browser_context_, std::move(new_contents),
+                                disposition, initial_rect, user_gesture);
 }
 
 content::KeyboardEventProcessingResult AppWindow::PreHandleKeyboardEvent(
@@ -639,6 +643,10 @@ bool AppWindow::IsHtmlApiFullscreen() const {
   return (fullscreen_types_ & FULLSCREEN_TYPE_HTML_API) != 0;
 }
 
+bool AppWindow::IsOsFullscreen() const {
+  return (fullscreen_types_ & FULLSCREEN_TYPE_OS) != 0;
+}
+
 void AppWindow::Fullscreen() {
   SetFullscreen(FULLSCREEN_TYPE_WINDOW_API, true);
 }
@@ -784,8 +792,8 @@ void AppWindow::StartAppIconDownload() {
       true,   // is a favicon
       0,      // no maximum size
       false,  // normal cache policy
-      base::Bind(&AppWindow::DidDownloadFavicon,
-                 image_loader_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&AppWindow::DidDownloadFavicon,
+                     image_loader_ptr_factory_.GetWeakPtr()));
 }
 
 void AppWindow::DidDownloadFavicon(
@@ -870,21 +878,12 @@ content::ColorChooser* AppWindow::OpenColorChooser(
 
 void AppWindow::RunFileChooser(content::RenderFrameHost* render_frame_host,
                                const content::FileChooserParams& params) {
-  if (window_type_is_panel()) {
-    // Panels can't host a file dialog, abort. TODO(stevenjb): allow file
-    // dialogs to be unhosted but still close with the owning web contents.
-    // crbug.com/172502.
-    LOG(WARNING) << "File dialog opened by panel.";
-    return;
-  }
-
   app_delegate_->RunFileChooser(render_frame_host, params);
 }
 
-bool AppWindow::IsPopupOrPanel(const WebContents* source) const { return true; }
-
-void AppWindow::MoveContents(WebContents* source, const gfx::Rect& pos) {
-  native_app_window_->SetBounds(pos);
+void AppWindow::SetContentsBounds(WebContents* source,
+                                  const gfx::Rect& bounds) {
+  native_app_window_->SetBounds(bounds);
 }
 
 void AppWindow::NavigationStateChanged(content::WebContents* source,
@@ -895,8 +894,10 @@ void AppWindow::NavigationStateChanged(content::WebContents* source,
     native_app_window_->UpdateWindowIcon();
 }
 
-void AppWindow::EnterFullscreenModeForTab(content::WebContents* source,
-                                          const GURL& origin) {
+void AppWindow::EnterFullscreenModeForTab(
+    content::WebContents* source,
+    const GURL& origin,
+    const blink::WebFullscreenOptions& options) {
   ToggleFullscreenModeForTab(source, true);
 }
 
@@ -906,9 +907,6 @@ void AppWindow::ExitFullscreenModeForTab(content::WebContents* source) {
 
 void AppWindow::OnAppWindowReady() {
   window_ready_ = true;
-
-  if (app_window_contents_)
-    app_window_contents_->OnWindowReady();
 
   if (app_icon_url_.is_valid())
     StartAppIconDownload();

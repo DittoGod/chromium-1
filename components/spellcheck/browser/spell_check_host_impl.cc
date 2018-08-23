@@ -4,7 +4,6 @@
 
 #include "components/spellcheck/browser/spell_check_host_impl.h"
 
-#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
@@ -14,15 +13,14 @@ SpellCheckHostImpl::~SpellCheckHostImpl() = default;
 // static
 void SpellCheckHostImpl::Create(
     spellcheck::mojom::SpellCheckHostRequest request) {
-  mojo::MakeStrongBinding(base::MakeUnique<SpellCheckHostImpl>(),
+  mojo::MakeStrongBinding(std::make_unique<SpellCheckHostImpl>(),
                           std::move(request));
 }
 
 void SpellCheckHostImpl::RequestDictionary() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  // This API either requires Chrome-only features, or is not supported on the
-  // current platform.
+  // This API requires Chrome-only features.
   return;
 }
 
@@ -30,11 +28,11 @@ void SpellCheckHostImpl::NotifyChecked(const base::string16& word,
                                        bool misspelled) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  // This API either requires Chrome-only features, or is not supported on the
-  // current platform.
+  // This API requires Chrome-only features.
   return;
 }
 
+#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 void SpellCheckHostImpl::CallSpellingService(
     const base::string16& text,
     CallSpellingServiceCallback callback) {
@@ -43,11 +41,12 @@ void SpellCheckHostImpl::CallSpellingService(
   if (text.empty())
     mojo::ReportBadMessage(__FUNCTION__);
 
-  // This API either requires Chrome-only features, or is not supported on the
-  // current platform.
+  // This API requires Chrome-only features.
   std::move(callback).Run(false, std::vector<SpellCheckResult>());
 }
+#endif  // !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 
+#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 void SpellCheckHostImpl::RequestTextCheck(const base::string16& text,
                                           int route_id,
                                           RequestTextCheckCallback callback) {
@@ -59,8 +58,7 @@ void SpellCheckHostImpl::RequestTextCheck(const base::string16& text,
 #if defined(OS_ANDROID)
   session_bridge_.RequestTextCheck(text, std::move(callback));
 #else
-  // This API either requires Chrome-only features, or is not supported on the
-  // current non-Android platform.
+  // This API requires Chrome-only features on the platform.
   std::move(callback).Run(std::vector<SpellCheckResult>());
 #endif
 }
@@ -78,8 +76,7 @@ void SpellCheckHostImpl::CheckSpelling(const base::string16& word,
                                        CheckSpellingCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  // This API either requires Chrome-only features, or is not supported on the
-  // current platform.
+  // This API requires Chrome-only features.
   std::move(callback).Run(false);
 }
 
@@ -88,7 +85,7 @@ void SpellCheckHostImpl::FillSuggestionList(
     FillSuggestionListCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  // This API either requires Chrome-only features, or is not supported on the
-  // current platform.
+  // This API requires Chrome-only features.
   std::move(callback).Run(std::vector<base::string16>());
 }
+#endif  // BUILDFLAG(USE_BROWSER_SPELLCHECKER)

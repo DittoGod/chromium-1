@@ -18,6 +18,11 @@ class ReadingListModel;
 // Return the toolbar view.
 @property(nonatomic, readonly) UIView* toolBarView;
 
+// Return the progress of the search field position along
+// |ntp_header::kAnimationDistance| as the offset changes.
+- (CGFloat)searchFieldProgressForOffset:(CGFloat)offset
+                         safeAreaInsets:(UIEdgeInsets)safeAreaInsets;
+
 // Changes the constraints of searchField based on its initialFrame and the
 // scroll view's y |offset|. Also adjust the alpha values for |_searchBoxBorder|
 // and |_shadow| and the constant values for the |constraints|.|screenWidth| is
@@ -26,6 +31,7 @@ class ReadingListModel;
 - (void)updateSearchFieldWidth:(NSLayoutConstraint*)widthConstraint
                         height:(NSLayoutConstraint*)heightConstraint
                      topMargin:(NSLayoutConstraint*)topMarginConstraint
+                     hintLabel:(UILabel*)hintLabel
             subviewConstraints:(NSArray*)constraints
                      forOffset:(CGFloat)offset
                    screenWidth:(CGFloat)screenWidth

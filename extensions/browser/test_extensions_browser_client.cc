@@ -131,6 +131,26 @@ TestExtensionsBrowserClient::MaybeCreateResourceBundleRequestJob(
   return nullptr;
 }
 
+base::FilePath TestExtensionsBrowserClient::GetBundleResourcePath(
+    const network::ResourceRequest& request,
+    const base::FilePath& extension_resources_path,
+    int* resource_id) const {
+  *resource_id = 0;
+  return base::FilePath();
+}
+
+void TestExtensionsBrowserClient::LoadResourceFromResourceBundle(
+    const network::ResourceRequest& request,
+    network::mojom::URLLoaderRequest loader,
+    const base::FilePath& resource_relative_path,
+    int resource_id,
+    const std::string& content_security_policy,
+    network::mojom::URLLoaderClientPtr client,
+    bool send_cors_header) {
+  // Should not be called because GetBundleResourcePath() returned empty path.
+  NOTREACHED() << "Resource is not from a bundle.";
+}
+
 bool TestExtensionsBrowserClient::AllowCrossRendererResourceLoad(
     const GURL& url,
     content::ResourceType resource_type,
@@ -169,6 +189,10 @@ bool TestExtensionsBrowserClient::DidVersionUpdate(BrowserContext* context) {
 void TestExtensionsBrowserClient::PermitExternalProtocolHandler() {
 }
 
+bool TestExtensionsBrowserClient::IsInDemoMode() {
+  return false;
+}
+
 bool TestExtensionsBrowserClient::IsRunningInForcedAppMode() { return false; }
 
 bool TestExtensionsBrowserClient::IsAppModeForcedForApp(
@@ -185,9 +209,6 @@ TestExtensionsBrowserClient::GetExtensionSystemFactory() {
   DCHECK(extension_system_factory_);
   return extension_system_factory_;
 }
-
-void TestExtensionsBrowserClient::RegisterExtensionFunctions(
-    ExtensionFunctionRegistry* registry) const {}
 
 void TestExtensionsBrowserClient::RegisterExtensionInterfaces(
     service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*

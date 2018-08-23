@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,35 +18,36 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (floating) DIV class='green'",
-          "rect": [8, 78, 100, 100],
-          "reason": "subtree"
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 779, 54],
+          "reason": "chunk appeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 779, 54],
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutBlockFlow (floating) DIV class='green'",
           "rect": [8, 78, 100, 100],
-          "reason": "subtree"
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutBlockFlow (floating) DIV class='red'",
           "rect": [8, 78, 100, 100],
-          "reason": "background"
+          "reason": "chunk appeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 78, 100, 100],
+          "reason": "chunk appeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 78, 100, 100],
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (floating) DIV class='green'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow (floating) DIV class='red'",
-      "reason": "background"
-    },
-    {
-      "object": "LayoutBlockFlow (floating) DIV class='green'",
-      "reason": "subtree"
     }
   ]
 }

@@ -42,7 +42,6 @@
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/metrics/metrics_pref_names.h"
-#include "components/omnibox/browser/omnibox_pref_names.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
@@ -167,7 +166,8 @@ static jboolean JNI_PrefServiceBridge_IsContentSettingEnabled(
   DCHECK(content_settings_type == CONTENT_SETTINGS_TYPE_JAVASCRIPT ||
          content_settings_type == CONTENT_SETTINGS_TYPE_POPUPS ||
          content_settings_type == CONTENT_SETTINGS_TYPE_ADS ||
-         content_settings_type == CONTENT_SETTINGS_TYPE_CLIPBOARD_READ);
+         content_settings_type == CONTENT_SETTINGS_TYPE_CLIPBOARD_READ ||
+         content_settings_type == CONTENT_SETTINGS_TYPE_USB_GUARD);
   ContentSettingsType type =
       static_cast<ContentSettingsType>(content_settings_type);
   return GetBooleanForContentSetting(type);
@@ -182,13 +182,22 @@ static void JNI_PrefServiceBridge_SetContentSettingEnabled(
   // that the new category supports ALLOW/BLOCK pairs and, if not, handle them.
   DCHECK(content_settings_type == CONTENT_SETTINGS_TYPE_JAVASCRIPT ||
          content_settings_type == CONTENT_SETTINGS_TYPE_POPUPS ||
-         content_settings_type == CONTENT_SETTINGS_TYPE_ADS);
+         content_settings_type == CONTENT_SETTINGS_TYPE_ADS ||
+         content_settings_type == CONTENT_SETTINGS_TYPE_USB_GUARD);
+
+  ContentSetting value = CONTENT_SETTING_BLOCK;
+  if (allow) {
+    if (content_settings_type == CONTENT_SETTINGS_TYPE_USB_GUARD) {
+      value = CONTENT_SETTING_ASK;
+    } else {
+      value = CONTENT_SETTING_ALLOW;
+    }
+  }
 
   HostContentSettingsMap* host_content_settings_map =
       HostContentSettingsMapFactory::GetForProfile(GetOriginalProfile());
   host_content_settings_map->SetDefaultContentSetting(
-      static_cast<ContentSettingsType>(content_settings_type),
-      allow ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
+      static_cast<ContentSettingsType>(content_settings_type), value);
 }
 
 static void JNI_PrefServiceBridge_SetContentSettingForPattern(
@@ -247,6 +256,12 @@ static jboolean JNI_PrefServiceBridge_GetAutoplayEnabled(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
   return GetBooleanForContentSetting(CONTENT_SETTINGS_TYPE_AUTOPLAY);
+}
+
+static jboolean JNI_PrefServiceBridge_GetSensorsEnabled(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
+  return GetBooleanForContentSetting(CONTENT_SETTINGS_TYPE_SENSORS);
 }
 
 static jboolean JNI_PrefServiceBridge_GetSoundEnabled(
@@ -667,6 +682,17 @@ static void JNI_PrefServiceBridge_SetClipboardEnabled(
       allow ? CONTENT_SETTING_ASK : CONTENT_SETTING_BLOCK);
 }
 
+static void JNI_PrefServiceBridge_SetSensorsEnabled(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean allow) {
+  HostContentSettingsMap* host_content_settings_map =
+      HostContentSettingsMapFactory::GetForProfile(GetOriginalProfile());
+  host_content_settings_map->SetDefaultContentSetting(
+      CONTENT_SETTINGS_TYPE_SENSORS,
+      allow ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
+}
+
 static void JNI_PrefServiceBridge_SetSoundEnabled(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
@@ -990,7 +1016,7 @@ static ScopedJavaLocalRef<jobject> JNI_PrefServiceBridge_GetAboutVersionStrings(
 
   base::android::BuildInfo* android_build_info =
         base::android::BuildInfo::GetInstance();
-  std::string application(android_build_info->package_label());
+  std::string application(android_build_info->host_package_label());
   application.append(" ");
   application.append(version_info::GetVersionNumber());
 
@@ -1147,15 +1173,6 @@ static void JNI_PrefServiceBridge_SetSupervisedUserId(
     const JavaParamRef<jstring>& pref) {
   GetPrefService()->SetString(prefs::kSupervisedUserId,
                               ConvertJavaStringToUTF8(env, pref));
-}
-
-static void
-JNI_PrefServiceBridge_SetChromeHomePersonalizedOmniboxSuggestionsEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jboolean is_enabled) {
-  GetPrefService()->SetBoolean(omnibox::kZeroSuggestChromeHomePersonalized,
-                               is_enabled);
 }
 
 static void JNI_PrefServiceBridge_GetChromeAcceptLanguages(

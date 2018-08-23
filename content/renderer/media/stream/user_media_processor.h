@@ -19,9 +19,13 @@
 #include "content/common/media/media_stream.mojom.h"
 #include "content/renderer/media/stream/media_stream_dispatcher_eventhandler.h"
 #include "content/renderer/media/stream/media_stream_source.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/platform/modules/mediastream/media_devices.mojom.h"
-#include "third_party/WebKit/public/web/WebUserMediaRequest.h"
+#include "third_party/blink/public/platform/modules/mediastream/media_devices.mojom.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_user_media_request.h"
+
+namespace gfx {
+class Size;
+}
 
 namespace blink {
 class WebMediaStream;
@@ -38,7 +42,7 @@ class MediaStreamDeviceObserver;
 class MediaStreamVideoSource;
 class PeerConnectionDependencyFactory;
 class VideoCaptureSettings;
-class RenderFrame;
+class RenderFrameImpl;
 
 // TODO(guidou): Add |request_id| and |is_processing_user_gesture| to
 // blink::WebUserMediaRequest and remove this struct.
@@ -65,7 +69,7 @@ class CONTENT_EXPORT UserMediaProcessor
       const blink::mojom::MediaDevicesDispatcherHostPtr&()>;
   // |render_frame| and |dependency_factory| must outlive this instance.
   UserMediaProcessor(
-      RenderFrame* render_frame,
+      RenderFrameImpl* render_frame,
       PeerConnectionDependencyFactory* dependency_factory,
       std::unique_ptr<MediaStreamDeviceObserver> media_stream_device_observer,
       MediaDevicesDispatcherCallback media_devices_dispatcher_cb);
@@ -127,8 +131,7 @@ class CONTENT_EXPORT UserMediaProcessor
   // http://crbug.com/764293
   virtual MediaStreamAudioSource* CreateAudioSource(
       const MediaStreamDevice& device,
-      const MediaStreamSource::ConstraintsCallback& source_ready,
-      bool* has_sw_echo_cancellation);
+      const MediaStreamSource::ConstraintsCallback& source_ready);
   virtual MediaStreamVideoSource* CreateVideoSource(
       const MediaStreamDevice& device,
       const MediaStreamSource::SourceStoppedCallback& stop_callback);
@@ -146,6 +149,15 @@ class CONTENT_EXPORT UserMediaProcessor
                          const std::string& label,
                          const MediaStreamDevices& audio_devices,
                          const MediaStreamDevices& video_devices);
+
+  void GotAllVideoInputFormatsForDevice(
+      const blink::WebUserMediaRequest& web_request,
+      const std::string& label,
+      const std::string& device_id,
+      const media::VideoCaptureFormats& formats);
+
+  gfx::Size GetScreenSize();
+
   void OnStreamGenerationFailed(int request_id,
                                 MediaStreamRequestResult result);
 
@@ -163,14 +175,16 @@ class CONTENT_EXPORT UserMediaProcessor
   // Called when |source| has been stopped from JavaScript.
   void OnLocalSourceStopped(const blink::WebMediaStreamSource& source);
 
-  // Creates a WebKit representation of stream sources based on
-  // |devices| from the MediaStreamDispatcherHost.
+  // Creates a WebKit representation of a stream source based on
+  // |device| from the MediaStreamDispatcherHost.
   blink::WebMediaStreamSource InitializeVideoSourceObject(
       const MediaStreamDevice& device);
 
   blink::WebMediaStreamSource InitializeAudioSourceObject(
       const MediaStreamDevice& device,
       bool* is_pending);
+
+  void StartTracks(const std::string& label);
 
   void CreateVideoTracks(
       const MediaStreamDevices& devices,
@@ -256,7 +270,7 @@ class CONTENT_EXPORT UserMediaProcessor
   void FinalizeSelectVideoDeviceSettings(
       const blink::WebUserMediaRequest& web_request,
       const VideoCaptureSettings& settings);
-  void SelectVideoContentSettings();
+  void SelectVideoContentSettings(bool allow_device_id_constraint);
 
   void GenerateStreamForCurrentRequestInfo();
 
@@ -284,7 +298,7 @@ class CONTENT_EXPORT UserMediaProcessor
   MediaDevicesDispatcherCallback media_devices_dispatcher_cb_;
   base::OnceClosure request_completed_cb_;
 
-  RenderFrame* const render_frame_;
+  RenderFrameImpl* const render_frame_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

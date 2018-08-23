@@ -7,6 +7,8 @@
 #include <string>
 #include <utility>
 
+#include "device/fido/fido_constants.h"
+
 namespace device {
 
 AttestationStatement::~AttestationStatement() = default;
@@ -15,11 +17,20 @@ AttestationStatement::AttestationStatement(std::string format)
     : format_(std::move(format)) {}
 
 NoneAttestationStatement::NoneAttestationStatement()
-    : AttestationStatement("none") {}
+    : AttestationStatement(kNoneAttestationValue) {}
 
 NoneAttestationStatement::~NoneAttestationStatement() = default;
 
-cbor::CBORValue::MapValue NoneAttestationStatement::GetAsCBORMap() {
+bool NoneAttestationStatement::
+    IsAttestationCertificateInappropriatelyIdentifying() {
+  return false;
+}
+
+bool NoneAttestationStatement::IsSelfAttestation() {
+  return false;
+}
+
+cbor::CBORValue::MapValue NoneAttestationStatement::GetAsCBORMap() const {
   return cbor::CBORValue::MapValue();
 }
 

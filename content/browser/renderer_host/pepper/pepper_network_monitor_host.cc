@@ -6,8 +6,8 @@
 
 #include <stddef.h>
 
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 #include "content/browser/renderer_host/pepper/pepper_socket_utils.h"
 #include "content/public/browser/browser_thread.h"
@@ -64,10 +64,14 @@ PepperNetworkMonitorHost::PepperNetworkMonitorHost(BrowserPpapiHostImpl* host,
 }
 
 PepperNetworkMonitorHost::~PepperNetworkMonitorHost() {
-  net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
+  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
 }
 
-void PepperNetworkMonitorHost::OnIPAddressChanged() { GetAndSendNetworkList(); }
+void PepperNetworkMonitorHost::OnNetworkChanged(
+    net::NetworkChangeNotifier::ConnectionType type) {
+  if (type == net::NetworkChangeNotifier::GetConnectionType())
+    GetAndSendNetworkList();
+}
 
 void PepperNetworkMonitorHost::OnPermissionCheckResult(
     bool can_use_network_monitor) {
@@ -77,7 +81,7 @@ void PepperNetworkMonitorHost::OnPermissionCheckResult(
     return;
   }
 
-  net::NetworkChangeNotifier::AddIPAddressObserver(this);
+  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
   GetAndSendNetworkList();
 }
 
@@ -86,7 +90,7 @@ void PepperNetworkMonitorHost::GetAndSendNetworkList() {
 
   // Call GetNetworkList() on a thread that allows blocking IO.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&GetNetworkList),
       base::Bind(&PepperNetworkMonitorHost::SendNetworkList,
                  weak_factory_.GetWeakPtr()));

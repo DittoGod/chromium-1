@@ -15,13 +15,15 @@
 #include "base/macros.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "chromeos/cryptohome/tpm_util.h"
+#include "chromeos/chromeos_paths.h"
 #include "chromeos/dbus/cryptohome/rpc.pb.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/util/tpm_util.h"
 #include "components/policy/proto/install_attributes.pb.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -30,11 +32,18 @@ namespace chromeos {
 
 namespace {
 
+InstallAttributes* g_install_attributes = nullptr;
+
+// Calling SetForTesting sets this flag. This flag means that the production
+// code which calls Initialize and Shutdown will have no effect - the test
+// install attributes will remain in place until ShutdownForTesting is called.
+bool g_using_install_attributes_for_testing = false;
+
 // Number of TPM lock state query retries during consistency check.
-int kDbusRetryCount = 12;
+const int kDbusRetryCount = 12;
 
 // Interval of TPM lock state query retries during consistency check.
-int kDbusRetryIntervalInSeconds = 5;
+const int kDbusRetryIntervalInSeconds = 5;
 
 std::string ReadMapKey(const std::map<std::string, std::string>& map,
                        const std::string& key) {
@@ -52,7 +61,67 @@ void WarnIfNonempty(const std::map<std::string, std::string>& map,
   }
 }
 
+// Reports the metric for whether the locking succeeded with existing locked
+// attributes equal to the requested ones.
+void ReportExistingLockUma(bool is_existing_lock) {
+  UMA_HISTOGRAM_BOOLEAN("Enterprise.ExistingInstallAttributesLock",
+                        is_existing_lock);
+}
+
 }  // namespace
+
+// static
+void InstallAttributes::Initialize() {
+  // Don't reinitialize if a specific instance has already been set for test.
+  if (g_using_install_attributes_for_testing)
+    return;
+
+  DCHECK(!g_install_attributes);
+  DCHECK(DBusThreadManager::IsInitialized());
+  g_install_attributes =
+      new InstallAttributes(DBusThreadManager::Get()->GetCryptohomeClient());
+  base::FilePath install_attrs_file;
+  CHECK(base::PathService::Get(chromeos::FILE_INSTALL_ATTRIBUTES,
+                               &install_attrs_file));
+  g_install_attributes->Init(install_attrs_file);
+}
+
+// static
+bool InstallAttributes::IsInitialized() {
+  return g_install_attributes;
+}
+
+// static
+void InstallAttributes::Shutdown() {
+  if (g_using_install_attributes_for_testing)
+    return;
+
+  DCHECK(g_install_attributes);
+  delete g_install_attributes;
+  g_install_attributes = nullptr;
+}
+
+// static
+InstallAttributes* InstallAttributes::Get() {
+  DCHECK(g_install_attributes);
+  return g_install_attributes;
+}
+
+// static
+void InstallAttributes::SetForTesting(InstallAttributes* test_instance) {
+  DCHECK(!g_install_attributes);
+  DCHECK(!g_using_install_attributes_for_testing);
+  g_install_attributes = test_instance;
+  g_using_install_attributes_for_testing = true;
+}
+
+// static
+void InstallAttributes::ShutdownForTesting() {
+  DCHECK(g_using_install_attributes_for_testing);
+  // Don't delete the test instance, we are not the owner.
+  g_install_attributes = nullptr;
+  g_using_install_attributes_for_testing = false;
+}
 
 // static
 std::string
@@ -219,6 +288,7 @@ void InstallAttributes::LockDevice(policy::DeviceMode device_mode,
     }
 
     // Already locked in the right mode, signal success.
+    ReportExistingLockUma(true /* is_existing_lock */);
     callback.Run(LOCK_SUCCESS);
     return;
   }
@@ -335,6 +405,7 @@ void InstallAttributes::OnReadImmutableAttributes(
     return;
   }
 
+  ReportExistingLockUma(false /* is_existing_lock */);
   callback.Run(LOCK_SUCCESS);
 }
 

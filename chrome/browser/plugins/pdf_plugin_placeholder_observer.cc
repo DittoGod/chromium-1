@@ -18,7 +18,7 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 
 namespace {
 
@@ -31,8 +31,6 @@ void OnDownloadStarted(download::DownloadItem* item,
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 }  // namespace
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(PDFPluginPlaceholderObserver);
 
 PDFPluginPlaceholderObserver::PDFPluginPlaceholderObserver(
     content::WebContents* web_contents)
@@ -95,7 +93,7 @@ void PDFPluginPlaceholderObserver::OnOpenPDF(
           }
         })");
   std::unique_ptr<download::DownloadUrlParameters> params =
-      base::MakeUnique<download::DownloadUrlParameters>(
+      std::make_unique<download::DownloadUrlParameters>(
           url, web_contents()->GetRenderViewHost()->GetProcess()->GetID(),
           web_contents()->GetRenderViewHost()->GetRoutingID(),
           render_frame_host->GetRoutingID(),

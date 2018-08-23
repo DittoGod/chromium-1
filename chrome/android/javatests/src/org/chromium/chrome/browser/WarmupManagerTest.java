@@ -134,9 +134,10 @@ public class WarmupManagerTest {
     public void testTakeSpareWebContentsChecksArguments() throws Throwable {
         mWarmupManager.createSpareWebContents();
         Assert.assertNull(mWarmupManager.takeSpareWebContents(true, false));
-        Assert.assertNull(mWarmupManager.takeSpareWebContents(false, true));
         Assert.assertNull(mWarmupManager.takeSpareWebContents(true, true));
         Assert.assertTrue(mWarmupManager.hasSpareWebContents());
+        Assert.assertNotNull(mWarmupManager.takeSpareWebContents(false, true));
+        Assert.assertFalse(mWarmupManager.hasSpareWebContents());
     }
 
     @Test
@@ -156,13 +157,13 @@ public class WarmupManagerTest {
     public void testRecordSpareWebContentsStatus() throws Throwable {
         String name = WarmupManager.WEBCONTENTS_STATUS_HISTOGRAM;
         MetricsUtils.HistogramDelta createdDelta =
-                new MetricsUtils.HistogramDelta(name, WarmupManager.WEBCONTENTS_STATUS_CREATED);
+                new MetricsUtils.HistogramDelta(name, WarmupManager.WebContentsStatus.CREATED);
         MetricsUtils.HistogramDelta usedDelta =
-                new MetricsUtils.HistogramDelta(name, WarmupManager.WEBCONTENTS_STATUS_USED);
+                new MetricsUtils.HistogramDelta(name, WarmupManager.WebContentsStatus.USED);
         MetricsUtils.HistogramDelta killedDelta =
-                new MetricsUtils.HistogramDelta(name, WarmupManager.WEBCONTENTS_STATUS_KILLED);
+                new MetricsUtils.HistogramDelta(name, WarmupManager.WebContentsStatus.KILLED);
         MetricsUtils.HistogramDelta destroyedDelta =
-                new MetricsUtils.HistogramDelta(name, WarmupManager.WEBCONTENTS_STATUS_DESTROYED);
+                new MetricsUtils.HistogramDelta(name, WarmupManager.WebContentsStatus.DESTROYED);
 
         // Created, used.
         mWarmupManager.createSpareWebContents();

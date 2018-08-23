@@ -160,9 +160,6 @@ class CONTENT_EXPORT DOMStorageContextImpl
       const DOMStorageArea* area,
       const GURL& page_url);
 
-  // May be called on any thread.
-  std::string AllocateSessionId();
-
   // Must be called on the background thread.
   base::Optional<bad_message::BadMessageReason> DiagnoseSessionNamespaceId(
       const std::string& namespace_id);
@@ -220,7 +217,7 @@ class CONTENT_EXPORT DOMStorageContextImpl
   scoped_refptr<DOMStorageTaskRunner> task_runner_;
 
   // List of objects observing local storage events.
-  base::ObserverList<EventObserver> event_observers_;
+  base::ObserverList<EventObserver>::Unchecked event_observers_;
 
   // For diagnostic purposes.
   base::circular_deque<std::string> recently_deleted_session_ids_;

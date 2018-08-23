@@ -8,6 +8,7 @@
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 
 #include "components/viz/service/surfaces/surface_deadline_client.h"
+#include "components/viz/service/viz_service_export.h"
 
 namespace base {
 class TickClock;
@@ -17,11 +18,11 @@ namespace viz {
 
 class FrameDeadline;
 
-class SurfaceDependencyDeadline : public BeginFrameObserver {
+class VIZ_SERVICE_EXPORT SurfaceDependencyDeadline : public BeginFrameObserver {
  public:
   SurfaceDependencyDeadline(SurfaceDeadlineClient* client,
                             BeginFrameSource* begin_frame_source,
-                            base::TickClock* tick_clock);
+                            const base::TickClock* tick_clock);
   ~SurfaceDependencyDeadline() override;
 
   // Sets up a deadline in wall time where
@@ -37,12 +38,15 @@ class SurfaceDependencyDeadline : public BeginFrameObserver {
 
   bool has_deadline() const { return deadline_.has_value(); }
 
-  // Takes on the same BeginFrameSource and deadline as |other|. Returns
-  // false if they're already the same, and true otherwise.
-  bool InheritFrom(const SurfaceDependencyDeadline& other);
+  base::Optional<base::TimeTicks> deadline_for_testing() const {
+    return deadline_;
+  }
 
-  bool operator==(const SurfaceDependencyDeadline& other);
-  bool operator!=(const SurfaceDependencyDeadline& other) {
+  // Takes on the same BeginFrameSource and deadline as |other|.
+  void InheritFrom(const SurfaceDependencyDeadline& other);
+
+  bool operator==(const SurfaceDependencyDeadline& other) const;
+  bool operator!=(const SurfaceDependencyDeadline& other) const {
     return !(*this == other);
   }
 
@@ -57,7 +61,7 @@ class SurfaceDependencyDeadline : public BeginFrameObserver {
 
   SurfaceDeadlineClient* const client_;
   BeginFrameSource* begin_frame_source_ = nullptr;
-  base::TickClock* tick_clock_;
+  const base::TickClock* tick_clock_;
   base::TimeTicks start_time_;
   base::Optional<base::TimeTicks> deadline_;
 

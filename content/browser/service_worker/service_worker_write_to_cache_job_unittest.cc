@@ -38,7 +38,11 @@
 #include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/common/service_worker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/common/service_worker/service_worker_utils.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
+
+// Note for S13nServiceWorker: All tests are skipped as we don't use
+// ServiceWorkerWriteToCacheJob when S13nServiceWorker is enabled.
 
 namespace content {
 namespace service_worker_write_to_cache_job_unittest {
@@ -210,48 +214,52 @@ class ResponseVerifier : public base::RefCounted<ResponseVerifier> {
  public:
   ResponseVerifier(std::unique_ptr<ServiceWorkerResponseReader> reader,
                    const std::string& expected,
-                   const base::Callback<void(bool)> callback)
-      : reader_(reader.release()), expected_(expected), callback_(callback) {}
+                   base::OnceCallback<void(bool)> callback)
+      : reader_(reader.release()),
+        expected_(expected),
+        callback_(std::move(callback)) {}
 
   void Start() {
     info_buffer_ = new HttpResponseInfoIOBuffer();
     io_buffer_ = new net::IOBuffer(kBlockSize);
-    reader_->ReadInfo(info_buffer_.get(),
-                      base::Bind(&ResponseVerifier::OnReadInfoComplete, this));
+    reader_->ReadInfo(
+        info_buffer_.get(),
+        base::BindOnce(&ResponseVerifier::OnReadInfoComplete, this));
     bytes_read_ = 0;
   }
 
   void OnReadInfoComplete(int result) {
     if (result < 0) {
-      callback_.Run(false);
+      std::move(callback_).Run(false);
       return;
     }
     if (info_buffer_->response_data_size !=
         static_cast<int>(expected_.size())) {
-      callback_.Run(false);
+      std::move(callback_).Run(false);
       return;
     }
     ReadSomeData();
   }
 
   void ReadSomeData() {
-    reader_->ReadData(io_buffer_.get(), kBlockSize,
-                      base::Bind(&ResponseVerifier::OnReadDataComplete, this));
+    reader_->ReadData(
+        io_buffer_.get(), kBlockSize,
+        base::BindOnce(&ResponseVerifier::OnReadDataComplete, this));
   }
 
   void OnReadDataComplete(int result) {
     if (result < 0) {
-      callback_.Run(false);
+      std::move(callback_).Run(false);
       return;
     }
     if (result == 0) {
-      callback_.Run(true);
+      std::move(callback_).Run(true);
       return;
     }
     std::string str(io_buffer_->data(), result);
     std::string expect = expected_.substr(bytes_read_, result);
     if (str != expect) {
-      callback_.Run(false);
+      std::move(callback_).Run(false);
       return;
     }
     bytes_read_ += result;
@@ -264,7 +272,7 @@ class ResponseVerifier : public base::RefCounted<ResponseVerifier> {
 
   std::unique_ptr<ServiceWorkerResponseReader> reader_;
   const std::string expected_;
-  base::Callback<void(bool)> callback_;
+  base::OnceCallback<void(bool)> callback_;
   scoped_refptr<HttpResponseInfoIOBuffer> info_buffer_;
   scoped_refptr<net::IOBuffer> io_buffer_;
   size_t bytes_read_;
@@ -286,13 +294,9 @@ class ServiceWorkerWriteToCacheJobTest : public testing::Test {
   base::WeakPtr<ServiceWorkerProviderHost> CreateHostForVersion(
       int process_id,
       const scoped_refptr<ServiceWorkerVersion>& version) {
-    std::unique_ptr<ServiceWorkerProviderHost> host =
-        CreateProviderHostForServiceWorkerContext(
-            process_id, true /* is_parent_frame_secure */, version.get(),
-            context()->AsWeakPtr(), &remote_endpoint_);
-    base::WeakPtr<ServiceWorkerProviderHost> host_weakptr = host->AsWeakPtr();
-    context()->AddProviderHost(std::move(host));
-    return host_weakptr;
+    return CreateProviderHostForServiceWorkerContext(
+        process_id, true /* is_parent_frame_secure */, version.get(),
+        context()->AsWeakPtr(), &remote_endpoint_);
   }
 
   void SetUpScriptRequest(int process_id, int provider_id) {
@@ -342,8 +346,7 @@ class ServiceWorkerWriteToCacheJobTest : public testing::Test {
     ASSERT_TRUE(host);
     SetUpScriptRequest(helper_->mock_render_process_id(), host->provider_id());
 
-    context()->storage()->LazyInitializeForTest(
-        base::BindOnce(&base::DoNothing));
+    context()->storage()->LazyInitializeForTest(base::DoNothing());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -392,7 +395,7 @@ class ServiceWorkerWriteToCacheJobTest : public testing::Test {
     scoped_refptr<ServiceWorkerVersion> new_version =
         new ServiceWorkerVersion(registration_.get(), script_url_,
                                  NextVersionId(), context()->AsWeakPtr());
-    new_version->set_pause_after_download(true);
+    new_version->SetToPauseAfterDownload(base::DoNothing());
     base::WeakPtr<ServiceWorkerProviderHost> host =
         CreateHostForVersion(helper_->mock_render_process_id(), new_version);
     EXPECT_TRUE(host);
@@ -406,14 +409,14 @@ class ServiceWorkerWriteToCacheJobTest : public testing::Test {
 
   void VerifyResource(int64_t id, const std::string& expected) {
     ASSERT_NE(kInvalidServiceWorkerResourceId, id);
-    bool is_equal = false;
+    base::Optional<bool> is_equal;
     std::unique_ptr<ServiceWorkerResponseReader> reader =
         context()->storage()->CreateResponseReader(id);
     scoped_refptr<ResponseVerifier> verifier = new ResponseVerifier(
         std::move(reader), expected, CreateReceiverOnCurrentThread(&is_equal));
     verifier->Start();
     base::RunLoop().RunUntilIdle();
-    EXPECT_TRUE(is_equal);
+    EXPECT_TRUE(is_equal.value());
   }
 
   ServiceWorkerContextCore* context() const { return helper_->context(); }
@@ -447,6 +450,9 @@ class ServiceWorkerWriteToCacheJobTest : public testing::Test {
 };
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, Normal) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   mock_protocol_handler_->SetCreateJobCallback(
       base::Bind(&CreateNormalURLRequestJob));
   request_->Start();
@@ -457,6 +463,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, Normal) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, InvalidMimeType) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   mock_protocol_handler_->SetCreateJobCallback(
       base::Bind(&CreateInvalidMimeTypeJob));
   request_->Start();
@@ -468,6 +477,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, InvalidMimeType) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, SSLCertificateError) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   mock_protocol_handler_->SetCreateJobCallback(
       base::Bind(&CreateSSLCertificateErrorJob));
   request_->Start();
@@ -489,6 +501,9 @@ class ServiceWorkerWriteToCacheLocalhostTest
 
 TEST_F(ServiceWorkerWriteToCacheLocalhostTest,
        SSLCertificateError_AllowInsecureLocalhost) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kAllowInsecureLocalhost);
 
@@ -503,6 +518,9 @@ TEST_F(ServiceWorkerWriteToCacheLocalhostTest,
 }
 
 TEST_F(ServiceWorkerWriteToCacheLocalhostTest, SSLCertificateError) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   mock_protocol_handler_->SetCreateJobCallback(
       base::Bind(&CreateSSLCertificateErrorJob));
   request_->Start();
@@ -515,6 +533,9 @@ TEST_F(ServiceWorkerWriteToCacheLocalhostTest, SSLCertificateError) {
 
 TEST_F(ServiceWorkerWriteToCacheLocalhostTest,
        CertStatusError_AllowInsecureLocalhost) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kAllowInsecureLocalhost);
 
@@ -529,6 +550,9 @@ TEST_F(ServiceWorkerWriteToCacheLocalhostTest,
 }
 
 TEST_F(ServiceWorkerWriteToCacheLocalhostTest, CertStatusError) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   mock_protocol_handler_->SetCreateJobCallback(
       base::Bind(&CreateCertStatusErrorJob));
   request_->Start();
@@ -540,6 +564,9 @@ TEST_F(ServiceWorkerWriteToCacheLocalhostTest, CertStatusError) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, CertStatusError) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   mock_protocol_handler_->SetCreateJobCallback(
       base::Bind(&CreateCertStatusErrorJob));
   request_->Start();
@@ -551,6 +578,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, CertStatusError) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, Update_SameScript) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   std::string response = GenerateLongResponse();
   CreateIncumbent(response);
   scoped_refptr<ServiceWorkerVersion> version = UpdateScript(response);
@@ -558,6 +588,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, Update_SameScript) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, Update_SameSizeScript) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   std::string response = GenerateLongResponse();
   CreateIncumbent(response);
 
@@ -593,6 +626,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, Update_SameSizeScript) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, Update_TruncatedScript) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   std::string response = GenerateLongResponse();
   CreateIncumbent(response);
 
@@ -622,6 +658,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, Update_TruncatedScript) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, Update_ElongatedScript) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   std::string original_response = GenerateLongResponse();
   CreateIncumbent(original_response);
 
@@ -645,6 +684,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, Update_ElongatedScript) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, Update_EmptyScript) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   // Create empty incumbent.
   CreateIncumbent(std::string());
 
@@ -665,6 +707,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, Update_EmptyScript) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, Error) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   mock_protocol_handler_->SetCreateJobCallback(
       base::Bind(&CreateFailedURLRequestJob));
   request_->Start();
@@ -676,6 +721,9 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, Error) {
 }
 
 TEST_F(ServiceWorkerWriteToCacheJobTest, FailedWriteHeadersToCache) {
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
+
   mock_protocol_handler_->SetCreateJobCallback(
       base::Bind(&CreateNormalURLRequestJob));
   DisableCache();

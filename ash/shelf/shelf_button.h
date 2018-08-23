@@ -41,6 +41,8 @@ class ASH_EXPORT ShelfButton : public views::Button {
     STATE_DRAGGING = 1 << 4,
     // App has at least 1 notification.
     STATE_NOTIFICATION = 1 << 5,
+    // Underlying ShelfItem owns the window that is currently active.
+    STATE_ACTIVE = 1 << 6,
   };
 
   ShelfButton(InkDropButtonListener* listener, ShelfView* shelf_view);
@@ -64,6 +66,9 @@ class ASH_EXPORT ShelfButton : public views::Button {
 
   // Called when user started dragging the shelf button.
   void OnDragStarted(const ui::LocatedEvent* event);
+
+  // Callback used when a menu for this ShelfButton is closed.
+  void OnMenuClosed();
 
   // Overrides to views::Button:
   void ShowContextMenu(const gfx::Point& p,
@@ -105,6 +110,9 @@ class ASH_EXPORT ShelfButton : public views::Button {
   // Invoked when |touch_drag_timer_| fires to show dragging UI.
   void OnTouchDragTimer();
 
+  // Invoked when |ripple_activation_timer_| fires to activate the ink drop.
+  void OnRippleTimer();
+
   // Scales up app icon if |scale_up| is true, otherwise scales it back to
   // normal size.
   void ScaleAppIcon(bool scale_up);
@@ -134,11 +142,14 @@ class ASH_EXPORT ShelfButton : public views::Button {
   // showing and used to detect if the menu was deleted while running.
   bool* destroyed_flag_;
 
-  // Whether the touchable context menu is enabled.
-  const bool is_touchable_app_context_menu_enabled_;
+  // Whether the notification indicator is enabled.
+  const bool is_notification_indicator_enabled_;
 
   // A timer to defer showing drag UI when the shelf button is pressed.
   base::OneShotTimer drag_timer_;
+
+  // A timer to activate the ink drop ripple during a long press.
+  base::OneShotTimer ripple_activation_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfButton);
 };

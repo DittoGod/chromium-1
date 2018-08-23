@@ -7,6 +7,7 @@
 #include "base/pickle.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_util.h"
 
 namespace autofill {
@@ -14,8 +15,8 @@ namespace autofill {
 namespace {
 
 // Increment this anytime pickle format is modified as well as provide
-// deserialization routine from previous kPickleVersion format.
-const int kPickleVersion = 7;
+// deserialization routine from previous kFormFieldDataPickleVersion format.
+const int kFormFieldDataPickleVersion = 7;
 
 void AddVectorToPickle(std::vector<base::string16> strings,
                        base::Pickle* pickle) {
@@ -119,6 +120,20 @@ bool DeserializeSection10(base::PickleIterator* iter,
   return iter->ReadString16(&field_data->id);
 }
 
+bool HaveSameLabel(const FormFieldData& field1, const FormFieldData& field2) {
+  if (field1.label == field2.label)
+    return true;
+
+  // Assume the labels same if they come from same source but not LABEL tag
+  // when kAutofillSkipComparingInferredLabels is enabled.
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillSkipComparingInferredLabels)) {
+    return field1.label_source == field2.label_source &&
+           field1.label_source != FormFieldData::LABEL_TAG;
+  }
+  return false;
+}
+
 }  // namespace
 
 FormFieldData::FormFieldData()
@@ -129,7 +144,10 @@ FormFieldData::FormFieldData()
       should_autocomplete(true),
       role(ROLE_ATTRIBUTE_OTHER),
       text_direction(base::i18n::UNKNOWN_DIRECTION),
-      properties_mask(0) {}
+      properties_mask(0),
+      is_enabled(false),
+      is_readonly(false),
+      label_source(LabelSource::UNKNOWN) {}
 
 FormFieldData::FormFieldData(const FormFieldData& other) = default;
 
@@ -138,7 +156,12 @@ FormFieldData::~FormFieldData() {}
 bool FormFieldData::SameFieldAs(const FormFieldData& field) const {
   // A FormFieldData stores a value, but the value is not part of the identity
   // of the field, so we don't want to compare the values.
-  return label == field.label && name == field.name && id == field.id &&
+  // Similarly, flags like is_enabled, which are only used for parsing but are
+  // not stored persistently, are not used for comparison.
+  // is_autofilled and section are also secondary properties of a field. Two
+  // fields could be the same, and have different sections, because the section
+  // is updated for one, but not for the other.
+  return name == field.name && id == field.id &&
          form_control_type == field.form_control_type &&
          autocomplete_attribute == field.autocomplete_attribute &&
          placeholder == field.placeholder && max_length == field.max_length &&
@@ -148,7 +171,8 @@ bool FormFieldData::SameFieldAs(const FormFieldData& field) const {
          IsCheckable(check_status) == IsCheckable(field.check_status) &&
          is_focusable == field.is_focusable &&
          should_autocomplete == field.should_autocomplete &&
-         role == field.role && text_direction == field.text_direction;
+         role == field.role && text_direction == field.text_direction &&
+         HaveSameLabel(*this, field);
   // The option values/contents which are the list of items in the list
   // of a drop-down are currently not considered part of the identity of
   // a form element. This is debatable, since one might base heuristics
@@ -159,13 +183,26 @@ bool FormFieldData::SameFieldAs(const FormFieldData& field) const {
 }
 
 bool FormFieldData::SimilarFieldAs(const FormFieldData& field) const {
-  return label == field.label && name == field.name && id == field.id &&
+  return HaveSameLabel(*this, field) && name == field.name && id == field.id &&
          form_control_type == field.form_control_type &&
          IsCheckable(check_status) == IsCheckable(field.check_status);
 }
 
+bool FormFieldData::DynamicallySameFieldAs(const FormFieldData& field) const {
+  return name == field.name && id == field.id && HaveSameLabel(*this, field) &&
+         IsVisible() == field.IsVisible() &&
+         form_control_type == field.form_control_type;
+}
+
+bool FormFieldData::IsTextInputElement() const {
+  return form_control_type == "text" || form_control_type == "password" ||
+         form_control_type == "search" || form_control_type == "tel" ||
+         form_control_type == "url" || form_control_type == "email";
+}
+
 bool FormFieldData::operator==(const FormFieldData& field) const {
-  return SameFieldAs(field) && is_autofilled == field.is_autofilled &&
+  return SameFieldAs(field) && unique_renderer_id == field.unique_renderer_id &&
+         is_autofilled == field.is_autofilled &&
          check_status == field.check_status &&
          option_values == field.option_values &&
          option_contents == field.option_contents &&
@@ -236,13 +273,14 @@ bool FormFieldData::operator<(const FormFieldData& field) const {
     return true;
   if (text_direction > field.text_direction)
     return false;
-  // See SameFieldAs above for why we don't check option_values/contents.
+  // See SameFieldAs above for why we don't check option_values/contents and
+  // flags like is_enabled.
   return false;
 }
 
 void SerializeFormFieldData(const FormFieldData& field_data,
                             base::Pickle* pickle) {
-  pickle->WriteInt(kPickleVersion);
+  pickle->WriteInt(kFormFieldDataPickleVersion);
   pickle->WriteString16(field_data.label);
   pickle->WriteString16(field_data.name);
   pickle->WriteString16(field_data.value);
@@ -414,7 +452,11 @@ std::ostream& operator<<(std::ostream& os, const FormFieldData& field) {
             << "should_autocomplete=" << field.should_autocomplete << " "
             << "role=" << role_str << " "
             << "text_direction=" << field.text_direction << " "
-            << "properties_mask=" << field.properties_mask;
+            << "is_enabled=" << field.is_enabled << " "
+            << "is_readonly=" << field.is_readonly << " "
+            << "typed_value=" << field.typed_value << " "
+            << "properties_mask=" << field.properties_mask << " "
+            << "label_source=" << field.label_source;
 }
 
 }  // namespace autofill

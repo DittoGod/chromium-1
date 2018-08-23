@@ -13,6 +13,7 @@
 
 #include "base/i18n/rtl.h"
 #include "base/strings/string_util.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/gfx/text_utils.h"
@@ -81,6 +82,16 @@ int HorizontalAdjustment(int used_width,
 
 }  // namespace
 
+// StyledLabel::TestApi ------------------------------------------------
+
+StyledLabel::TestApi::TestApi(StyledLabel* view) : view_(view) {}
+
+StyledLabel::TestApi::~TestApi() = default;
+
+const std::map<View*, gfx::Range>& StyledLabel::TestApi::link_targets() {
+  return view_->link_targets_;
+}
+
 // StyledLabel::RangeStyleInfo ------------------------------------------------
 
 StyledLabel::RangeStyleInfo::RangeStyleInfo() = default;
@@ -122,9 +133,7 @@ StyledLabel::StyledLabel(const base::string16& text,
       width_at_last_layout_(0),
       displayed_on_background_color_(SkColorSetRGB(0xFF, 0xFF, 0xFF)),
       displayed_on_background_color_set_(false),
-      auto_color_readability_enabled_(true),
-      horizontal_alignment_(base::i18n::IsRTL() ? gfx::ALIGN_RIGHT
-                                                : gfx::ALIGN_LEFT) {
+      auto_color_readability_enabled_(true) {
   base::TrimWhitespace(text, base::TRIM_TRAILING, &text_);
 }
 
@@ -225,6 +234,15 @@ gfx::Insets StyledLabel::GetInsets() const {
   return insets;
 }
 
+void StyledLabel::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  if (text_context_ == style::CONTEXT_DIALOG_TITLE)
+    node_data->role = ax::mojom::Role::kTitleBar;
+  else
+    node_data->role = ax::mojom::Role::kStaticText;
+
+  node_data->SetName(text());
+}
+
 gfx::Size StyledLabel::CalculatePreferredSize() const {
   return calculated_size_;
 }
@@ -261,7 +279,12 @@ void StyledLabel::SetHorizontalAlignment(gfx::HorizontalAlignment alignment) {
   if (horizontal_alignment_ == alignment)
     return;
   horizontal_alignment_ = alignment;
-  SchedulePaint();
+  PreferredSizeChanged();
+}
+
+void StyledLabel::ClearStyleRanges() {
+  style_ranges_.clear();
+  PreferredSizeChanged();
 }
 
 int StyledLabel::GetDefaultLineHeight() const {

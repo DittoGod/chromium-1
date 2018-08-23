@@ -21,6 +21,8 @@
 
 namespace {
 
+using MD = ui::MaterialDesignController;
+
 // ----------------------------------------------------------------------------
 // Defaults for properties which are stored in the browser theme pack. If you
 // change these defaults, you must increment the version number in
@@ -34,6 +36,10 @@ const SkColor kDefaultColorFrameIncognito =
     SkColorSetARGB(0xE6, 0x14, 0x16, 0x18);
 const SkColor kDefaultColorFrameIncognitoInactive =
     SkColorSetRGB(0x1E, 0x1E, 0x1E);
+const SkColor kDefaultColorTabBackgroundInactive =
+    SkColorSetRGB(0xEC, 0xEC, 0xEC);
+const SkColor kDefaultColorTabBackgroundInactiveIncognito =
+    SkColorSetRGB(0x28, 0x28, 0x28);
 #else
 const SkColor kDefaultColorFrameIncognito = SkColorSetRGB(0x28, 0x2B, 0x2D);
 const SkColor kDefaultColorFrameIncognitoInactive =
@@ -45,7 +51,7 @@ const SkColor kDefaultColorToolbarIncognito = SkColorSetRGB(0x50, 0x50, 0x50);
 
 const SkColor kDefaultDetachedBookmarkBarBackground = SK_ColorWHITE;
 const SkColor kDefaultDetachedBookmarkBarBackgroundIncognito =
-    SkColorSetRGB(0x32, 0x32, 0x32);
+    SkColorSetRGB(0x32, 0x36, 0x39);
 
 // "Toolbar" text is used for active tabs and the bookmarks bar.
 constexpr SkColor kDefaultColorToolbarText = SK_ColorBLACK;
@@ -71,22 +77,23 @@ constexpr SkColor kDefaultColorNTPText = SK_ColorBLACK;
 const SkColor kDefaultColorNTPLink = SkColorSetRGB(0x06, 0x37, 0x74);
 #endif  // OS_WIN
 
-// Then new MD Incognito NTP uses a slightly different shade of black.
-// TODO(msramek): Remove the old entry when the new NTP fully launches.
 const SkColor kDefaultColorNTPBackgroundIncognito =
-    SkColorSetRGB(0x30, 0x30, 0x30);
+    SkColorSetRGB(0x32, 0x36, 0x39);
 
 const SkColor kDefaultColorNTPHeader = SkColorSetRGB(0x96, 0x96, 0x96);
 constexpr SkColor kDefaultColorButtonBackground = SK_ColorTRANSPARENT;
 
 // Default tints.
 constexpr color_utils::HSL kDefaultTintButtons = {-1, -1, -1};
-constexpr color_utils::HSL kDefaultTintButtonsIncognito = {-1, -1, 0.85};
+constexpr color_utils::HSL kDefaultTintButtonsIncognito = {-1, -1, 0.96};
+constexpr color_utils::HSL kPreRefreshDefaultTintButtonsIncognito = {-1, -1,
+                                                                     0.85};
 constexpr color_utils::HSL kDefaultTintFrame = {-1, -1, -1};
 constexpr color_utils::HSL kDefaultTintFrameInactive = {-1, -1, 0.75};
 constexpr color_utils::HSL kDefaultTintFrameIncognito = {-1, 0.2, 0.35};
 constexpr color_utils::HSL kDefaultTintFrameIncognitoInactive = {-1, 0.3, 0.6};
-constexpr color_utils::HSL kDefaultTintBackgroundTab = {-1, -1, 0.75};
+constexpr color_utils::HSL kDefaultTintBackgroundTab = {-1, -1, -1};
+constexpr color_utils::HSL kPreRefreshDefaultTintBackgroundTab = {-1, -1, 0.75};
 
 constexpr SkColor kDefaultColorTabAlertRecordingIcon =
     SkColorSetRGB(0xC5, 0x39, 0x29);
@@ -110,10 +117,6 @@ const SkColor kDefaultColorFrameVibrancyOverlayIncognito =
 const SkColor kDefaultColorToolbarInactive = SkColorSetRGB(0xF6, 0xF6, 0xF6);
 const SkColor kDefaultColorToolbarInactiveIncognito =
     SkColorSetRGB(0x2D, 0x2D, 0x2D);
-const SkColor kDefaultColorTabBackgroundInactive =
-    SkColorSetRGB(0xEC, 0xEC, 0xEC);
-const SkColor kDefaultColorTabBackgroundInactiveIncognito =
-    SkColorSetRGB(0x28, 0x28, 0x28);
 const SkColor kDefaultColorToolbarButtonStroke =
     SkColorSetARGB(0x4B, 0x51, 0x51, 0x51);
 const SkColor kDefaultColorToolbarButtonStrokeInactive =
@@ -130,24 +133,6 @@ const SkColor kDefaultColorToolbarStrokeThemeInactive =
     SkColorSetARGB(0x66, 0x4C, 0x4C, 0x4C);
 #endif  // OS_MACOSX
 
-// ----------------------------------------------------------------------------
-// Touch optimized UI color palette
-
-constexpr SkColor kDefaultTouchUiColorToolbar = SkColorSetRGB(0xFD, 0xFE, 0xFF);
-constexpr SkColor kDefaultTouchUiColorActiveFrame =
-    SkColorSetRGB(0xD0, 0xD2, 0xD6);
-constexpr SkColor kDefaultTouchUiColorInactiveFrame =
-    SkColorSetRGB(0xE3, 0xE5, 0xE8);
-constexpr SkColor kDefaultTouchUiColorInactiveFrameIncognito =
-    SkColorSetRGB(0x32, 0x36, 0x39);
-
-constexpr SkColor kDefaultTouchUiColorTabBackgroundInactive =
-    SkColorSetRGB(0xED, 0xEF, 0xF2);
-constexpr SkColor kDefaultTouchUiColorTabBackgroundInactiveIncognito =
-    SkColorSetRGB(0x28, 0x2C, 0x2F);
-
-// ----------------------------------------------------------------------------
-
 // Strings used in alignment properties.
 constexpr char kAlignmentCenter[] = "center";
 constexpr char kAlignmentTop[] = "top";
@@ -161,53 +146,47 @@ constexpr char kTilingRepeatX[] = "repeat-x";
 constexpr char kTilingRepeatY[] = "repeat-y";
 constexpr char kTilingRepeat[] = "repeat";
 
-// Returns a |nullopt| if the touch-optimized UI is not enabled, or it's enabled
-// but for the given |id|, there's no touch-optimized specific colors, and we
-// should fall back to the default colors.
-// TODO(malaykeshav): Put this behind a flag separate from Touch Optimized Ui.
-// We want to be able to use it for other modes as well.
-// https://crbug/810165
-base::Optional<SkColor> MaybeGetDefaultColorForTouchOptimizedUi(
-    int id,
-    bool incognito) {
-  if (!ui::MaterialDesignController::IsTouchOptimizedUiEnabled())
+// Returns a |nullopt| if the newer material UI is not enabled (MD refresh or
+// touch-optimized UI).
+base::Optional<SkColor> MaybeGetDefaultColorForNewerMaterialUi(int id,
+                                                               bool incognito) {
+  if (!MD::IsNewerMaterialUi())
     return base::nullopt;
 
   switch (id) {
-    // Properties stored in theme pack.
     case ThemeProperties::COLOR_FRAME:
-      // Active frame colors.
-      return incognito ? gfx::kGoogleGrey900 : kDefaultTouchUiColorActiveFrame;
-    case ThemeProperties::COLOR_FRAME_INACTIVE:
-      // Inactive frame colors.
-      return incognito ? kDefaultTouchUiColorInactiveFrameIncognito
-                       : kDefaultTouchUiColorInactiveFrame;
-
-    case ThemeProperties::COLOR_TOOLBAR:
-      return incognito ? kDefaultTouchUiColorInactiveFrameIncognito
-                       : kDefaultTouchUiColorToolbar;
-    case ThemeProperties::COLOR_TAB_TEXT:
-    case ThemeProperties::COLOR_BOOKMARK_TEXT:
-      return incognito ? gfx::kGoogleGrey100 : gfx::kGoogleGrey800;
-    case ThemeProperties::COLOR_BACKGROUND_TAB_TEXT:
-      return incognito ? gfx::kGoogleGrey400 : gfx::kGoogleGrey700;
-
-    // Properties not stored in theme pack.
     case ThemeProperties::COLOR_BACKGROUND_TAB:
-      return incognito ? kDefaultTouchUiColorTabBackgroundInactiveIncognito
-                       : kDefaultTouchUiColorTabBackgroundInactive;
-    case ThemeProperties::COLOR_TAB_CLOSE_BUTTON_BACKGROUND_ACTIVE:
+      return incognito ? gfx::kGoogleGrey900 : SkColorSetRGB(0xDE, 0xE1, 0xE6);
+    case ThemeProperties::COLOR_FRAME_INACTIVE:
+    case ThemeProperties::COLOR_BACKGROUND_TAB_INACTIVE:
+      return incognito ? gfx::kGoogleGrey800 : SkColorSetRGB(0xE7, 0xEA, 0xED);
+    case ThemeProperties::COLOR_TOOLBAR:
+      return incognito ? SkColorSetRGB(0x32, 0x36, 0x39) : SK_ColorWHITE;
+
+    case ThemeProperties::COLOR_TAB_TEXT:
       return incognito ? gfx::kGoogleGrey100 : gfx::kGoogleGrey800;
-    case ThemeProperties::COLOR_TAB_CLOSE_BUTTON_BACKGROUND_INACTIVE:
-      return incognito ? gfx::kGoogleGrey400 : gfx::kGoogleGrey700;
-    case ThemeProperties::COLOR_TAB_CLOSE_BUTTON_BACKGROUND_HOVER:
-      return incognito ? gfx::kGoogleRedDark600 : gfx::kGoogleRed600;
-    case ThemeProperties::COLOR_TAB_CLOSE_BUTTON_BACKGROUND_PRESSED:
-      return incognito ? gfx::kGoogleRedDark800 : gfx::kGoogleRed800;
+
+    case ThemeProperties::COLOR_BOOKMARK_TEXT:
+      return incognito ? gfx::kGoogleGrey100 : gfx::kGoogleGrey700;
+
+    case ThemeProperties::COLOR_TAB_CLOSE_BUTTON_ACTIVE:
+    case ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON:
+      return incognito ? gfx::kGoogleGrey100 : gfx::kChromeIconGrey;
+
+    case ThemeProperties::COLOR_BACKGROUND_TAB_TEXT:
+    case ThemeProperties::COLOR_BACKGROUND_TAB_TEXT_INACTIVE:
+    case ThemeProperties::COLOR_TAB_CLOSE_BUTTON_INACTIVE:
     case ThemeProperties::COLOR_TAB_ALERT_AUDIO:
-      return incognito ? gfx::kGoogleGrey400 : gfx::kGoogleGrey700;
+      return incognito ? gfx::kGoogleGrey400 : gfx::kChromeIconGrey;
+
+    case ThemeProperties::COLOR_TAB_CLOSE_BUTTON_BACKGROUND_HOVER:
+      return incognito ? gfx::kGoogleGrey700 : gfx::kGoogleGrey200;
+    case ThemeProperties::COLOR_TAB_CLOSE_BUTTON_BACKGROUND_PRESSED:
+      return incognito ? gfx::kGoogleGrey600 : gfx::kGoogleGrey300;
     case ThemeProperties::COLOR_TAB_ALERT_RECORDING:
       return incognito ? gfx::kGoogleGrey400 : gfx::kGoogleRed600;
+    case ThemeProperties::COLOR_TAB_PIP_PLAYING:
+      return incognito ? gfx::kGoogleGrey400 : gfx::kGoogleBlue600;
     case ThemeProperties::COLOR_TAB_ALERT_CAPTURING:
       return incognito ? gfx::kGoogleGrey400 : gfx::kGoogleBlue600;
 
@@ -215,8 +194,10 @@ base::Optional<SkColor> MaybeGetDefaultColorForTouchOptimizedUi(
       return base::nullopt;
   }
 }
-
 }  // namespace
+
+// static
+constexpr int ThemeProperties::kFrameHeightAboveTabs;
 
 // static
 int ThemeProperties::StringToAlignment(const std::string& alignment) {
@@ -288,9 +269,13 @@ color_utils::HSL ThemeProperties::GetDefaultTint(int id, bool incognito) {
       return incognito ? kDefaultTintFrameIncognitoInactive
                        : kDefaultTintFrameInactive;
     case TINT_BUTTONS:
-      return incognito ? kDefaultTintButtonsIncognito : kDefaultTintButtons;
+      if (!incognito)
+        return kDefaultTintButtons;
+      return MD::IsRefreshUi() ? kDefaultTintButtonsIncognito
+                               : kPreRefreshDefaultTintButtonsIncognito;
     case TINT_BACKGROUND_TAB:
-      return kDefaultTintBackgroundTab;
+      return MD::IsRefreshUi() ? kDefaultTintBackgroundTab
+                               : kPreRefreshDefaultTintBackgroundTab;
     case TINT_FRAME_INCOGNITO:
     case TINT_FRAME_INCOGNITO_INACTIVE:
       NOTREACHED() << "These values should be queried via their respective "
@@ -305,7 +290,7 @@ color_utils::HSL ThemeProperties::GetDefaultTint(int id, bool incognito) {
 // static
 SkColor ThemeProperties::GetDefaultColor(int id, bool incognito) {
   const base::Optional<SkColor> color =
-      MaybeGetDefaultColorForTouchOptimizedUi(id, incognito);
+      MaybeGetDefaultColorForNewerMaterialUi(id, incognito);
   if (color)
     return color.value();
 
@@ -323,6 +308,7 @@ SkColor ThemeProperties::GetDefaultColor(int id, bool incognito) {
       return incognito ? kDefaultColorToolbarTextIncognito
                        : kDefaultColorToolbarText;
     case COLOR_BACKGROUND_TAB_TEXT:
+    case COLOR_BACKGROUND_TAB_TEXT_INACTIVE:
       return incognito ? kDefaultColorBackgroundTabTextIncognito
                        : kDefaultColorBackgroundTabText;
     case COLOR_NTP_BACKGROUND:
@@ -352,7 +338,7 @@ SkColor ThemeProperties::GetDefaultColor(int id, bool incognito) {
     case COLOR_DETACHED_BOOKMARK_BAR_BACKGROUND:
       return incognito ? kDefaultDetachedBookmarkBarBackgroundIncognito
                        : kDefaultDetachedBookmarkBarBackground;
-    case COLOR_TOOLBAR_BOTTOM_SEPARATOR:
+    case COLOR_TOOLBAR_CONTENT_AREA_SEPARATOR:
       return incognito ? kDefaultToolbarBottomSeparatorIncognito
                        : kDefaultToolbarBottomSeparator;
     case COLOR_TOOLBAR_TOP_SEPARATOR:
@@ -362,6 +348,10 @@ SkColor ThemeProperties::GetDefaultColor(int id, bool incognito) {
       return kDefaultColorTabAlertRecordingIcon;
     case COLOR_TAB_ALERT_CAPTURING:
       return kDefaultColorTabAlertCapturingIcon;
+    case COLOR_TAB_CLOSE_BUTTON_BACKGROUND_HOVER:
+      return SkColorSetRGB(0xDB, 0x44, 0x37);
+    case COLOR_TAB_CLOSE_BUTTON_BACKGROUND_PRESSED:
+      return SkColorSetRGB(0xA8, 0x35, 0x2A);
 #if defined(OS_MACOSX)
     case COLOR_FRAME_VIBRANCY_OVERLAY:
       return incognito ? kDefaultColorFrameVibrancyOverlayIncognito
@@ -396,6 +386,10 @@ SkColor ThemeProperties::GetDefaultColor(int id, bool incognito) {
 
     case COLOR_FRAME_INCOGNITO:
     case COLOR_FRAME_INCOGNITO_INACTIVE:
+    case COLOR_BACKGROUND_TAB_INCOGNITO:
+    case COLOR_BACKGROUND_TAB_INCOGNITO_INACTIVE:
+    case COLOR_BACKGROUND_TAB_TEXT_INCOGNITO:
+    case COLOR_BACKGROUND_TAB_TEXT_INCOGNITO_INACTIVE:
       NOTREACHED() << "These values should be queried via their respective "
                       "non-incognito equivalents and an appropriate "
                       "|incognito| value.";
@@ -403,4 +397,36 @@ SkColor ThemeProperties::GetDefaultColor(int id, bool incognito) {
   }
 
   return gfx::kPlaceholderColor;
+}
+
+// static
+SkColor ThemeProperties::GetDefaultColor(PropertyLookupPair lookup_pair) {
+  return GetDefaultColor(lookup_pair.property_id, lookup_pair.is_incognito);
+}
+
+// static
+ThemeProperties::PropertyLookupPair ThemeProperties::GetLookupID(int input_id) {
+  // Mapping of incognito property ids to their corresponding non-incognito
+  // property ids.
+  base::flat_map<int, int> incognito_property_map({
+      {ThemeProperties::COLOR_FRAME_INCOGNITO, ThemeProperties::COLOR_FRAME},
+      {ThemeProperties::COLOR_FRAME_INCOGNITO_INACTIVE,
+       ThemeProperties::COLOR_FRAME_INACTIVE},
+      {ThemeProperties::COLOR_BACKGROUND_TAB_INCOGNITO,
+       ThemeProperties::COLOR_BACKGROUND_TAB},
+      {ThemeProperties::COLOR_BACKGROUND_TAB_INCOGNITO_INACTIVE,
+       ThemeProperties::COLOR_BACKGROUND_TAB_INACTIVE},
+      {ThemeProperties::COLOR_BACKGROUND_TAB_TEXT_INCOGNITO,
+       ThemeProperties::COLOR_BACKGROUND_TAB_TEXT},
+      {ThemeProperties::COLOR_BACKGROUND_TAB_TEXT_INCOGNITO_INACTIVE,
+       ThemeProperties::COLOR_BACKGROUND_TAB_TEXT_INACTIVE},
+      {ThemeProperties::TINT_FRAME_INCOGNITO, ThemeProperties::TINT_FRAME},
+      {ThemeProperties::TINT_FRAME_INCOGNITO_INACTIVE,
+       ThemeProperties::TINT_FRAME_INACTIVE},
+  });
+
+  auto found_entry = incognito_property_map.find(input_id);
+  if (found_entry != incognito_property_map.end())
+    return {found_entry->second, true};
+  return {input_id, false};
 }

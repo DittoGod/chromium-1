@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -17,26 +18,21 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (positioned) DIV id='target'",
-          "rect": [8, 108, 100, 100],
-          "reason": "disappeared"
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 673, 18],
+          "reason": "chunk appeared"
         },
         {
-          "object": "LayoutText #text",
-          "rect": [8, 108, 100, 36],
-          "reason": "disappeared"
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 673, 18],
+          "reason": "chunk disappeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 108, 100, 100],
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='target'",
-      "reason": "disappeared"
     }
   ]
 }

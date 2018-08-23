@@ -7,7 +7,6 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -18,7 +17,7 @@
 #include "content/browser/indexed_db/indexed_db_database_callbacks.h"
 #include "content/browser/indexed_db/indexed_db_tracing.h"
 #include "content/browser/indexed_db/indexed_db_transaction_coordinator.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBDatabaseException.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_database_exception.h"
 #include "third_party/leveldatabase/env_chromium.h"
 
 namespace content {
@@ -112,7 +111,7 @@ IndexedDBTransaction::IndexedDBTransaction(
     : id_(id),
       object_store_ids_(object_store_ids),
       mode_(mode),
-      connection_(connection),
+      connection_(connection->GetWeakPtr()),
       transaction_(backing_store_transaction),
       ptr_factory_(this) {
   IDB_ASYNC_TRACE_BEGIN("IndexedDBTransaction::lifetime", this);
@@ -223,7 +222,10 @@ void IndexedDBTransaction::Abort(const IndexedDBDatabaseError& error) {
   database_->TransactionFinished(this, false);
 
   // RemoveTransaction will delete |this|.
-  connection_->RemoveTransaction(id_);
+  // Note: During force-close situations, the connection can be destroyed during
+  // the |IndexedDBDatabase::TransactionFinished| call
+  if (connection_)
+    connection_->RemoveTransaction(id_);
 }
 
 bool IndexedDBTransaction::IsTaskQueueEmpty() const {
@@ -524,9 +526,9 @@ void IndexedDBTransaction::ProcessTaskQueue() {
   // never requests further activity. Read-only transactions don't
   // block other transactions, so don't time those out.
   if (mode_ != blink::kWebIDBTransactionModeReadOnly) {
-    timeout_timer_.Start(
-        FROM_HERE, GetInactivityTimeout(),
-        base::Bind(&IndexedDBTransaction::Timeout, ptr_factory_.GetWeakPtr()));
+    timeout_timer_.Start(FROM_HERE, GetInactivityTimeout(),
+                         base::BindOnce(&IndexedDBTransaction::Timeout,
+                                        ptr_factory_.GetWeakPtr()));
   }
   processing_event_queue_ = false;
 }

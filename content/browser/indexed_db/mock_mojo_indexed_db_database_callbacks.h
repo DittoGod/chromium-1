@@ -11,6 +11,7 @@
 #include "content/common/indexed_db/indexed_db.mojom.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace content {
 
@@ -18,7 +19,7 @@ class MockMojoIndexedDBDatabaseCallbacks
     : public ::indexed_db::mojom::DatabaseCallbacks {
  public:
   MockMojoIndexedDBDatabaseCallbacks();
-  ~MockMojoIndexedDBDatabaseCallbacks();
+  ~MockMojoIndexedDBDatabaseCallbacks() override;
 
   ::indexed_db::mojom::DatabaseCallbacksAssociatedPtrInfo
   CreateInterfacePtrAndBind();

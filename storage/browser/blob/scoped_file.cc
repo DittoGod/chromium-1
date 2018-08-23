@@ -56,8 +56,8 @@ void ScopedFile::Reset() {
   if (path_.empty())
     return;
 
-  for (ScopeOutCallbackList::iterator iter = scope_out_callbacks_.begin();
-       iter != scope_out_callbacks_.end(); ++iter) {
+  for (auto iter = scope_out_callbacks_.rbegin();
+       iter != scope_out_callbacks_.rend(); ++iter) {
     iter->second->PostTask(FROM_HERE,
                            base::BindOnce(std::move(iter->first), path_));
   }
@@ -69,9 +69,8 @@ void ScopedFile::Reset() {
 
   if (scope_out_policy_ == DELETE_ON_SCOPE_OUT) {
     file_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(base::IgnoreResult(&base::DeleteFile),
-                   path_, false /* recursive */));
+        FROM_HERE, base::BindOnce(base::IgnoreResult(&base::DeleteFile), path_,
+                                  false /* recursive */));
   }
 
   // Clear all fields.

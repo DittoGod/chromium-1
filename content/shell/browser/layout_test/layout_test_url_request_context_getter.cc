@@ -13,7 +13,7 @@
 #include "content/shell/browser/shell_network_delegate.h"
 #include "content/shell/common/layout_test/layout_test_switches.h"
 #include "net/cert/cert_verifier.h"
-#include "net/proxy_resolution/proxy_service.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "services/network/ignore_errors_cert_verifier.h"
 
 namespace content {
@@ -49,7 +49,7 @@ LayoutTestURLRequestContextGetter::CreateNetworkDelegate() {
 std::unique_ptr<net::CertVerifier>
 LayoutTestURLRequestContextGetter::GetCertVerifier() {
   return network::IgnoreErrorsCertVerifier::MaybeWrapCertVerifier(
-      *base::CommandLine::ForCurrentProcess(), switches::kRunLayoutTest,
+      *base::CommandLine::ForCurrentProcess(), switches::kRunWebTests,
       net::CertVerifier::CreateDefault());
 }
 

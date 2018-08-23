@@ -11,18 +11,20 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
+#include "components/download/public/common/download_create_info.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
+#include "components/download/public/common/download_interrupt_reasons_utils.h"
+#include "components/download/public/common/download_task_runner.h"
+#include "components/download/public/common/download_ukm_helper.h"
 #include "content/browser/byte_stream.h"
-#include "content/browser/download/download_create_info.h"
-#include "content/browser/download/download_interrupt_reasons_utils.h"
+#include "content/browser/download/byte_stream_input_stream.h"
 #include "content/browser/download/download_manager_impl.h"
 #include "content/browser/download/download_request_handle.h"
-#include "content/browser/download/download_task_runner.h"
-#include "content/browser/download/download_ukm_helper.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/loader/resource_controller.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/loader/resource_request_info_impl.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_request_utils.h"
 #include "content/public/browser/navigation_entry.h"
@@ -43,7 +45,7 @@ namespace {
 // Static function in order to prevent any accidental accesses to
 // DownloadResourceHandler members from the UI thread.
 static void StartOnUIThread(
-    std::unique_ptr<DownloadCreateInfo> info,
+    std::unique_ptr<download::DownloadCreateInfo> info,
     std::unique_ptr<DownloadResourceHandler::DownloadTabInfo> tab_info,
     std::unique_ptr<ByteStreamReader> stream,
     int render_process_id,
@@ -64,8 +66,12 @@ static void StartOnUIThread(
       frame_host = frame_tree_node->current_frame_host();
   }
 
-  DownloadManager* download_manager =
-      info->request_handle->GetDownloadManager();
+  DownloadManager* download_manager = nullptr;
+  if (frame_host) {
+    download_manager = BrowserContext::GetDownloadManager(
+        frame_host->GetProcess()->GetBrowserContext());
+  }
+
   if (!download_manager || !frame_host) {
     // NULL in unittests or if the page closed right after starting the
     // download.
@@ -74,7 +80,8 @@ static void StartOnUIThread(
                      download::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED);
 
     if (stream)
-      GetDownloadTaskRunner()->DeleteSoon(FROM_HERE, stream.release());
+      download::GetDownloadTaskRunner()->DeleteSoon(FROM_HERE,
+                                                    stream.release());
     return;
   }
 
@@ -82,10 +89,12 @@ static void StartOnUIThread(
   info->tab_referrer_url = tab_info->tab_referrer_url;
   info->ukm_source_id = tab_info->ukm_source_id;
   info->site_url = frame_host->GetSiteInstance()->GetSiteURL();
+  info->render_process_id = frame_host->GetProcess()->GetID();
+  info->render_frame_id = frame_host->GetRoutingID();
 
   download_manager->StartDownload(
       std::move(info),
-      std::make_unique<DownloadManager::InputStream>(std::move(stream)),
+      std::make_unique<ByteStreamInputStream>(std::move(stream)), nullptr,
       started_cb);
 }
 
@@ -101,9 +110,8 @@ void InitializeDownloadTabInfoOnUIThread(
       tab_info->tab_url = entry->GetURL();
       tab_info->tab_referrer_url = entry->GetReferrer().url;
 
-      tab_info->ukm_source_id = ukm::UkmRecorder::GetNewSourceID();
-      DownloadUkmHelper::UpdateSourceURL(ukm::UkmRecorder::Get(),
-                                         tab_info->ukm_source_id, web_contents);
+      tab_info->ukm_source_id = static_cast<WebContentsImpl*>(web_contents)
+                                    ->GetUkmSourceIdForLastCommittedSource();
     }
   }
 }
@@ -111,14 +119,35 @@ void InitializeDownloadTabInfoOnUIThread(
 void DeleteOnUIThread(
     std::unique_ptr<DownloadResourceHandler::DownloadTabInfo> tab_info) {}
 
+void NavigateOnUIThread(
+    const GURL& url,
+    const std::vector<GURL> url_chain,
+    const Referrer& referrer,
+    bool has_user_gesture,
+    const ResourceRequestInfo::WebContentsGetter& wc_getter) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  WebContents* web_contents = wc_getter.Run();
+  if (web_contents) {
+    NavigationController::LoadURLParams params(url);
+    params.has_user_gesture = has_user_gesture;
+    params.referrer = referrer;
+    params.redirect_chain = url_chain;
+    web_contents->GetController().LoadURLWithParams(params);
+  }
+}
+
 }  // namespace
 
 DownloadResourceHandler::DownloadResourceHandler(
     net::URLRequest* request,
     const std::string& request_origin,
-    download::DownloadSource download_source)
+    download::DownloadSource download_source,
+    bool follow_cross_origin_redirects)
     : ResourceHandler(request),
       tab_info_(new DownloadTabInfo()),
+      follow_cross_origin_redirects_(follow_cross_origin_redirects),
+      first_origin_(url::Origin::Create(request->url())),
       core_(request, this, false, request_origin, download_source) {
   // Do UI thread initialization for tab_info_ asap after
   // DownloadResourceHandler creation since the tab could be navigated
@@ -139,7 +168,7 @@ DownloadResourceHandler::~DownloadResourceHandler() {
   if (tab_info_) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&DeleteOnUIThread, base::Passed(&tab_info_)));
+        base::BindOnce(&DeleteOnUIThread, std::move(tab_info_)));
   }
 }
 
@@ -148,7 +177,7 @@ std::unique_ptr<ResourceHandler> DownloadResourceHandler::Create(
     net::URLRequest* request) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   std::unique_ptr<ResourceHandler> handler(new DownloadResourceHandler(
-      request, std::string(), download::DownloadSource::NAVIGATION));
+      request, std::string(), download::DownloadSource::NAVIGATION, true));
   return handler;
 }
 
@@ -156,10 +185,11 @@ std::unique_ptr<ResourceHandler> DownloadResourceHandler::Create(
 std::unique_ptr<ResourceHandler> DownloadResourceHandler::CreateForNewRequest(
     net::URLRequest* request,
     const std::string& request_origin,
-    download::DownloadSource download_source) {
+    download::DownloadSource download_source,
+    bool follow_cross_origin_redirects) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  std::unique_ptr<ResourceHandler> handler(
-      new DownloadResourceHandler(request, request_origin, download_source));
+  std::unique_ptr<ResourceHandler> handler(new DownloadResourceHandler(
+      request, request_origin, download_source, follow_cross_origin_redirects));
   return handler;
 }
 
@@ -167,6 +197,21 @@ void DownloadResourceHandler::OnRequestRedirected(
     const net::RedirectInfo& redirect_info,
     network::ResourceResponse* response,
     std::unique_ptr<ResourceController> controller) {
+  url::Origin new_origin(url::Origin::Create(redirect_info.new_url));
+  if (!follow_cross_origin_redirects_ &&
+      !first_origin_.IsSameOriginWith(new_origin)) {
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(
+            &NavigateOnUIThread, redirect_info.new_url, request()->url_chain(),
+            Referrer(GURL(redirect_info.new_referrer),
+                     Referrer::NetReferrerPolicyToBlinkReferrerPolicy(
+                         redirect_info.new_referrer_policy)),
+            GetRequestInfo()->HasUserGesture(),
+            GetRequestInfo()->GetWebContentsGetterForRequest()));
+    controller->Cancel();
+    return;
+  }
   if (core_.OnRequestRedirected()) {
     controller->Resume();
   } else {
@@ -233,10 +278,6 @@ void DownloadResourceHandler::OnResponseCompleted(
   controller->Resume();
 }
 
-void DownloadResourceHandler::OnDataDownloaded(int bytes_downloaded) {
-  NOTREACHED();
-}
-
 void DownloadResourceHandler::PauseRequest() {
   core_.PauseRequest();
 }
@@ -246,14 +287,14 @@ void DownloadResourceHandler::ResumeRequest() {
 }
 
 void DownloadResourceHandler::OnStart(
-    std::unique_ptr<DownloadCreateInfo> create_info,
+    std::unique_ptr<download::DownloadCreateInfo> create_info,
     std::unique_ptr<ByteStreamReader> stream_reader,
     const download::DownloadUrlParameters::OnStartedCallback& callback) {
   // If the user cancels the download, then don't call start. Instead ignore the
   // download entirely.
   if (create_info->result ==
           download::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED &&
-      create_info->download_id == download::DownloadItem::kInvalidId) {
+      create_info->is_new_download) {
     if (!callback.is_null())
       BrowserThread::PostTask(
           BrowserThread::UI, FROM_HERE,
@@ -274,8 +315,8 @@ void DownloadResourceHandler::OnStart(
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&StartOnUIThread, base::Passed(&create_info),
-                     base::Passed(&tab_info_), base::Passed(&stream_reader),
+      base::BindOnce(&StartOnUIThread, std::move(create_info),
+                     std::move(tab_info_), std::move(stream_reader),
                      render_process_id, render_frame_id,
                      request_info->frame_tree_node_id(), callback));
 }

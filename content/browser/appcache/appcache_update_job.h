@@ -26,7 +26,6 @@
 #include "content/browser/appcache/appcache_storage.h"
 #include "content/common/appcache_interfaces.h"
 #include "content/common/content_export.h"
-#include "net/base/completion_callback.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
@@ -72,10 +71,10 @@ class CONTENT_EXPORT AppCacheUpdateJob
 
   // Master entries have multiple hosts, for example, the same page is opened
   // in different tabs.
-  typedef std::vector<AppCacheHost*> PendingHosts;
-  typedef std::map<GURL, PendingHosts> PendingMasters;
-  typedef std::map<GURL, URLFetcher*> PendingUrlFetches;
-  typedef std::map<int64_t, GURL> LoadingResponses;
+  using PendingHosts = std::vector<AppCacheHost*>;
+  using PendingMasters = std::map<GURL, PendingHosts>;
+  using PendingUrlFetches = std::map<GURL, URLFetcher*>;
+  using LoadingResponses = std::map<int64_t, GURL>;
 
   static const int kRerunDelayMs = 1000;
 

@@ -149,7 +149,7 @@ class TraceEventTestFixture : public testing::Test {
     const char* name = PlatformThread::GetName();
     old_thread_name_ = name ? strdup(name) : nullptr;
 
-    TraceLog::DeleteForTesting();
+    TraceLog::ResetForTesting();
     TraceLog* tracelog = TraceLog::GetInstance();
     ASSERT_TRUE(tracelog);
     ASSERT_FALSE(tracelog->IsEnabled());
@@ -163,7 +163,7 @@ class TraceEventTestFixture : public testing::Test {
     free(old_thread_name_);
     old_thread_name_ = nullptr;
     // We want our singleton torn down after each test.
-    TraceLog::DeleteForTesting();
+    TraceLog::ResetForTesting();
   }
 
   char* old_thread_name_;
@@ -2696,6 +2696,16 @@ TEST_F(TraceEventTestFixture, TraceRecordAsMuchAsPossibleMode) {
     TraceLog::RECORDING_MODE);
   TraceBuffer* buffer = TraceLog::GetInstance()->trace_buffer();
   EXPECT_EQ(512000000UL, buffer->Capacity());
+  TraceLog::GetInstance()->SetDisabled();
+}
+
+TEST_F(TraceEventTestFixture, ConfigTraceBufferLimit) {
+  const size_t kLimit = 2048;
+  TraceConfig config(kRecordAllCategoryFilter, RECORD_UNTIL_FULL);
+  config.SetTraceBufferSizeInEvents(kLimit);
+  TraceLog::GetInstance()->SetEnabled(config, TraceLog::RECORDING_MODE);
+  TraceBuffer* buffer = TraceLog::GetInstance()->trace_buffer();
+  EXPECT_EQ(kLimit, buffer->Capacity());
   TraceLog::GetInstance()->SetDisabled();
 }
 

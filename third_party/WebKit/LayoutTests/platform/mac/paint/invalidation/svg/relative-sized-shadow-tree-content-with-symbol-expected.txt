@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -22,66 +23,16 @@
           "reason": "geometry"
         },
         {
-          "object": "LayoutSVGContainer use",
+          "object": "LayoutSVGViewportContainer svg id='targetSymbol'",
           "rect": [9, 69, 400, 400],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutSVGRoot svg",
-          "rect": [9, 69, 400, 400],
-          "reason": "geometry"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutSVGViewportContainer svg id='targetSymbol'",
-          "rect": [9, 69, 400, 400],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutSVGRect rect",
-          "rect": [209, 269, 200, 200],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutSVGRect rect",
-          "rect": [9, 69, 200, 200],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutSVGRect rect",
-          "rect": [59, 269, 50, 50],
-          "reason": "geometry"
+          "rect": [9, 219, 100, 100],
+          "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow div id='contentBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGRoot svg",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGViewportContainer svg id='targetSymbol'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "geometry"
     }
   ]
 }

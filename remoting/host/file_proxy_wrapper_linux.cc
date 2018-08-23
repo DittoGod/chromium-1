@@ -14,14 +14,12 @@
 #include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_checker.h"
 #include "remoting/base/compound_buffer.h"
 
 namespace {
-
-void EmptyStatusCallback(base::File::Error error) {}
 
 constexpr char kTempFileExtension[] = ".crdownload";
 
@@ -150,7 +148,7 @@ void FileProxyWrapperLinux::Init(StatusCallback status_callback) {
   status_callback_ = std::move(status_callback);
 
   file_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND});
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT});
   DCHECK(file_task_runner_);
 
   file_proxy_.reset(new base::FileProxy(file_task_runner_.get()));
@@ -382,7 +380,7 @@ void FileProxyWrapperLinux::Close() {
     return;
   }
 
-  file_proxy_->Close(base::Bind(&EmptyStatusCallback));
+  file_proxy_->Close(base::DoNothing());
   SetState(kClosed);
 }
 
@@ -431,7 +429,7 @@ void FileProxyWrapperLinux::MoveFileCallback(bool success) {
 
 void FileProxyWrapperLinux::Cancel() {
   if (file_proxy_->IsValid()) {
-    file_proxy_->Close(base::Bind(&EmptyStatusCallback));
+    file_proxy_->Close(base::DoNothing());
   }
 
   if (mode_ == kWriting) {

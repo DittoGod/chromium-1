@@ -15,7 +15,7 @@
 #include "components/autofill/core/browser/autofill_driver.h"
 #include "components/autofill/core/browser/autofill_external_delegate.h"
 #include "components/autofill/core/browser/autofill_manager.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/associated_binding.h"
 
 namespace content {
 class NavigationHandle;
@@ -46,11 +46,12 @@ class ContentAutofillDriver : public AutofillDriver,
   static ContentAutofillDriver* GetForRenderFrameHost(
       content::RenderFrameHost* render_frame_host);
 
-  void BindRequest(mojom::AutofillDriverRequest request);
+  void BindRequest(mojom::AutofillDriverAssociatedRequest request);
 
   // AutofillDriver:
   bool IsIncognito() const override;
   net::URLRequestContextGetter* GetURLRequestContext() override;
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   bool RendererIsAvailable() override;
   void SendFormDataToRenderer(int query_id,
                               RendererFormDataAction action,
@@ -61,7 +62,7 @@ class ContentAutofillDriver : public AutofillDriver,
       const std::vector<FormStructure*>& forms) override;
   void RendererShouldAcceptDataListSuggestion(
       const base::string16& value) override;
-  void RendererShouldClearFilledForm() override;
+  void RendererShouldClearFilledSection() override;
   void RendererShouldClearPreviewedForm() override;
   void RendererShouldFillFieldWithValue(const base::string16& value) override;
   void RendererShouldPreviewFieldWithValue(
@@ -85,10 +86,14 @@ class ContentAutofillDriver : public AutofillDriver,
   void TextFieldDidScroll(const FormData& form,
                           const FormFieldData& field,
                           const gfx::RectF& bounding_box) override;
+  void SelectControlDidChange(const FormData& form,
+                              const FormFieldData& field,
+                              const gfx::RectF& bounding_box) override;
   void QueryFormFieldAutofill(int32_t id,
                               const FormData& form,
                               const FormFieldData& field,
-                              const gfx::RectF& bounding_box) override;
+                              const gfx::RectF& bounding_box,
+                              bool autoselect_first_suggestion) override;
   void HidePopup() override;
   void FocusNoLongerOnForm() override;
   void FocusOnFormField(const FormData& form,
@@ -100,6 +105,7 @@ class ContentAutofillDriver : public AutofillDriver,
   void DidEndTextFieldEditing() override;
   void SetDataList(const std::vector<base::string16>& values,
                    const std::vector<base::string16>& labels) override;
+  void SelectFieldOptionsDidChange(const FormData& form) override;
 
   // Called when the main frame has navigated. Explicitely will not trigger for
   // subframe navigations. See navigation_handle.h for details.
@@ -112,12 +118,14 @@ class ContentAutofillDriver : public AutofillDriver,
   AutofillManager* autofill_manager() { return autofill_manager_; }
   content::RenderFrameHost* render_frame_host() { return render_frame_host_; }
 
-  const mojom::AutofillAgentPtr& GetAutofillAgent();
+  const mojom::AutofillAgentAssociatedPtr& GetAutofillAgent();
 
   // Methods forwarded to key_press_handler_manager_.
   void RegisterKeyPressHandler(
       const content::RenderWidgetHost::KeyPressEventCallback& handler);
   void RemoveKeyPressHandler();
+
+  void SetAutofillProviderForTesting(AutofillProvider* provider);
 
  protected:
   // Sets the manager to |manager| and sets |manager|'s external delegate
@@ -130,6 +138,8 @@ class ContentAutofillDriver : public AutofillDriver,
       const content::RenderWidgetHost::KeyPressEventCallback& handler) override;
   void RemoveHandler(
       const content::RenderWidgetHost::KeyPressEventCallback& handler) override;
+
+  void SetAutofillProvider(AutofillProvider* provider);
 
   // Weak ref to the RenderFrameHost the driver is associated with. Should
   // always be non-NULL and valid for lifetime of |this|.
@@ -150,9 +160,9 @@ class ContentAutofillDriver : public AutofillDriver,
 
   KeyPressHandlerManager key_press_handler_manager_;
 
-  mojo::Binding<mojom::AutofillDriver> binding_;
+  mojo::AssociatedBinding<mojom::AutofillDriver> binding_;
 
-  mojom::AutofillAgentPtr autofill_agent_;
+  mojom::AutofillAgentAssociatedPtr autofill_agent_;
 };
 
 }  // namespace autofill

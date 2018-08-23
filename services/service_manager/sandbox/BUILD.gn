@@ -8,6 +8,8 @@ import("//build/config/sanitizers/sanitizers.gni")
 component("sandbox") {
   sources = [
     "export.h",
+    "features.cc",
+    "features.h",
     "sandbox.cc",
     "sandbox.h",
     "sandbox_delegate.h",
@@ -24,8 +26,9 @@ component("sandbox") {
     "//services/service_manager/embedder:embedder_switches",
   ]
   deps = [
-    ":sanitizer_flags",
+    ":sanitizer_buildflags",
     "//base",
+    "//sandbox:common",
   ]
   if (is_linux) {
     sources += [
@@ -59,7 +62,7 @@ component("sandbox") {
       "linux/sandbox_seccomp_bpf_linux.h",
     ]
     deps += [
-      "//sandbox:sandbox_features",
+      "//sandbox:sandbox_buildflags",
       "//sandbox/linux:sandbox_services",
       "//sandbox/linux:seccomp_bpf",
       "//sandbox/linux:suid_sandbox_client",
@@ -82,8 +85,6 @@ component("sandbox") {
   }
   if (is_win) {
     sources += [
-      "features.cc",
-      "features.h",
       "win/sandbox_win.cc",
       "win/sandbox_win.h",
     ]
@@ -91,7 +92,7 @@ component("sandbox") {
   }
 }
 
-buildflag_header("sanitizer_flags") {
-  header = "sanitizer_flags.h"
+buildflag_header("sanitizer_buildflags") {
+  header = "sanitizer_buildflags.h"
   flags = [ "USING_SANITIZER=$using_sanitizer" ]
 }

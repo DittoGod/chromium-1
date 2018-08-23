@@ -14,10 +14,10 @@
 #include "base/memory/ref_counted.h"
 #include "content/browser/appcache/appcache_storage.h"
 #include "content/common/content_export.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_repeating_callback.h"
 #include "storage/browser/quota/quota_client.h"
 #include "storage/browser/quota/quota_task.h"
-#include "third_party/WebKit/common/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/origin.h"
 
 namespace content {
@@ -41,15 +41,15 @@ class AppCacheQuotaClient : public storage::QuotaClient {
   void OnQuotaManagerDestroyed() override;
   void GetOriginUsage(const url::Origin& origin,
                       blink::mojom::StorageType type,
-                      const GetUsageCallback& callback) override;
+                      GetUsageCallback callback) override;
   void GetOriginsForType(blink::mojom::StorageType type,
-                         const GetOriginsCallback& callback) override;
+                         GetOriginsCallback callback) override;
   void GetOriginsForHost(blink::mojom::StorageType type,
                          const std::string& host,
-                         const GetOriginsCallback& callback) override;
+                         GetOriginsCallback callback) override;
   void DeleteOriginData(const url::Origin& origin,
                         blink::mojom::StorageType type,
-                        const DeletionCallback& callback) override;
+                        DeletionCallback callback) override;
   bool DoesSupport(blink::mojom::StorageType type) const override;
 
  private:
@@ -63,11 +63,11 @@ class AppCacheQuotaClient : public storage::QuotaClient {
   void DidDeleteAppCachesForOrigin(int rv);
   void GetOriginsHelper(blink::mojom::StorageType type,
                         const std::string& opt_host,
-                        const GetOriginsCallback& callback);
+                        GetOriginsCallback callback);
   void ProcessPendingRequests();
   void DeletePendingRequests();
   const AppCacheStorage::UsageMap* GetUsageMap();
-  net::CancelableCompletionCallback* GetServiceDeleteCallback();
+  net::CancelableCompletionRepeatingCallback* GetServiceDeleteCallback();
 
   // For use by appcache internals during initialization and shutdown.
   CONTENT_EXPORT void NotifyAppCacheReady();
@@ -81,7 +81,8 @@ class AppCacheQuotaClient : public storage::QuotaClient {
   // And once it's ready, we can only handle one delete request at a time,
   // so we queue up additional requests while one is in already in progress.
   DeletionCallback current_delete_request_callback_;
-  std::unique_ptr<net::CancelableCompletionCallback> service_delete_callback_;
+  std::unique_ptr<net::CancelableCompletionRepeatingCallback>
+      service_delete_callback_;
 
   AppCacheServiceImpl* service_;
   bool appcache_is_ready_;

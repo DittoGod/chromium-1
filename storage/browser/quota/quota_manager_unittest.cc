@@ -21,7 +21,7 @@
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/sys_info.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -80,9 +80,9 @@ url::Origin ToOrigin(const std::string& url) {
 
 class QuotaManagerTest : public testing::Test {
  protected:
-  typedef QuotaManager::QuotaTableEntry QuotaTableEntry;
-  typedef QuotaManager::QuotaTableEntries QuotaTableEntries;
-  typedef QuotaManager::OriginInfoTableEntries OriginInfoTableEntries;
+  using QuotaTableEntry = QuotaManager::QuotaTableEntry;
+  using QuotaTableEntries = QuotaManager::QuotaTableEntries;
+  using OriginInfoTableEntries = QuotaManager::OriginInfoTableEntries;
 
  public:
   QuotaManagerTest()
@@ -98,7 +98,7 @@ class QuotaManagerTest : public testing::Test {
 
   void TearDown() override {
     // Make sure the quota manager cleans up correctly.
-    quota_manager_ = NULL;
+    quota_manager_ = nullptr;
     scoped_task_environment_.RunUntilIdle();
   }
 
@@ -132,9 +132,8 @@ class QuotaManagerTest : public testing::Test {
 
   void GetUsageInfo() {
     usage_info_.clear();
-    quota_manager_->GetUsageInfo(
-        base::Bind(&QuotaManagerTest::DidGetUsageInfo,
-                   weak_factory_.GetWeakPtr()));
+    quota_manager_->GetUsageInfo(base::BindOnce(
+        &QuotaManagerTest::DidGetUsageInfo, weak_factory_.GetWeakPtr()));
   }
 
   void GetUsageAndQuotaForWebApps(const GURL& origin,
@@ -143,8 +142,9 @@ class QuotaManagerTest : public testing::Test {
     usage_ = -1;
     quota_ = -1;
     quota_manager_->GetUsageAndQuotaForWebApps(
-        origin, type, base::Bind(&QuotaManagerTest::DidGetUsageAndQuota,
-                                 weak_factory_.GetWeakPtr()));
+        origin, type,
+        base::BindOnce(&QuotaManagerTest::DidGetUsageAndQuota,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetUsageAndQuotaWithBreakdown(const GURL& origin, StorageType type) {
@@ -154,8 +154,8 @@ class QuotaManagerTest : public testing::Test {
     usage_breakdown_.clear();
     quota_manager_->GetUsageAndQuotaWithBreakdown(
         origin, type,
-        base::Bind(&QuotaManagerTest::DidGetUsageAndQuotaWithBreakdown,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetUsageAndQuotaWithBreakdown,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetUsageAndQuotaForStorageClient(const GURL& origin,
@@ -164,8 +164,9 @@ class QuotaManagerTest : public testing::Test {
     usage_ = -1;
     quota_ = -1;
     quota_manager_->GetUsageAndQuota(
-        origin, type, base::Bind(&QuotaManagerTest::DidGetUsageAndQuota,
-                                 weak_factory_.GetWeakPtr()));
+        origin, type,
+        base::BindOnce(&QuotaManagerTest::DidGetUsageAndQuota,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void SetQuotaSettings(int64_t pool_size,
@@ -185,9 +186,8 @@ class QuotaManagerTest : public testing::Test {
     quota_status_ = QuotaStatusCode::kUnknown;
     quota_ = -1;
     quota_manager_->GetPersistentHostQuota(
-        host,
-        base::Bind(&QuotaManagerTest::DidGetHostQuota,
-                   weak_factory_.GetWeakPtr()));
+        host, base::BindOnce(&QuotaManagerTest::DidGetHostQuota,
+                             weak_factory_.GetWeakPtr()));
   }
 
   void SetPersistentHostQuota(const std::string& host, int64_t new_quota) {
@@ -195,40 +195,39 @@ class QuotaManagerTest : public testing::Test {
     quota_ = -1;
     quota_manager_->SetPersistentHostQuota(
         host, new_quota,
-        base::Bind(&QuotaManagerTest::DidGetHostQuota,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetHostQuota,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetGlobalUsage(StorageType type) {
     usage_ = -1;
     unlimited_usage_ = -1;
     quota_manager_->GetGlobalUsage(
-        type,
-        base::Bind(&QuotaManagerTest::DidGetGlobalUsage,
-                   weak_factory_.GetWeakPtr()));
+        type, base::BindOnce(&QuotaManagerTest::DidGetGlobalUsage,
+                             weak_factory_.GetWeakPtr()));
   }
 
   void GetHostUsage(const std::string& host, StorageType type) {
     usage_ = -1;
     quota_manager_->GetHostUsage(
         host, type,
-        base::Bind(&QuotaManagerTest::DidGetHostUsage,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetHostUsage,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetHostUsageBreakdown(const std::string& host, StorageType type) {
     usage_ = -1;
     quota_manager_->GetHostUsageWithBreakdown(
         host, type,
-        base::Bind(&QuotaManagerTest::DidGetHostUsageBreakdown,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetHostUsageBreakdown,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void RunAdditionalUsageAndQuotaTask(const GURL& origin, StorageType type) {
     quota_manager_->GetUsageAndQuota(
         origin, type,
-        base::Bind(&QuotaManagerTest::DidGetUsageAndQuotaAdditional,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetUsageAndQuotaAdditional,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void DeleteClientOriginData(QuotaClient* client,
@@ -237,8 +236,8 @@ class QuotaManagerTest : public testing::Test {
     DCHECK(client);
     quota_status_ = QuotaStatusCode::kUnknown;
     client->DeleteOriginData(url::Origin::Create(origin), type,
-                             base::Bind(&QuotaManagerTest::StatusCallback,
-                                        weak_factory_.GetWeakPtr()));
+                             base::BindOnce(&QuotaManagerTest::StatusCallback,
+                                            weak_factory_.GetWeakPtr()));
   }
 
   void EvictOriginData(const GURL& origin,
@@ -246,8 +245,8 @@ class QuotaManagerTest : public testing::Test {
     quota_status_ = QuotaStatusCode::kUnknown;
     quota_manager_->EvictOriginData(
         origin, type,
-        base::Bind(&QuotaManagerTest::StatusCallback,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::StatusCallback,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void DeleteOriginData(const GURL& origin,
@@ -256,8 +255,8 @@ class QuotaManagerTest : public testing::Test {
     quota_status_ = QuotaStatusCode::kUnknown;
     quota_manager_->DeleteOriginData(
         origin, type, quota_client_mask,
-        base::Bind(&QuotaManagerTest::StatusCallback,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::StatusCallback,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void DeleteHostData(const std::string& host,
@@ -266,14 +265,14 @@ class QuotaManagerTest : public testing::Test {
     quota_status_ = QuotaStatusCode::kUnknown;
     quota_manager_->DeleteHostData(
         host, type, quota_client_mask,
-        base::Bind(&QuotaManagerTest::StatusCallback,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::StatusCallback,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetStorageCapacity() {
     available_space_ = -1;
     total_space_ = -1;
-    quota_manager_->GetStorageCapacity(base::Bind(
+    quota_manager_->GetStorageCapacity(base::BindOnce(
         &QuotaManagerTest::DidGetStorageCapacity, weak_factory_.GetWeakPtr()));
   }
 
@@ -284,12 +283,12 @@ class QuotaManagerTest : public testing::Test {
     total_space_ = -1;
     usage_ = -1;
     quota_manager_->GetEvictionRoundInfo(
-        base::Bind(&QuotaManagerTest::DidGetEvictionRoundInfo,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetEvictionRoundInfo,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetCachedOrigins(StorageType type, std::set<GURL>* origins) {
-    ASSERT_TRUE(origins != NULL);
+    ASSERT_TRUE(origins != nullptr);
     origins->clear();
     quota_manager_->GetCachedOrigins(type, origins);
   }
@@ -312,8 +311,8 @@ class QuotaManagerTest : public testing::Test {
     // policy.
     quota_manager_->GetEvictionOrigin(
         type, std::set<GURL>(), 0,
-        base::Bind(&QuotaManagerTest::DidGetEvictionOrigin,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetEvictionOrigin,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void NotifyOriginInUse(const GURL& origin) {
@@ -329,22 +328,20 @@ class QuotaManagerTest : public testing::Test {
     modified_origins_type_ = StorageType::kUnknown;
     quota_manager_->GetOriginsModifiedSince(
         type, modified_since,
-        base::Bind(&QuotaManagerTest::DidGetModifiedOrigins,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetModifiedOrigins,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void DumpQuotaTable() {
     quota_entries_.clear();
-    quota_manager_->DumpQuotaTable(
-        base::Bind(&QuotaManagerTest::DidDumpQuotaTable,
-                   weak_factory_.GetWeakPtr()));
+    quota_manager_->DumpQuotaTable(base::BindOnce(
+        &QuotaManagerTest::DidDumpQuotaTable, weak_factory_.GetWeakPtr()));
   }
 
   void DumpOriginInfoTable() {
     origin_info_entries_.clear();
-    quota_manager_->DumpOriginInfoTable(
-        base::Bind(&QuotaManagerTest::DidDumpOriginInfoTable,
-                   weak_factory_.GetWeakPtr()));
+    quota_manager_->DumpOriginInfoTable(base::BindOnce(
+        &QuotaManagerTest::DidDumpOriginInfoTable, weak_factory_.GetWeakPtr()));
   }
 
   void DidGetUsageInfo(const UsageInfoEntries& entries) {
@@ -614,7 +611,7 @@ TEST_F(QuotaManagerTest, GetUsage_NoClient) {
 }
 
 TEST_F(QuotaManagerTest, GetUsage_EmptyClient) {
-  RegisterClient(CreateClient(NULL, 0, QuotaClient::kFileSystem));
+  RegisterClient(CreateClient(nullptr, 0, QuotaClient::kFileSystem));
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
   EXPECT_EQ(QuotaStatusCode::kOk, status());
@@ -986,7 +983,7 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_NukeManager) {
   DeleteOriginData(GURL("http://bar.com/"), kTemp, kAllClients);
 
   // Nuke before waiting for callbacks.
-  set_quota_manager(NULL);
+  set_quota_manager(nullptr);
   scoped_task_environment_.RunUntilIdle();
   EXPECT_EQ(QuotaStatusCode::kErrorAbort, status());
 }
@@ -1158,7 +1155,7 @@ TEST_F(QuotaManagerTest, OriginInUse) {
 }
 
 TEST_F(QuotaManagerTest, GetAndSetPerststentHostQuota) {
-  RegisterClient(CreateClient(NULL, 0, QuotaClient::kFileSystem));
+  RegisterClient(CreateClient(nullptr, 0, QuotaClient::kFileSystem));
 
   GetPersistentHostQuota("foo.com");
   scoped_task_environment_.RunUntilIdle();
@@ -1185,7 +1182,7 @@ TEST_F(QuotaManagerTest, GetAndSetPerststentHostQuota) {
 }
 
 TEST_F(QuotaManagerTest, GetAndSetPersistentUsageAndQuota) {
-  RegisterClient(CreateClient(NULL, 0, QuotaClient::kFileSystem));
+  RegisterClient(CreateClient(nullptr, 0, QuotaClient::kFileSystem));
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
@@ -1215,7 +1212,7 @@ TEST_F(QuotaManagerTest, GetAndSetPersistentUsageAndQuota) {
 }
 
 TEST_F(QuotaManagerTest, GetSyncableQuota) {
-  RegisterClient(CreateClient(NULL, 0, QuotaClient::kFileSystem));
+  RegisterClient(CreateClient(nullptr, 0, QuotaClient::kFileSystem));
 
   // Pre-condition check: available disk space (for testing) is less than
   // the default quota for syncable storage.
@@ -1305,7 +1302,7 @@ TEST_F(QuotaManagerTest, GetPersistentUsageAndQuota_NukeManager) {
   RunAdditionalUsageAndQuotaTask(GURL("http://bar.com/"), kPerm);
 
   // Nuke before waiting for callbacks.
-  set_quota_manager(NULL);
+  set_quota_manager(nullptr);
   scoped_task_environment_.RunUntilIdle();
   EXPECT_EQ(QuotaStatusCode::kErrorAbort, status());
 }
@@ -1487,12 +1484,9 @@ TEST_F(QuotaManagerTest, EvictOriginData) {
   DumpOriginInfoTable();
   scoped_task_environment_.RunUntilIdle();
 
-  typedef OriginInfoTableEntries::const_iterator iterator;
-  for (iterator itr(origin_info_entries().begin()),
-                end(origin_info_entries().end());
-       itr != end; ++itr) {
-    if (itr->type == kTemp)
-      EXPECT_NE(std::string("http://foo.com/"), itr->origin.spec());
+  for (const auto& entry : origin_info_entries()) {
+    if (entry.type == kTemp)
+      EXPECT_NE(std::string("http://foo.com/"), entry.origin.spec());
   }
 
   GetGlobalUsage(kTemp);
@@ -1616,11 +1610,8 @@ TEST_F(QuotaManagerTest, EvictOriginDataWithDeletionError) {
   scoped_task_environment_.RunUntilIdle();
 
   bool found_origin_in_database = false;
-  typedef OriginInfoTableEntries::const_iterator iterator;
-  for (iterator itr(origin_info_entries().begin()),
-                end(origin_info_entries().end());
-       itr != end; ++itr) {
-    if (itr->type == kTemp && itr->origin == "http://foo.com/") {
+  for (const auto& entry : origin_info_entries()) {
+    if (entry.type == kTemp && entry.origin == "http://foo.com/") {
       found_origin_in_database = true;
       break;
     }
@@ -1788,16 +1779,14 @@ TEST_F(QuotaManagerTest, DeleteHostDataMultiple) {
   DumpOriginInfoTable();
   scoped_task_environment_.RunUntilIdle();
 
-  typedef OriginInfoTableEntries::const_iterator iterator;
-  for (iterator itr(origin_info_entries().begin()),
-                end(origin_info_entries().end());
-       itr != end; ++itr) {
-    if (itr->type == kTemp) {
-      EXPECT_NE(std::string("http://foo.com/"), itr->origin.spec());
-      EXPECT_NE(std::string("http://foo.com:1/"), itr->origin.spec());
-      EXPECT_NE(std::string("https://foo.com/"), itr->origin.spec());
-      EXPECT_NE(std::string("http://bar.com/"), itr->origin.spec());
-    }
+  for (const auto& entry : origin_info_entries()) {
+    if (entry.type != kTemp)
+      continue;
+
+    EXPECT_NE(std::string("http://foo.com/"), entry.origin.spec());
+    EXPECT_NE(std::string("http://foo.com:1/"), entry.origin.spec());
+    EXPECT_NE(std::string("https://foo.com/"), entry.origin.spec());
+    EXPECT_NE(std::string("http://bar.com/"), entry.origin.spec());
   }
 
   GetGlobalUsage(kTemp);
@@ -1884,14 +1873,12 @@ TEST_F(QuotaManagerTest, DeleteOriginDataMultiple) {
   DumpOriginInfoTable();
   scoped_task_environment_.RunUntilIdle();
 
-  typedef OriginInfoTableEntries::const_iterator iterator;
-  for (iterator itr(origin_info_entries().begin()),
-                end(origin_info_entries().end());
-       itr != end; ++itr) {
-    if (itr->type == kTemp) {
-      EXPECT_NE(std::string("http://foo.com/"), itr->origin.spec());
-      EXPECT_NE(std::string("http://bar.com/"), itr->origin.spec());
-    }
+  for (const auto& entry : origin_info_entries()) {
+    if (entry.type != kTemp)
+      continue;
+
+    EXPECT_NE(std::string("http://foo.com/"), entry.origin.spec());
+    EXPECT_NE(std::string("http://bar.com/"), entry.origin.spec());
   }
 
   GetGlobalUsage(kTemp);
@@ -1957,7 +1944,7 @@ TEST_F(QuotaManagerTest, GetCachedOrigins) {
 
   for (size_t i = 0; i < arraysize(kData); ++i) {
     if (kData[i].type == kTemp)
-      EXPECT_TRUE(origins.find(GURL(kData[i].origin)) != origins.end());
+      EXPECT_TRUE(base::ContainsKey(origins, GURL(kData[i].origin)));
   }
 }
 
@@ -2125,13 +2112,10 @@ TEST_F(QuotaManagerTest, DumpQuotaTable) {
   };
   std::set<QuotaTableEntry> entries(kEntries, kEntries + arraysize(kEntries));
 
-  typedef QuotaTableEntries::const_iterator iterator;
-  for (iterator itr(quota_entries().begin()), end(quota_entries().end());
-       itr != end; ++itr) {
-    SCOPED_TRACE(testing::Message()
-                 << "host = " << itr->host << ", "
-                 << "quota = " << itr->quota);
-    EXPECT_EQ(1u, entries.erase(*itr));
+  for (const auto& quota_entry : quota_entries()) {
+    SCOPED_TRACE(testing::Message() << "host = " << quota_entry.host << ", "
+                                    << "quota = " << quota_entry.quota);
+    EXPECT_EQ(1u, entries.erase(quota_entry));
   }
   EXPECT_TRUE(entries.empty());
 }
@@ -2156,25 +2140,22 @@ TEST_F(QuotaManagerTest, DumpOriginInfoTable) {
   DumpOriginInfoTable();
   scoped_task_environment_.RunUntilIdle();
 
-  typedef std::pair<GURL, StorageType> TypedOrigin;
-  typedef std::pair<TypedOrigin, int> Entry;
+  using TypedOrigin = std::pair<GURL, StorageType>;
+  using Entry = std::pair<TypedOrigin, int>;
   const Entry kEntries[] = {
     make_pair(make_pair(GURL("http://example.com/"), kTemp), 1),
     make_pair(make_pair(GURL("http://example.com/"), kPerm), 2),
   };
   std::set<Entry> entries(kEntries, kEntries + arraysize(kEntries));
 
-  typedef OriginInfoTableEntries::const_iterator iterator;
-  for (iterator itr(origin_info_entries().begin()),
-                end(origin_info_entries().end());
-       itr != end; ++itr) {
+  for (const auto& origin_info : origin_info_entries()) {
     SCOPED_TRACE(testing::Message()
-                 << "host = " << itr->origin << ", "
-                 << "type = " << static_cast<int>(itr->type) << ", "
-                 << "used_count = " << itr->used_count);
+                 << "host = " << origin_info.origin << ", "
+                 << "type = " << static_cast<int>(origin_info.type) << ", "
+                 << "used_count = " << origin_info.used_count);
     EXPECT_EQ(1u, entries.erase(
-        make_pair(make_pair(itr->origin, itr->type),
-                  itr->used_count)));
+                      make_pair(make_pair(origin_info.origin, origin_info.type),
+                                origin_info.used_count)));
   }
   EXPECT_TRUE(entries.empty());
 }

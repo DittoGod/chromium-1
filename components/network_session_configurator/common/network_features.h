@@ -10,9 +10,12 @@
 
 namespace features {
 
-// Enables token binding
-// (https://www.ietf.org/id/draft-ietf-tokbind-protocol-04.txt).
-NETWORK_SESSION_CONFIGURATOR_EXPORT extern const base::Feature kTokenBinding;
+// Enables Channel ID.
+NETWORK_SESSION_CONFIGURATOR_EXPORT extern const base::Feature kChannelID;
+
+// Enabled DNS over HTTPS
+// (https://tools.ietf.org/id/draft-ietf-doh-dns-over-https-02.txt).
+NETWORK_SESSION_CONFIGURATOR_EXPORT extern const base::Feature kDnsOverHttps;
 
 }  // namespace features
 

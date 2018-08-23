@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/ash/network/network_state_notifier.h"
 
 #include "ash/public/cpp/vector_icons/vector_icons.h"
-#include "ash/resources/grit/ash_resources.h"
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/strings/string16.h"
@@ -23,7 +22,6 @@
 #include "components/device_event_log/device_event_log.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/message_center/public/cpp/notification.h"
 
 namespace chromeos {
@@ -81,7 +79,7 @@ void ShowErrorNotification(const std::string& service_path,
   std::unique_ptr<message_center::Notification> notification =
       message_center::Notification::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE, notification_id, title,
-          message, gfx::Image(), base::string16() /* display_source */, GURL(),
+          message, base::string16() /* display_source */, GURL(),
           message_center::NotifierId(
               message_center::NotifierId::SYSTEM_COMPONENT,
               kNotifierNetworkError),
@@ -89,6 +87,7 @@ void ShowErrorNotification(const std::string& service_path,
           new message_center::HandleNotificationClickDelegate(callback),
           GetErrorNotificationVectorIcon(network_type),
           message_center::SystemNotificationWarningLevel::CRITICAL_WARNING);
+  notification->set_priority(message_center::SYSTEM_PRIORITY);
   SystemNotificationHelper::GetInstance()->Display(*notification);
 }
 
@@ -171,8 +170,12 @@ void NetworkStateNotifier::ConnectFailed(const std::string& service_path,
   const NetworkState* network =
       NetworkHandler::Get()->network_state_handler()->GetNetworkState(
           service_path);
-  if (ShouldConnectFailedNotificationBeShown(error_name, network))
-    ShowNetworkConnectErrorForGuid(error_name, network ? network->guid() : "");
+  if (!ShouldConnectFailedNotificationBeShown(error_name, network)) {
+    NET_LOG(EVENT) << "Skipping notification for: " << service_path
+                   << " Error: " << error_name;
+    return;
+  }
+  ShowNetworkConnectErrorForGuid(error_name, network ? network->guid() : "");
 }
 
 void NetworkStateNotifier::DisconnectRequested(
@@ -222,7 +225,7 @@ bool NetworkStateNotifier::UpdateDefaultNetwork(const NetworkState* network) {
 void NetworkStateNotifier::UpdateVpnConnectionState(const NetworkState* vpn) {
   if (vpn->path() == connected_vpn_) {
     if (!vpn->IsConnectedState() && !vpn->IsConnectingState()) {
-      if (vpn->vpn_provider_type() != shill::kProviderArcVpn) {
+      if (vpn->GetVpnProviderType() != shill::kProviderArcVpn) {
         ShowVpnDisconnectedNotification(vpn);
       }
       connected_vpn_.clear();
@@ -280,20 +283,24 @@ void NetworkStateNotifier::UpdateCellularActivating(
     return;
 
   cellular_activating_.erase(cellular->path());
-  const gfx::Image& icon =
-      ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-          cellular->network_technology() == shill::kNetworkTechnologyLte
-              ? IDR_AURA_UBER_TRAY_NETWORK_NOTIFICATION_LTE
-              : IDR_AURA_UBER_TRAY_NETWORK_NOTIFICATION_3G);
-  SystemNotificationHelper::GetInstance()->Display(
-      *message_center::Notification::CreateSystemNotification(
+  std::unique_ptr<message_center::Notification> notification =
+      message_center::Notification::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE,
           kNetworkActivateNotificationId,
           l10n_util::GetStringUTF16(IDS_NETWORK_CELLULAR_ACTIVATED_TITLE),
           l10n_util::GetStringFUTF16(IDS_NETWORK_CELLULAR_ACTIVATED,
                                      base::UTF8ToUTF16((cellular->name()))),
-          icon, kNotifierNetwork,
-          base::Bind(&NetworkStateNotifier::ShowNetworkSettings,
-                     weak_ptr_factory_.GetWeakPtr(), cellular->guid())));
+          base::string16() /* display_source */, GURL(),
+          message_center::NotifierId(
+              message_center::NotifierId::SYSTEM_COMPONENT, kNotifierNetwork),
+          {},
+          new message_center::HandleNotificationClickDelegate(
+              base::Bind(&NetworkStateNotifier::ShowNetworkSettings,
+                         weak_ptr_factory_.GetWeakPtr(), cellular->guid())),
+          ash::kNotificationMobileDataIcon,
+          message_center::SystemNotificationWarningLevel::CRITICAL_WARNING);
+  notification->set_priority(message_center::SYSTEM_PRIORITY);
+  SystemNotificationHelper::GetInstance()->Display(*notification);
 }
 
 void NetworkStateNotifier::ShowNetworkConnectErrorForGuid(
@@ -322,17 +329,25 @@ void NetworkStateNotifier::ShowMobileActivationErrorForGuid(
                    << guid;
     return;
   }
-  SystemNotificationHelper::GetInstance()->Display(
-      *message_center::Notification::CreateSystemNotification(
+  std::unique_ptr<message_center::Notification> notification =
+      message_center::Notification::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE,
           kNetworkActivateNotificationId,
           l10n_util::GetStringUTF16(IDS_NETWORK_ACTIVATION_ERROR_TITLE),
           l10n_util::GetStringFUTF16(IDS_NETWORK_ACTIVATION_NEEDS_CONNECTION,
-                                     base::UTF8ToUTF16(cellular->name())),
-          ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-              IDR_AURA_UBER_TRAY_NETWORK_FAILED_CELLULAR),
-          kNotifierNetworkError,
-          base::Bind(&NetworkStateNotifier::ShowNetworkSettings,
-                     weak_ptr_factory_.GetWeakPtr(), cellular->guid())));
+                                     base::UTF8ToUTF16((cellular->name()))),
+          base::string16() /* display_source */, GURL(),
+          message_center::NotifierId(
+              message_center::NotifierId::SYSTEM_COMPONENT,
+              kNotifierNetworkError),
+          {},
+          new message_center::HandleNotificationClickDelegate(
+              base::Bind(&NetworkStateNotifier::ShowNetworkSettings,
+                         weak_ptr_factory_.GetWeakPtr(), cellular->guid())),
+          ash::kNotificationMobileDataOffIcon,
+          message_center::SystemNotificationWarningLevel::CRITICAL_WARNING);
+  notification->set_priority(message_center::SYSTEM_PRIORITY);
+  SystemNotificationHelper::GetInstance()->Display(*notification);
 }
 
 void NetworkStateNotifier::RemoveConnectNotification() {
@@ -347,6 +362,7 @@ void NetworkStateNotifier::ConnectErrorPropertiesSucceeded(
   shill_properties.GetStringWithoutPathExpansion(shill::kStateProperty, &state);
   if (NetworkState::StateIsConnected(state) ||
       NetworkState::StateIsConnecting(state)) {
+    NET_LOG(EVENT) << "Skipping connect error notification. State: " << state;
     // Network is no longer in an error state. This can happen if an
     // unexpected idle state transition occurs, see http://crbug.com/333955.
     return;

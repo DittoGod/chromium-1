@@ -15,8 +15,8 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/image_decoder.h"
 #include "content/public/browser/browser_thread.h"
@@ -44,8 +44,7 @@ std::unique_ptr<std::string> ReadOnFileThread(const base::FilePath& path) {
 
   result.reset(new std::string);
   result->resize(file_info.size);
-  if (file.Read(0, base::string_as_array(result.get()), file_info.size) !=
-      file_info.size) {
+  if (file.Read(0, base::data(*result), file_info.size) != file_info.size) {
     result.reset();
   }
 

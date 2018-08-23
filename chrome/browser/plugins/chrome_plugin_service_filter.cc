@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -39,10 +38,11 @@ class ProfileContentSettingObserver : public content_settings::Observer {
   explicit ProfileContentSettingObserver(Profile* profile)
       : profile_(profile) {}
   ~ProfileContentSettingObserver() override {}
-  void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
-                               const ContentSettingsPattern& secondary_pattern,
-                               ContentSettingsType content_type,
-                               std::string resource_identifier) override {
+  void OnContentSettingChanged(
+      const ContentSettingsPattern& primary_pattern,
+      const ContentSettingsPattern& secondary_pattern,
+      ContentSettingsType content_type,
+      const std::string& resource_identifier) override {
     if (content_type != CONTENT_SETTINGS_TYPE_PLUGINS)
       return;
 
@@ -104,11 +104,6 @@ ChromePluginServiceFilter::ContextInfo::~ContextInfo() {
   host_content_settings_map->RemoveObserver(&observer);
 }
 
-ChromePluginServiceFilter::OverriddenPlugin::OverriddenPlugin()
-    : render_frame_id(MSG_ROUTING_NONE) {}
-
-ChromePluginServiceFilter::OverriddenPlugin::~OverriddenPlugin() {}
-
 ChromePluginServiceFilter::ProcessDetails::ProcessDetails() {}
 
 ChromePluginServiceFilter::ProcessDetails::ProcessDetails(
@@ -127,7 +122,7 @@ void ChromePluginServiceFilter::RegisterResourceContext(Profile* profile,
                                                         const void* context) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::AutoLock lock(lock_);
-  resource_context_map_[context] = base::MakeUnique<ContextInfo>(
+  resource_context_map_[context] = std::make_unique<ContextInfo>(
       PluginPrefs::GetForProfile(profile),
       HostContentSettingsMapFactory::GetForProfile(profile),
       FlashTemporaryPermissionTracker::Get(profile), profile);
@@ -142,15 +137,10 @@ void ChromePluginServiceFilter::UnregisterResourceContext(
 void ChromePluginServiceFilter::OverridePluginForFrame(
     int render_process_id,
     int render_frame_id,
-    const GURL& url,
     const content::WebPluginInfo& plugin) {
   base::AutoLock auto_lock(lock_);
   ProcessDetails* details = GetOrRegisterProcess(render_process_id);
-  OverriddenPlugin overridden_plugin;
-  overridden_plugin.render_frame_id = render_frame_id;
-  overridden_plugin.url = url;
-  overridden_plugin.plugin = plugin;
-  details->overridden_plugins.push_back(overridden_plugin);
+  details->overridden_plugins.push_back({render_frame_id, plugin});
 }
 
 void ChromePluginServiceFilter::AuthorizePlugin(
@@ -186,9 +176,7 @@ bool ChromePluginServiceFilter::IsPluginAvailable(
   // Check whether the plugin is overridden.
   if (details) {
     for (const auto& plugin_override : details->overridden_plugins) {
-      if (plugin_override.render_frame_id == render_frame_id &&
-          (plugin_override.url.is_empty() ||
-           plugin_override.url == plugin_content_url)) {
+      if (plugin_override.render_frame_id == render_frame_id) {
         bool use = plugin_override.plugin.path == plugin->path;
         if (use)
           *plugin = plugin_override.plugin;

@@ -14,8 +14,6 @@
 #include "base/cancelable_callback.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -27,19 +25,18 @@
 #include "cc/raster/synchronous_task_graph_runner.h"
 #include "cc/raster/zero_copy_raster_buffer_provider.h"
 #include "cc/resources/resource_pool.h"
-#include "cc/resources/resource_provider.h"
+#include "cc/test/fake_layer_tree_frame_sink.h"
 #include "cc/test/fake_raster_source.h"
-#include "cc/test/fake_resource_provider.h"
-#include "cc/test/test_context_provider.h"
-#include "cc/test/test_shared_bitmap_manager.h"
-#include "cc/test/test_web_graphics_context_3d.h"
 #include "cc/tiles/tile_task_manager.h"
+#include "components/viz/client/client_resource_provider.h"
 #include "components/viz/common/resources/platform_color.h"
+#include "components/viz/test/test_context_provider.h"
 #include "components/viz/test/test_gpu_memory_buffer_manager.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/axis_transform2d.h"
+#include "url/gurl.h"
 
 namespace cc {
 namespace {
@@ -80,7 +77,7 @@ class TestRasterTaskImpl : public TileTask {
     uint64_t new_content_id = 0;
     raster_buffer_->Playback(raster_source_.get(), gfx::Rect(1, 1),
                              gfx::Rect(1, 1), new_content_id,
-                             gfx::AxisTransform2d(), settings);
+                             gfx::AxisTransform2d(), settings, url_);
   }
 
   // Overridden from TileTask:
@@ -97,6 +94,7 @@ class TestRasterTaskImpl : public TileTask {
   unsigned id_;
   std::unique_ptr<RasterBuffer> raster_buffer_;
   scoped_refptr<RasterSource> raster_source_;
+  GURL url_;
 
   DISALLOW_COPY_AND_ASSIGN(TestRasterTaskImpl);
 };
@@ -158,46 +156,35 @@ class RasterBufferProviderTest
         Create3dResourceProvider();
         raster_buffer_provider_ =
             std::make_unique<ZeroCopyRasterBufferProvider>(
-                resource_provider_.get(), &gpu_memory_buffer_manager_,
-                context_provider_.get(),
-                viz::PlatformColor::BestTextureFormat());
-        pool_ = std::make_unique<ResourcePool>(
-            resource_provider_.get(), base::ThreadTaskRunnerHandle::Get(),
-            base::TimeDelta(), ResourcePool::Mode::kGpu, true);
+                &gpu_memory_buffer_manager_, context_provider_.get(),
+                viz::RGBA_8888);
         break;
       case RASTER_BUFFER_PROVIDER_TYPE_ONE_COPY:
         Create3dResourceProvider();
         raster_buffer_provider_ = std::make_unique<OneCopyRasterBufferProvider>(
             base::ThreadTaskRunnerHandle::Get().get(), context_provider_.get(),
-            worker_context_provider_.get(), resource_provider_.get(),
+            worker_context_provider_.get(), &gpu_memory_buffer_manager_,
             kMaxBytesPerCopyOperation, false, false, kMaxStagingBuffers,
-            viz::PlatformColor::BestTextureFormat());
-        pool_ = std::make_unique<ResourcePool>(
-            resource_provider_.get(), base::ThreadTaskRunnerHandle::Get(),
-            base::TimeDelta(), ResourcePool::Mode::kGpu, true);
+            viz::RGBA_8888);
         break;
       case RASTER_BUFFER_PROVIDER_TYPE_GPU:
         Create3dResourceProvider();
         raster_buffer_provider_ = std::make_unique<GpuRasterBufferProvider>(
-            context_provider_.get(), worker_context_provider_.get(),
-            resource_provider_.get(), false, false, 0,
-            viz::PlatformColor::BestTextureFormat(), false);
-        pool_ = std::make_unique<ResourcePool>(
-            resource_provider_.get(), base::ThreadTaskRunnerHandle::Get(),
-            base::TimeDelta(), ResourcePool::Mode::kGpu, true);
+            context_provider_.get(), worker_context_provider_.get(), false, 0,
+            viz::RGBA_8888, gfx::Size(), true, false);
         break;
       case RASTER_BUFFER_PROVIDER_TYPE_BITMAP:
         CreateSoftwareResourceProvider();
         raster_buffer_provider_ = std::make_unique<BitmapRasterBufferProvider>(
-            resource_provider_.get(), &shared_bitmap_manager_);
-        pool_ = std::make_unique<ResourcePool>(
-            resource_provider_.get(), base::ThreadTaskRunnerHandle::Get(),
-            base::TimeDelta(), ResourcePool::Mode::kSoftware, true);
+            layer_tree_frame_sink_.get());
         break;
     }
 
     DCHECK(raster_buffer_provider_);
 
+    pool_ = std::make_unique<ResourcePool>(
+        resource_provider_.get(), context_provider_.get(),
+        base::ThreadTaskRunnerHandle::Get(), base::TimeDelta(), true);
     tile_task_manager_ = TileTaskManagerImpl::Create(&task_graph_runner_);
   }
 
@@ -234,7 +221,6 @@ class RasterBufferProviderTest
                                 0 /* dependencies */);
     }
 
-    raster_buffer_provider_->OrderingBarrier();
     tile_task_manager_->ScheduleTasks(&graph_);
   }
 
@@ -267,6 +253,15 @@ class RasterBufferProviderTest
     resources_.push_back(std::move(resource));
   }
 
+  void AppendTaskWithResource(unsigned id,
+                              const ResourcePool::InUsePoolResource* resource) {
+    std::unique_ptr<RasterBuffer> raster_buffer =
+        raster_buffer_provider_->AcquireBufferForRaster(*resource, 0, 0);
+    TileTask::Vector empty;
+    tasks_.push_back(
+        new TestRasterTaskImpl(this, id, std::move(raster_buffer), &empty));
+  }
+
   const std::vector<RasterTaskResult>& completed_tasks() const {
     return completed_tasks_;
   }
@@ -297,19 +292,18 @@ class RasterBufferProviderTest
 
  private:
   void Create3dResourceProvider() {
-    context_provider_ = TestContextProvider::Create();
+    auto gl_owned = std::make_unique<viz::TestGLES2Interface>();
+    gl_owned->set_support_sync_query(true);
+    context_provider_ = viz::TestContextProvider::Create(std::move(gl_owned));
     context_provider_->BindToCurrentThread();
-    worker_context_provider_ = TestContextProvider::CreateWorker();
-    TestWebGraphicsContext3D* context3d = context_provider_->TestContext3d();
-    context3d->set_support_sync_query(true);
-    resource_provider_ = FakeResourceProvider::CreateLayerTreeResourceProvider(
-        context_provider_.get(), &shared_bitmap_manager_,
-        &gpu_memory_buffer_manager_);
+    worker_context_provider_ = viz::TestContextProvider::CreateWorker();
+    layer_tree_frame_sink_ = FakeLayerTreeFrameSink::Create3d();
+    resource_provider_ = std::make_unique<viz::ClientResourceProvider>(true);
   }
 
   void CreateSoftwareResourceProvider() {
-    resource_provider_ = FakeResourceProvider::CreateLayerTreeResourceProvider(
-        nullptr, &shared_bitmap_manager_, &gpu_memory_buffer_manager_);
+    layer_tree_frame_sink_ = FakeLayerTreeFrameSink::CreateSoftware();
+    resource_provider_ = std::make_unique<viz::ClientResourceProvider>(true);
   }
 
   void OnTimeout() {
@@ -318,14 +312,14 @@ class RasterBufferProviderTest
   }
 
  protected:
-  scoped_refptr<TestContextProvider> context_provider_;
-  scoped_refptr<TestContextProvider> worker_context_provider_;
+  scoped_refptr<viz::TestContextProvider> context_provider_;
+  scoped_refptr<viz::TestContextProvider> worker_context_provider_;
   std::unique_ptr<ResourcePool> pool_;
-  std::unique_ptr<LayerTreeResourceProvider> resource_provider_;
+  std::unique_ptr<FakeLayerTreeFrameSink> layer_tree_frame_sink_;
+  std::unique_ptr<viz::ClientResourceProvider> resource_provider_;
   std::unique_ptr<TileTaskManager> tile_task_manager_;
   std::unique_ptr<RasterBufferProvider> raster_buffer_provider_;
   viz::TestGpuMemoryBufferManager gpu_memory_buffer_manager_;
-  TestSharedBitmapManager shared_bitmap_manager_;
   SynchronousTaskGraphRunner task_graph_runner_;
   base::CancelableClosure timeout_;
   UniqueNotifier all_tile_tasks_finished_;
@@ -353,8 +347,8 @@ TEST_P(RasterBufferProviderTest, FailedMapResource) {
   if (GetParam() == RASTER_BUFFER_PROVIDER_TYPE_BITMAP)
     return;
 
-  TestWebGraphicsContext3D* context3d = context_provider_->TestContext3d();
-  context3d->set_times_map_buffer_chromium_succeeds(0);
+  viz::TestGLES2Interface* gl = context_provider_->TestContextGL();
+  gl->set_times_map_buffer_chromium_succeeds(0);
   AppendTask(0u);
   ScheduleTasks();
 
@@ -439,18 +433,58 @@ TEST_P(RasterBufferProviderTest, ReadyToDrawCallbackNoDuplicate) {
     array.push_back(&resource);
 
   uint64_t callback_id = raster_buffer_provider_->SetReadyToDrawCallback(
-      array, base::Bind([]() {}), 0);
+      array, base::DoNothing(), 0);
 
   // Calling SetReadyToDrawCallback a second time for the same resources
   // should return the same callback ID.
   uint64_t callback_id_2 = raster_buffer_provider_->SetReadyToDrawCallback(
-      array, base::Bind([]() {}), 0);
+      array, base::DoNothing(), 0);
 
   EXPECT_EQ(callback_id, callback_id_2);
 
   if (GetParam() == RASTER_BUFFER_PROVIDER_TYPE_GPU ||
       GetParam() == RASTER_BUFFER_PROVIDER_TYPE_ONE_COPY)
     EXPECT_TRUE(callback_id);
+}
+
+TEST_P(RasterBufferProviderTest, WaitOnSyncTokenAfterReschedulingTask) {
+  if (GetParam() != RASTER_BUFFER_PROVIDER_TYPE_GPU &&
+      GetParam() != RASTER_BUFFER_PROVIDER_TYPE_ONE_COPY)
+    return;
+
+  base::Lock lock;
+
+  // Schedule a task that is prevented from completing with a lock.
+  lock.Acquire();
+  AppendBlockingTask(0u, &lock);
+  ScheduleTasks();
+
+  EXPECT_EQ(resources_.size(), 1u);
+  const ResourcePool::InUsePoolResource* resource = &resources_[0];
+
+  // Schedule another task to replace the still-pending task using the same
+  // resource.
+  RasterTaskVector tasks;
+  tasks.swap(tasks_);
+  AppendTaskWithResource(1u, resource);
+  ScheduleTasks();
+
+  // The first task is canceled, but the second task uses the same resource, and
+  // waits on the compositor sync token that was left by the first task.
+  RunMessageLoopUntilAllTasksHaveCompleted();
+
+  {
+    viz::ContextProvider::ScopedContextLock context_lock(
+        worker_context_provider_.get());
+    viz::TestGLES2Interface* gl = worker_context_provider_->TestContextGL();
+    EXPECT_TRUE(gl->last_waited_sync_token().HasData());
+  }
+
+  lock.Release();
+
+  ASSERT_EQ(completed_tasks().size(), 2u);
+  EXPECT_TRUE(completed_tasks()[0].canceled);
+  EXPECT_FALSE(completed_tasks()[1].canceled);
 }
 
 INSTANTIATE_TEST_CASE_P(

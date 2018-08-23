@@ -18,7 +18,7 @@
 #include "components/payments/core/payments_profile_comparator.h"
 #include "content/public/browser/payment_app_provider.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/platform/modules/payments/payment_request.mojom.h"
 
 namespace autofill {
 class AutofillProfile;
@@ -182,6 +182,13 @@ class PaymentRequestState : public PaymentResponseHelper::Delegate,
     return get_all_instruments_finished_;
   }
 
+  // Returns true after is_get_all_instruments_finished() is true and supported
+  // payment method are found. Should not be called before
+  // is_get_all_instruments_finished() is true.
+  bool are_requested_methods_supported() const {
+    return are_requested_methods_supported_;
+  }
+
   const std::string& GetApplicationLocale();
   autofill::PersonalDataManager* GetPersonalDataManager();
   autofill::RegionDataLoader* GetRegionDataLoader();
@@ -270,6 +277,7 @@ class PaymentRequestState : public PaymentResponseHelper::Delegate,
 
   StatusCallback can_make_payment_callback_;
   StatusCallback are_requested_methods_supported_callback_;
+  bool are_requested_methods_supported_;
 
   autofill::AutofillProfile* selected_shipping_profile_;
   autofill::AutofillProfile* selected_shipping_option_error_profile_;
@@ -296,7 +304,7 @@ class PaymentRequestState : public PaymentResponseHelper::Delegate,
 
   PaymentsProfileComparator profile_comparator_;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   base::WeakPtrFactory<PaymentRequestState> weak_ptr_factory_;
 

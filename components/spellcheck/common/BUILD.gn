@@ -21,7 +21,7 @@ source_set("common") {
 
   public_deps = [
     ":interfaces",
-    "//components/spellcheck:build_features",
+    "//components/spellcheck:buildflags",
   ]
 
   deps = [
@@ -41,6 +41,13 @@ mojom("interfaces") {
   }
 
   public_deps = [
-    "//mojo/common:common_custom_types",
+    "//mojo/public/mojom/base",
   ]
+
+  enabled_features = []
+  if (use_browser_spellchecker) {
+    enabled_features += [ "USE_BROWSER_SPELLCHECKER" ]
+  } else {
+    enabled_features += [ "USE_RENDERER_SPELLCHECKER" ]
+  }
 }

@@ -63,8 +63,8 @@ class TestHighlighterController : public ash::mojom::HighlighterController,
     // Okay to use base::Unretained(this), as |client_| will be destroyed before
     // |this|.
     client_.set_connection_error_handler(
-        base::Bind(&TestHighlighterController::OnClientConnectionLost,
-                   base::Unretained(this)));
+        base::BindOnce(&TestHighlighterController::OnClientConnectionLost,
+                       base::Unretained(this)));
   }
 
   void ExitHighlighterMode() override {
@@ -127,6 +127,7 @@ class ArcVoiceInteractionFrameworkServiceTest : public ash::AshTestBase {
 
   void SetUp() override {
     AshTestBase::SetUp();
+    SetRunningOutsideAsh();
     // Setup test profile.
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     TestingProfile::Builder profile_builder;

@@ -16,7 +16,7 @@
 #include "base/single_thread_task_runner.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "services/device/public/cpp/generic_sensor/sensor_reading.h"
-#include "services/device/public/interfaces/sensor.mojom.h"
+#include "services/device/public/mojom/sensor.mojom.h"
 
 namespace device {
 
@@ -102,7 +102,7 @@ class PlatformSensor : public base::RefCountedThreadSafe<PlatformSensor> {
   // If platfrom sensor events are processed on a different
   // thread, notifications are forwarded to |task_runner_|.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  base::ObserverList<Client, true> clients_;
+  base::ObserverList<Client, true>::Unchecked clients_;
 
  private:
   friend class base::RefCountedThreadSafe<PlatformSensor>;

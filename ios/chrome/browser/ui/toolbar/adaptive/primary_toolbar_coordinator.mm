@@ -8,21 +8,26 @@
 
 #include <memory>
 
+#include "base/mac/foundation_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
+#import "ios/chrome/browser/ui/commands/command_dispatcher.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_controller.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_controller_factory.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_ui_updater.h"
 #import "ios/chrome/browser/ui/location_bar/location_bar_coordinator.h"
+#import "ios/chrome/browser/ui/location_bar/location_bar_generic_coordinator.h"
+#import "ios/chrome/browser/ui/location_bar/location_bar_legacy_coordinator.h"
 #import "ios/chrome/browser/ui/ntp/ntp_util.h"
-#import "ios/chrome/browser/ui/omnibox/omnibox_popup_positioner.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_text_field_ios.h"
+#import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_positioner.h"
 #import "ios/chrome/browser/ui/orchestrator/omnibox_focus_orchestrator.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive/adaptive_toolbar_coordinator+subclassing.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive/primary_toolbar_view_controller.h"
+#import "ios/chrome/browser/ui/toolbar/adaptive/primary_toolbar_view_controller_delegate.h"
 #import "ios/chrome/browser/ui/toolbar/clean/toolbar_coordinator_delegate.h"
-#import "ios/chrome/browser/ui/toolbar/public/web_toolbar_controller_constants.h"
-#include "ios/chrome/browser/ui/toolbar/toolbar_model_ios.h"
+#import "ios/chrome/browser/ui/ui_util.h"
+#import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/url_loader.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/web/public/referrer.h"
@@ -31,7 +36,8 @@
 #error "This file requires ARC support."
 #endif
 
-@interface PrimaryToolbarCoordinator ()<OmniboxPopupPositioner> {
+@interface PrimaryToolbarCoordinator ()<OmniboxPopupPositioner,
+                                        PrimaryToolbarViewControllerDelegate> {
   // Observer that updates |toolbarViewController| for fullscreen events.
   std::unique_ptr<FullscreenControllerObserver> _fullscreenObserver;
 }
@@ -39,7 +45,8 @@
 // Redefined as PrimaryToolbarViewController.
 @property(nonatomic, strong) PrimaryToolbarViewController* viewController;
 // The coordinator for the location bar in the toolbar.
-@property(nonatomic, strong) LocationBarCoordinator* locationBarCoordinator;
+@property(nonatomic, strong) id<LocationBarGenericCoordinator>
+    locationBarCoordinator;
 // Orchestrator for the expansion animation.
 @property(nonatomic, strong) OmniboxFocusOrchestrator* orchestrator;
 
@@ -48,6 +55,7 @@
 @implementation PrimaryToolbarCoordinator
 
 @dynamic viewController;
+@synthesize commandDispatcher = _commandDispatcher;
 @synthesize delegate = _delegate;
 @synthesize locationBarCoordinator = _locationBarCoordinator;
 @synthesize orchestrator = _orchestrator;
@@ -56,15 +64,33 @@
 #pragma mark - ChromeCoordinator
 
 - (void)start {
+  DCHECK(self.commandDispatcher);
+
+  [self.commandDispatcher startDispatchingToTarget:self
+                                       forProtocol:@protocol(FakeboxFocuser)];
+
   self.viewController = [[PrimaryToolbarViewController alloc] init];
   self.viewController.buttonFactory = [self buttonFactoryWithType:PRIMARY];
   self.viewController.dispatcher = self.dispatcher;
+  self.viewController.delegate = self;
 
   self.orchestrator = [[OmniboxFocusOrchestrator alloc] init];
   self.orchestrator.toolbarAnimatee = self.viewController;
 
   [self setUpLocationBar];
   self.viewController.locationBarView = self.locationBarCoordinator.view;
+  if ([self.locationBarCoordinator
+          respondsToSelector:@selector(locationBarAnimatee)]) {
+    self.orchestrator.locationBarAnimatee =
+        [self.locationBarCoordinator locationBarAnimatee];
+  }
+
+  if ([self.locationBarCoordinator
+          respondsToSelector:@selector(editViewAnimatee)]) {
+    self.orchestrator.editViewAnimatee =
+        [self.locationBarCoordinator editViewAnimatee];
+  }
+
   [super start];
 
   _fullscreenObserver =
@@ -74,19 +100,13 @@
       ->AddObserver(_fullscreenObserver.get());
 }
 
+- (void)stop {
+  [super stop];
+  [self.commandDispatcher stopDispatchingToTarget:self];
+  [self.locationBarCoordinator stop];
+}
+
 #pragma mark - PrimaryToolbarCoordinator
-
-- (id<VoiceSearchControllerDelegate>)voiceSearchDelegate {
-  return self.locationBarCoordinator;
-}
-
-- (id<QRScannerResultLoading>)QRScannerResultLoader {
-  return self.locationBarCoordinator;
-}
-
-- (id<TabHistoryUIUpdater>)tabHistoryUIUpdater {
-  return self.viewController;
-}
 
 - (id<ActivityServicePositioner>)activityServicePositioner {
   return self.viewController;
@@ -109,36 +129,53 @@
 }
 
 - (void)transitionToLocationBarFocusedState:(BOOL)focused {
-  if (!IsSplitToolbarMode()) {
-    // No animation when the toolbar is unsplit.
+  if (self.viewController.traitCollection.verticalSizeClass ==
+      UIUserInterfaceSizeClassUnspecified) {
     return;
   }
-  [self.orchestrator transitionToStateFocused:focused animated:YES];
+
+  [self.orchestrator
+      transitionToStateOmniboxFocused:focused
+                      toolbarExpanded:focused && !IsRegularXRegularSizeClass(
+                                                     self.viewController)
+                             animated:YES];
+}
+
+#pragma mark - PrimaryToolbarViewControllerDelegate
+
+- (void)viewControllerTraitCollectionDidChange:
+    (UITraitCollection*)previousTraitCollection {
+  BOOL omniboxFocused = self.isOmniboxFirstResponder ||
+                        [self.locationBarCoordinator showingOmniboxPopup];
+  [self.orchestrator
+      transitionToStateOmniboxFocused:omniboxFocused
+                      toolbarExpanded:omniboxFocused &&
+                                      !IsRegularXRegularSizeClass(
+                                          self.viewController)
+                             animated:NO];
+}
+
+- (void)exitFullscreen {
+  FullscreenControllerFactory::GetInstance()
+      ->GetForBrowserState(self.browserState)
+      ->ResetModel();
 }
 
 #pragma mark - FakeboxFocuser
 
 - (void)focusFakebox {
-  if (IsIPadIdiom()) {
-    // On iPhone there is no visible omnibox, so there's no need to indicate
-    // interaction was initiated from the fakebox.
-    [self.locationBarCoordinator focusOmniboxFromFakebox];
-  } else {
-    [self.locationBarCoordinator focusOmnibox];
-  }
+  [self.locationBarCoordinator focusOmnibox];
 }
 
 - (void)onFakeboxBlur {
-  DCHECK(!IsIPadIdiom());
   // Hide the toolbar if the NTP is currently displayed.
   web::WebState* webState = self.webStateList->GetActiveWebState();
   if (webState && IsVisibleUrlNewTabPage(webState)) {
-    self.viewController.view.hidden = YES;
+    self.viewController.view.hidden = IsSplitToolbarMode();
   }
 }
 
 - (void)onFakeboxAnimationComplete {
-  DCHECK(!IsIPadIdiom());
   self.viewController.view.hidden = NO;
 }
 
@@ -151,14 +188,8 @@
   return self.viewController.view.superview;
 }
 
-#pragma mark - SideSwipeToolbarInteracting
-
-- (UIView*)toolbarView {
-  return self.viewController.view;
-}
-
-- (BOOL)canBeginToolbarSwipe {
-  return ![self isOmniboxFirstResponder] && ![self showingOmniboxPopup];
+- (UIViewController*)popupParentViewController {
+  return self.viewController.parentViewController;
 }
 
 #pragma mark - Protected override
@@ -186,9 +217,17 @@
 
 // Sets the location bar up.
 - (void)setUpLocationBar {
-  self.locationBarCoordinator = [[LocationBarCoordinator alloc] init];
+  if (IsRefreshLocationBarEnabled()) {
+    self.locationBarCoordinator = [[LocationBarCoordinator alloc] init];
+  } else {
+    self.locationBarCoordinator = [[LocationBarLegacyCoordinator alloc] init];
+  }
+  DCHECK(self.locationBarCoordinator);
+
   self.locationBarCoordinator.browserState = self.browserState;
-  self.locationBarCoordinator.dispatcher = self.dispatcher;
+  self.locationBarCoordinator.dispatcher =
+      base::mac::ObjCCastStrict<CommandDispatcher>(self.dispatcher);
+  self.locationBarCoordinator.commandDispatcher = self.commandDispatcher;
   self.locationBarCoordinator.URLLoader = self.URLLoader;
   self.locationBarCoordinator.delegate = self.delegate;
   self.locationBarCoordinator.webStateList = self.webStateList;

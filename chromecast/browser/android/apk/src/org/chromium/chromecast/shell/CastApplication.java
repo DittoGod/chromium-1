@@ -4,11 +4,10 @@
 
 package org.chromium.chromecast.shell;
 
+import android.app.Application;
 import android.content.Context;
 
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.BaseChromiumApplication;
-import org.chromium.base.CommandLineInitUtil;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.PathUtils;
 
@@ -20,11 +19,8 @@ import org.chromium.base.PathUtils;
  * processes don't need most of the full "setup" performed in CastBrowserHelper.java, but they do
  * require a few basic pieces (found here).
  */
-public class CastApplication extends BaseChromiumApplication {
-    private static final String TAG = "CastApplication";
-
+public class CastApplication extends Application {
     private static final String PRIVATE_DATA_DIRECTORY_SUFFIX = "cast_shell";
-    private static final String COMMAND_LINE_FILE = "castshell-command-line";
 
     @Override
     protected void attachBaseContext(Context base) {
@@ -37,9 +33,5 @@ public class CastApplication extends BaseChromiumApplication {
         super.onCreate();
         PathUtils.setPrivateDataDirectorySuffix(PRIVATE_DATA_DIRECTORY_SUFFIX);
         ApplicationStatus.initialize(this);
-    }
-
-    public void initCommandLine() {
-        CommandLineInitUtil.initCommandLine(COMMAND_LINE_FILE);
     }
 }

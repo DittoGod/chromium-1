@@ -177,7 +177,7 @@ PasswordsPrivateImportPasswordsFunction::Run() {
   PasswordsPrivateDelegate* delegate =
       PasswordsPrivateDelegateFactory::GetForBrowserContext(browser_context(),
                                                             true /* create */);
-  delegate->ImportPasswords(GetAssociatedWebContents());
+  delegate->ImportPasswords(GetSenderWebContents());
   return RespondNow(NoArguments());
 }
 
@@ -196,7 +196,7 @@ PasswordsPrivateExportPasswordsFunction::Run() {
       base::BindOnce(
           &PasswordsPrivateExportPasswordsFunction::ExportRequestCompleted,
           this),
-      GetAssociatedWebContents());
+      GetSenderWebContents());
   return RespondLater();
 }
 
@@ -206,6 +206,21 @@ void PasswordsPrivateExportPasswordsFunction::ExportRequestCompleted(
     Respond(NoArguments());
   else
     Error(error);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PasswordsPrivateCancelExportPasswordsFunction
+
+PasswordsPrivateCancelExportPasswordsFunction::
+    ~PasswordsPrivateCancelExportPasswordsFunction() {}
+
+ExtensionFunction::ResponseAction
+PasswordsPrivateCancelExportPasswordsFunction::Run() {
+  PasswordsPrivateDelegate* delegate =
+      PasswordsPrivateDelegateFactory::GetForBrowserContext(browser_context(),
+                                                            true /* create */);
+  delegate->CancelExportPasswords();
+  return RespondNow(NoArguments());
 }
 
 ////////////////////////////////////////////////////////////////////////////////

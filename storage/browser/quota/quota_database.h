@@ -18,7 +18,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "storage/browser/storage_browser_export.h"
-#include "third_party/WebKit/common/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -26,7 +26,7 @@ class QuotaDatabaseTest;
 }
 
 namespace sql {
-class Connection;
+class Database;
 class MetaTable;
 }
 
@@ -61,7 +61,7 @@ class STORAGE_EXPORT QuotaDatabase {
   explicit QuotaDatabase(const base::FilePath& path);
   ~QuotaDatabase();
 
-  void CloseConnection();
+  void CloseDatabase();
 
   // Returns whether the record could be found.
   bool GetHostQuota(const std::string& host,
@@ -161,9 +161,10 @@ class STORAGE_EXPORT QuotaDatabase {
     bool unique;
   };
 
-  typedef base::Callback<bool (const QuotaTableEntry&)> QuotaTableCallback;
-  typedef base::Callback<bool (const OriginInfoTableEntry&)>
-      OriginInfoTableCallback;
+  using QuotaTableCallback =
+      base::RepeatingCallback<bool(const QuotaTableEntry&)>;
+  using OriginInfoTableCallback =
+      base::RepeatingCallback<bool(const OriginInfoTableEntry&)>;
 
   struct QuotaTableImporter;
 
@@ -182,12 +183,14 @@ class STORAGE_EXPORT QuotaDatabase {
                                 blink::mojom::StorageType type,
                                 int64_t quota);
 
-  static bool CreateSchema(
-      sql::Connection* database,
-      sql::MetaTable* meta_table,
-      int schema_version, int compatible_version,
-      const TableSchema* tables, size_t tables_size,
-      const IndexSchema* indexes, size_t indexes_size);
+  static bool CreateSchema(sql::Database* database,
+                           sql::MetaTable* meta_table,
+                           int schema_version,
+                           int compatible_version,
+                           const TableSchema* tables,
+                           size_t tables_size,
+                           const IndexSchema* indexes,
+                           size_t indexes_size);
 
   // |callback| may return false to stop reading data.
   bool DumpQuotaTable(const QuotaTableCallback& callback);
@@ -195,7 +198,7 @@ class STORAGE_EXPORT QuotaDatabase {
 
   base::FilePath db_file_path_;
 
-  std::unique_ptr<sql::Connection> db_;
+  std::unique_ptr<sql::Database> db_;
   std::unique_ptr<sql::MetaTable> meta_table_;
   bool is_recreating_;
   bool is_disabled_;

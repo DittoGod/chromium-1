@@ -18,7 +18,6 @@ class TrayBubbleView;
 
 namespace message_center {
 class MessageCenter;
-class UiController;
 }  // namespace message_center
 
 namespace ash {
@@ -29,8 +28,7 @@ class MessageCenterView;
 class MessageCenterBubble : public views::WidgetObserver,
                             public base::SupportsWeakPtr<MessageCenterBubble> {
  public:
-  MessageCenterBubble(message_center::MessageCenter* message_center,
-                      message_center::UiController* ui_controller);
+  explicit MessageCenterBubble(message_center::MessageCenter* message_center);
   ~MessageCenterBubble() override;
 
   // Gets called when the bubble view associated with this bubble is
@@ -42,8 +40,6 @@ class MessageCenterBubble : public views::WidgetObserver,
   // if SetMaxHeight() has not been called yet.
   void SetMaxHeight(int height);
   int max_height() const { return max_height_; }
-
-  void SetSettingsVisible();
 
   // Called after the bubble view has been constructed. Creates and initializes
   // the bubble contents.
@@ -62,16 +58,12 @@ class MessageCenterBubble : public views::WidgetObserver,
   void UpdateBubbleView();
 
   message_center::MessageCenter* message_center_;
-  message_center::UiController* ui_controller_;
   views::TrayBubbleView* bubble_view_ = nullptr;
 
   // |message_center_view_| is a child view of the ContentsView, which is a
   // child view of |bubble_view_|. They're added to the view tree by calling
   // InitializeContents.
   MessageCenterView* message_center_view_ = nullptr;
-
-  // Use settings view as the initially visible content if true.
-  bool initially_settings_visible_ = false;
 
   int max_height_;
 

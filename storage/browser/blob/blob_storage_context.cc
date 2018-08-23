@@ -4,6 +4,7 @@
 
 #include "storage/browser/blob/blob_storage_context.h"
 
+#include <inttypes.h>
 #include <algorithm>
 #include <limits>
 #include <memory>
@@ -16,13 +17,15 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
+#include "base/strings/stringprintf.h"
 #include "base/task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_data_item.h"
 #include "storage/browser/blob/blob_data_snapshot.h"
@@ -37,15 +40,24 @@ using QuotaAllocationTask = BlobMemoryController::QuotaAllocationTask;
 
 BlobStorageContext::BlobStorageContext()
     : memory_controller_(base::FilePath(), scoped_refptr<base::TaskRunner>()),
-      ptr_factory_(this) {}
+      ptr_factory_(this) {
+  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
+      this, "BlobStorageContext", base::ThreadTaskRunnerHandle::Get());
+}
 
 BlobStorageContext::BlobStorageContext(
     base::FilePath storage_directory,
     scoped_refptr<base::TaskRunner> file_runner)
     : memory_controller_(std::move(storage_directory), std::move(file_runner)),
-      ptr_factory_(this) {}
+      ptr_factory_(this) {
+  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
+      this, "BlobStorageContext", base::ThreadTaskRunnerHandle::Get());
+}
 
-BlobStorageContext::~BlobStorageContext() = default;
+BlobStorageContext::~BlobStorageContext() {
+  base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
+      this);
+}
 
 std::unique_ptr<BlobDataHandle> BlobStorageContext::GetBlobDataFromUUID(
     const std::string& uuid) {
@@ -64,10 +76,56 @@ std::unique_ptr<BlobDataHandle> BlobStorageContext::GetBlobDataFromPublicURL(
   return CreateHandle(uuid, entry);
 }
 
+void BlobStorageContext::GetBlobDataFromBlobPtr(
+    blink::mojom::BlobPtr blob,
+    base::OnceCallback<void(std::unique_ptr<BlobDataHandle>)> callback) {
+  DCHECK(blob);
+  blink::mojom::Blob* raw_blob = blob.get();
+  raw_blob->GetInternalUUID(mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+      base::BindOnce(
+          [](blink::mojom::BlobPtr, base::WeakPtr<BlobStorageContext> context,
+             base::OnceCallback<void(std::unique_ptr<BlobDataHandle>)> callback,
+             const std::string& uuid) {
+            if (!context || uuid.empty()) {
+              std::move(callback).Run(nullptr);
+              return;
+            }
+            std::move(callback).Run(context->GetBlobDataFromUUID(uuid));
+          },
+          std::move(blob), AsWeakPtr(), std::move(callback)),
+      ""));
+}
+
 std::unique_ptr<BlobDataHandle> BlobStorageContext::AddFinishedBlob(
     std::unique_ptr<BlobDataBuilder> external_builder) {
   TRACE_EVENT0("Blob", "Context::AddFinishedBlob");
   return BuildBlob(std::move(external_builder), TransportAllowedCallback());
+}
+
+std::unique_ptr<BlobDataHandle> BlobStorageContext::AddFinishedBlob(
+    const std::string& uuid,
+    const std::string& content_type,
+    const std::string& content_disposition,
+    std::vector<scoped_refptr<ShareableBlobDataItem>> items) {
+  TRACE_EVENT0("Blob", "Context::AddFinishedBlobFromItems");
+  BlobEntry* entry =
+      registry_.CreateEntry(uuid, content_type, content_disposition);
+  uint64_t total_memory_size = 0;
+  for (const auto& item : items) {
+    if (item->item()->type() == BlobDataItem::Type::kBytes)
+      total_memory_size += item->item()->length();
+    DCHECK_EQ(item->state(), ShareableBlobDataItem::POPULATED_WITH_QUOTA);
+    DCHECK_NE(BlobDataItem::Type::kBytesDescription, item->item()->type());
+    DCHECK(!item->item()->IsFutureFileItem());
+  }
+
+  entry->SetSharedBlobItems(std::move(items));
+  std::unique_ptr<BlobDataHandle> handle = CreateHandle(uuid, entry);
+  UMA_HISTOGRAM_COUNTS_1M("Storage.Blob.ItemCount", entry->items().size());
+  UMA_HISTOGRAM_COUNTS_1M("Storage.Blob.TotalSize", total_memory_size / 1024);
+  entry->set_status(BlobStatus::DONE);
+  memory_controller_.NotifyMemoryItemsUsed(entry->items());
+  return handle;
 }
 
 std::unique_ptr<BlobDataHandle> BlobStorageContext::AddBrokenBlob(
@@ -102,7 +160,8 @@ void BlobStorageContext::RevokePublicBlobURL(const GURL& blob_url) {
 std::unique_ptr<BlobDataHandle> BlobStorageContext::AddFutureBlob(
     const std::string& uuid,
     const std::string& content_type,
-    const std::string& content_disposition) {
+    const std::string& content_disposition,
+    BuildAbortedCallback build_aborted_callback) {
   DCHECK(!registry_.HasEntry(uuid));
 
   BlobEntry* entry =
@@ -111,6 +170,8 @@ std::unique_ptr<BlobDataHandle> BlobStorageContext::AddFutureBlob(
   entry->set_status(BlobStatus::PENDING_CONSTRUCTION);
   entry->set_building_state(std::make_unique<BlobEntry::BuildingState>(
       false, TransportAllowedCallback(), 0));
+  entry->building_state_->build_aborted_callback =
+      std::move(build_aborted_callback);
   return CreateHandle(uuid, entry);
 }
 
@@ -237,6 +298,8 @@ std::unique_ptr<BlobDataHandle> BlobStorageContext::BuildBlobInternal(
     DCHECK(previous_building_state->copies.empty());
     std::swap(building_state->build_completion_callbacks,
               previous_building_state->build_completion_callbacks);
+    building_state->build_aborted_callback =
+        std::move(previous_building_state->build_aborted_callback);
     auto runner = base::ThreadTaskRunnerHandle::Get();
     for (auto& callback : previous_building_state->build_started_callbacks)
       runner->PostTask(FROM_HERE,
@@ -262,8 +325,8 @@ std::unique_ptr<BlobDataHandle> BlobStorageContext::BuildBlobInternal(
     base::WeakPtr<QuotaAllocationTask> pending_request =
         memory_controller_.ReserveMemoryQuota(
             std::move(pending_copy_items),
-            base::Bind(&BlobStorageContext::OnEnoughSpaceForCopies,
-                       ptr_factory_.GetWeakPtr(), content->uuid_));
+            base::BindOnce(&BlobStorageContext::OnEnoughSpaceForCopies,
+                           ptr_factory_.GetWeakPtr(), content->uuid_));
     // Building state will be null if the blob is already finished.
     if (entry->building_state_)
       entry->building_state_->copy_quota_request = std::move(pending_request);
@@ -278,16 +341,16 @@ std::unique_ptr<BlobDataHandle> BlobStorageContext::BuildBlobInternal(
         std::vector<BlobMemoryController::FileCreationInfo> empty_files;
         pending_request = memory_controller_.ReserveMemoryQuota(
             content->ReleasePendingTransportItems(),
-            base::Bind(&BlobStorageContext::OnEnoughSpaceForTransport,
-                       ptr_factory_.GetWeakPtr(), content->uuid_,
-                       base::Passed(&empty_files)));
+            base::BindOnce(&BlobStorageContext::OnEnoughSpaceForTransport,
+                           ptr_factory_.GetWeakPtr(), content->uuid_,
+                           std::move(empty_files)));
         break;
       }
       case TransportQuotaType::FILE:
         pending_request = memory_controller_.ReserveFileQuota(
             content->ReleasePendingTransportItems(),
-            base::Bind(&BlobStorageContext::OnEnoughSpaceForTransport,
-                       ptr_factory_.GetWeakPtr(), content->uuid_));
+            base::BindOnce(&BlobStorageContext::OnEnoughSpaceForTransport,
+                           ptr_factory_.GetWeakPtr(), content->uuid_));
         break;
     }
 
@@ -574,10 +637,34 @@ void BlobStorageContext::OnDependentBlobFinished(
 
 void BlobStorageContext::ClearAndFreeMemory(BlobEntry* entry) {
   if (entry->building_state_)
-    entry->building_state_->CancelRequests();
+    entry->building_state_->CancelRequestsAndAbort();
   entry->ClearItems();
   entry->ClearOffsets();
   entry->set_size(0);
+}
+
+bool BlobStorageContext::OnMemoryDump(
+    const base::trace_event::MemoryDumpArgs& args,
+    base::trace_event::ProcessMemoryDump* pmd) {
+  const char* system_allocator_name =
+      base::trace_event::MemoryDumpManager::GetInstance()
+          ->system_allocator_pool_name();
+
+  auto* mad = pmd->CreateAllocatorDump(
+      base::StringPrintf("site_storage/blob_storage/0x%" PRIXPTR,
+                         reinterpret_cast<uintptr_t>(this)));
+  mad->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                 base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+                 memory_controller().memory_usage());
+  mad->AddScalar("disk_usage",
+                 base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+                 memory_controller().disk_usage());
+  mad->AddScalar("blob_count",
+                 base::trace_event::MemoryAllocatorDump::kUnitsObjects,
+                 blob_count());
+  if (system_allocator_name)
+    pmd->AddSuballocation(mad->guid(), system_allocator_name);
+  return true;
 }
 
 }  // namespace storage

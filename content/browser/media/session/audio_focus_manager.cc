@@ -4,11 +4,14 @@
 
 #include "content/browser/media/session/audio_focus_manager.h"
 
-#include "base/memory/ptr_util.h"
+#include "content/browser/media/session/audio_focus_observer.h"
 #include "content/browser/media/session/media_session_impl.h"
 #include "content/public/browser/web_contents.h"
+#include "services/media_session/public/mojom/audio_focus.mojom.h"
 
 namespace content {
+
+using AudioFocusType = media_session::mojom::AudioFocusType;
 
 // static
 AudioFocusManager* AudioFocusManager::GetInstance() {
@@ -33,7 +36,7 @@ void AudioFocusManager::RequestAudioFocus(MediaSessionImpl* media_session,
   // too much. Maybe it's better to do some abstraction and refactoring to clean
   // up the relation between AudioFocusManager and MediaSessionImpl.
   // See https://crbug.com/651069
-  if (type == AudioFocusType::GainTransientMayDuck) {
+  if (type == AudioFocusType::kGainTransientMayDuck) {
     for (auto* old_session : audio_focus_stack_) {
       old_session->StartDucking();
     }
@@ -50,6 +53,10 @@ void AudioFocusManager::RequestAudioFocus(MediaSessionImpl* media_session,
 
   audio_focus_stack_.push_back(media_session);
   audio_focus_stack_.back()->StopDucking();
+
+  // Notify observers that we were gained audio focus.
+  for (AudioFocusObserver* observer : audio_focus_observers_)
+    observer->OnFocusGained(media_session, type);
 }
 
 void AudioFocusManager::AbandonAudioFocus(MediaSessionImpl* media_session) {
@@ -62,8 +69,12 @@ void AudioFocusManager::AbandonAudioFocus(MediaSessionImpl* media_session) {
   }
 
   audio_focus_stack_.pop_back();
-  if (audio_focus_stack_.empty())
+  if (audio_focus_stack_.empty()) {
+    // Notify observers that we lost audio focus.
+    for (AudioFocusObserver* observer : audio_focus_observers_)
+      observer->OnFocusLost(media_session);
     return;
+  }
 
   // Allow the top-most MediaSessionImpl having Pepper to unduck pepper even if
   // it's
@@ -83,6 +94,18 @@ void AudioFocusManager::AbandonAudioFocus(MediaSessionImpl* media_session) {
   // still
   // inactive but it will not be resumed (so it doesn't surprise the user).
   audio_focus_stack_.back()->StopDucking();
+
+  // Notify observers that we lost audio focus.
+  for (AudioFocusObserver* observer : audio_focus_observers_)
+    observer->OnFocusLost(media_session);
+}
+
+void AudioFocusManager::AddObserver(AudioFocusObserver* observer) {
+  audio_focus_observers_.push_back(observer);
+}
+
+void AudioFocusManager::RemoveObserver(AudioFocusObserver* observer) {
+  audio_focus_observers_.remove(observer);
 }
 
 AudioFocusManager::AudioFocusManager() = default;

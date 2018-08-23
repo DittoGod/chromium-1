@@ -8,6 +8,8 @@
 
 #include "ash/public/cpp/ash_switches.h"
 #include "ash/public/cpp/shelf_prefs.h"
+#include "ash/public/cpp/window_properties.h"
+#include "ash/public/cpp/window_state_type.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_util.h"
 #include "ash/session/session_controller.h"
@@ -30,7 +32,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "services/ui/public/interfaces/window_manager_constants.mojom.h"
+#include "services/ui/public/interfaces/window_tree_constants.mojom.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/test/test_windows.h"
@@ -105,10 +107,10 @@ class TabletModeWindowManagerTest : public AshTestBase {
 
   // Creates a window which also has a widget.
   aura::Window* CreateWindowWithWidget(const gfx::Rect& bounds) {
+    // Note: The widget will get deleted with the window.
     views::Widget* widget = new views::Widget();
     views::Widget::InitParams params;
     params.context = CurrentContext();
-    // Note: The widget will get deleted with the window.
     widget->Init(params);
     widget->Show();
     aura::Window* window = widget->GetNativeWindow();
@@ -549,8 +551,8 @@ std::string GetPlacementOverride(aura::Window* window) {
   gfx::Rect* bounds = window->GetProperty(kRestoreBoundsOverrideKey);
   if (bounds) {
     gfx::Rect restore_bounds = *bounds;
-    ui::WindowShowState restore_state =
-        window->GetProperty(kRestoreShowStateOverrideKey);
+    ui::WindowShowState restore_state = ToWindowShowState(
+        window->GetProperty(kRestoreWindowStateTypeOverrideKey));
     return GetPlacementString(restore_bounds, restore_state);
   }
   return std::string();
@@ -900,6 +902,58 @@ TEST_F(TabletModeWindowManagerTest, MinimizedEnterAndLeaveTabletMode) {
   EXPECT_FALSE(window_state->IsMinimized());
   window_state->Minimize();
   EXPECT_TRUE(window_state->IsMinimized());
+}
+
+// Tests that pre-minimized window show state is persistent after entering and
+// leaving tablet mode, that is not cleared in tablet mode.
+TEST_F(TabletModeWindowManagerTest, PersistPreMinimizedShowState) {
+  gfx::Rect rect(10, 10, 100, 100);
+  std::unique_ptr<aura::Window> window(
+      CreateWindow(aura::client::WINDOW_TYPE_NORMAL, rect));
+  wm::WindowState* window_state = wm::GetWindowState(window.get());
+  window_state->Maximize();
+  window_state->Minimize();
+  EXPECT_EQ(ui::SHOW_STATE_MAXIMIZED,
+            window->GetProperty(aura::client::kPreMinimizedShowStateKey));
+
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
+  window_state->Unminimize();
+  // Check that pre-minimized window show state is not cleared due to
+  // unminimizing in tablet mode.
+  EXPECT_EQ(ui::SHOW_STATE_MAXIMIZED,
+            window->GetProperty(aura::client::kPreMinimizedShowStateKey));
+  window_state->Minimize();
+  EXPECT_EQ(ui::SHOW_STATE_MAXIMIZED,
+            window->GetProperty(aura::client::kPreMinimizedShowStateKey));
+
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(false);
+  window_state->Unminimize();
+  EXPECT_TRUE(window_state->IsMaximized());
+}
+
+// Tests unminimizing in tablet mode and then existing tablet mode should have
+// pre-minimized window show state.
+TEST_F(TabletModeWindowManagerTest, UnminimizeInTabletMode) {
+  // Tests restoring to maximized show state.
+  gfx::Rect rect(10, 10, 100, 100);
+  std::unique_ptr<aura::Window> window(
+      CreateWindow(aura::client::WINDOW_TYPE_NORMAL, rect));
+  wm::WindowState* window_state = wm::GetWindowState(window.get());
+  window_state->Maximize();
+  window_state->Minimize();
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
+  window_state->Unminimize();
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(false);
+  EXPECT_TRUE(window_state->IsMaximized());
+
+  // Tests restoring to normal show state.
+  window_state->Restore();
+  EXPECT_EQ(gfx::Rect(10, 10, 100, 100), window->GetBoundsInScreen());
+  window_state->Minimize();
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
+  window_state->Unminimize();
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(false);
+  EXPECT_EQ(gfx::Rect(10, 10, 100, 100), window->GetBoundsInScreen());
 }
 
 // Check that a full screen window remains full screen upon entering maximize
@@ -1630,6 +1684,7 @@ class TestObserver : public wm::WindowStateObserver {
   void OnPostWindowStateTypeChange(wm::WindowState* window_state,
                                    mojom::WindowStateType old_type) override {
     post_count_++;
+    post_layer_visibility_ = window_state->window()->layer()->visible();
     EXPECT_EQ(last_old_state_, old_type);
   }
 
@@ -1645,6 +1700,12 @@ class TestObserver : public wm::WindowStateObserver {
     return r;
   }
 
+  bool GetPostLayerVisibilityAndReset() {
+    bool r = post_layer_visibility_;
+    post_layer_visibility_ = false;
+    return r;
+  }
+
   mojom::WindowStateType GetLastOldStateAndReset() {
     mojom::WindowStateType r = last_old_state_;
     last_old_state_ = mojom::WindowStateType::DEFAULT;
@@ -1654,6 +1715,7 @@ class TestObserver : public wm::WindowStateObserver {
  private:
   int pre_count_ = 0;
   int post_count_ = 0;
+  bool post_layer_visibility_ = false;
   mojom::WindowStateType last_old_state_ = mojom::WindowStateType::DEFAULT;
 
   DISALLOW_COPY_AND_ASSIGN(TestObserver);
@@ -1709,6 +1771,7 @@ TEST_F(TabletModeWindowManagerTest, StateTypeChange) {
   EXPECT_EQ(1, observer.GetPostCountAndReset());
   EXPECT_EQ(mojom::WindowStateType::MINIMIZED,
             observer.GetLastOldStateAndReset());
+  EXPECT_EQ(true, observer.GetPostLayerVisibilityAndReset());
 
   window_state->RemoveObserver(&observer);
 
@@ -1728,20 +1791,45 @@ TEST_F(TabletModeWindowManagerTest, SetPropertyOnUnmanagedWindow) {
   window->Show();
 }
 
-// Test that there is no window resizer in tablet mode.
-TEST_F(TabletModeWindowManagerTest, NoWindowResizerInTabletMode) {
-  gfx::Rect rect(10, 10, 200, 200);
+// Test that the minimized window bounds doesn't change until it's unminimized.
+TEST_F(TabletModeWindowManagerTest, DontChangeBoundsForMinimizedWindow) {
+  gfx::Rect rect(10, 10, 200, 50);
   std::unique_ptr<aura::Window> window(
       CreateWindow(aura::client::WINDOW_TYPE_NORMAL, rect));
-  std::unique_ptr<WindowResizer> resizer(CreateWindowResizer(
-      window.get(), gfx::Point(), HTCAPTION, ::wm::WINDOW_MOVE_SOURCE_MOUSE));
-  EXPECT_TRUE(resizer.get());
-  resizer.reset();
+  wm::WindowState* window_state = wm::GetWindowState(window.get());
+  window_state->Minimize();
+  EXPECT_TRUE(window_state->IsMinimized());
 
-  CreateTabletModeWindowManager();
-  resizer = CreateWindowResizer(window.get(), gfx::Point(), HTCAPTION,
-                                ::wm::WINDOW_MOVE_SOURCE_MOUSE);
-  EXPECT_FALSE(resizer.get());
+  TabletModeWindowManager* manager = CreateTabletModeWindowManager();
+  ASSERT_TRUE(manager);
+  EXPECT_EQ(1, manager->GetNumberOfManagedWindows());
+  EXPECT_TRUE(window_state->IsMinimized());
+  EXPECT_EQ(window->bounds(), rect);
+
+  WindowSelectorController* window_selector_controller =
+      Shell::Get()->window_selector_controller();
+  window_selector_controller->ToggleOverview();
+  EXPECT_EQ(window->bounds(), rect);
+
+  // Exit overview mode will update all windows' bounds. However, if the window
+  // is minimized, the bounds will not be updated.
+  window_selector_controller->ToggleOverview();
+  EXPECT_EQ(window->bounds(), rect);
+}
+
+// Test that if a window is currently in tab-dragging process, its window bounds
+// should not updated.
+TEST_F(TabletModeWindowManagerTest, DontChangeBoundsForTabDraggingWindow) {
+  gfx::Rect rect(0, 0, 200, 200);
+  std::unique_ptr<aura::Window> window(
+      CreateWindow(aura::client::WINDOW_TYPE_NORMAL, rect));
+  // Now put the window in tab-dragging process.
+  window->SetProperty(ash::kIsDraggingTabsKey, true);
+
+  TabletModeWindowManager* manager = CreateTabletModeWindowManager();
+  ASSERT_TRUE(manager);
+  EXPECT_EQ(1, manager->GetNumberOfManagedWindows());
+  EXPECT_EQ(window->bounds(), rect);
 }
 
 }  // namespace ash

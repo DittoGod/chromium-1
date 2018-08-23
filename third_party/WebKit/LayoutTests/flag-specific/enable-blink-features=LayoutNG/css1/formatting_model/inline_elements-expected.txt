@@ -1,4 +1,4 @@
-layer at (0,0) size 800x600 clip at (0,0) size 785x600 scrollHeight 790
+layer at (0,0) size 800x600 clip at (0,0) size 785x600 scrollHeight 791
   LayoutView at (0,0) size 800x600
 layer at (0,0) size 785x790 backgroundClip at (0,0) size 785x600 clip at (0,0) size 785x600
   LayoutNGBlockFlow {HTML} at (0,0) size 785x790.33
@@ -7,7 +7,7 @@ layer at (0,0) size 785x790 backgroundClip at (0,0) size 785x600 clip at (0,0) s
         LayoutText {#text} at (0,0) size 355x19
           text run at (0,0) width 355: "The style declarations which apply to the text below are:"
       LayoutNGBlockFlow {PRE} at (0,36) size 769x112
-        LayoutText {#text} at (0,0) size 560x96
+        LayoutText {#text} at (0,0) size 560x112
           text run at (0,0) width 208: "P.one {line-height: 200%;}"
           text run at (208,0) width 0: " "
           text run at (0,16) width 552: "SPAN.two {border-style: solid; border-width: 10px; border-color: red;"
@@ -24,12 +24,12 @@ layer at (0,0) size 785x790 backgroundClip at (0,0) size 785x600 clip at (0,0) s
       LayoutNGBlockFlow {P} at (0,179) size 769x192
         LayoutText {#text} at (0,6) size 187x19
           text run at (0,6) width 187: "This is a paragraph that has a "
-        LayoutInline {SPAN} at (0,0) size 989x180 [border: (10px solid #FF0000)]
+        LayoutInline {SPAN} at (0,0) size 762x173 [border: (10px solid #FF0000)]
           LayoutText {#text} at (239,6) size 762x147
             text run at (239,6) width 523: "very long span in it, and the span has a 10px red border separated from the span by"
             text run at (0,38) width 727: "2pt, and a margin of 30pt. The padding and border should be present on all sides of the span (although vertical lines"
             text run at (0,70) width 746: "should appear only at the beginning and the end of the whole span, not on each line). The padding, border, and margin"
-            text run at (0,102) width 754: "should all be noticeable at the beginning and end of the span. However, the line height should not be changed by any of"
+            text run at (0,102) width 753: "should all be noticeable at the beginning and end of the span. However, the line height should not be changed by any of"
             text run at (0,134) width 585: "them, so the margin should be unnoticeable and the border should overlap text on other lines."
         LayoutText {#text} at (637,134) size 762x51
           text run at (637,134) width 125: " The line spacing in"
@@ -37,7 +37,7 @@ layer at (0,0) size 785x790 backgroundClip at (0,0) size 785x600 clip at (0,0) s
       LayoutNGBlockFlow {P} at (0,387) size 769x64
         LayoutText {#text} at (0,0) size 159x15
           text run at (0,0) width 159: "This is a paragraph that has a "
-        LayoutInline {SPAN} at (0,0) size 885x108 [border: (12px solid #FF0000)]
+        LayoutInline {SPAN} at (0,0) size 764x93 [border: (12px solid #FF0000)]
           LayoutText {#text} at (173,0) size 764x63
             text run at (173,0) width 553: "very long span in it, and the span has a 12px red border separated from the span by 2pt of padding (the"
             text run at (0,16) width 764: "difference between the line-height and the font-size), which should overlap with the lines of text above and below the span, since the padding"
@@ -60,12 +60,12 @@ layer at (0,0) size 785x790 backgroundClip at (0,0) size 785x600 clip at (0,0) s
               LayoutNGBlockFlow {P} at (4,4) size 747x192
                 LayoutText {#text} at (0,6) size 187x19
                   text run at (0,6) width 187: "This is a paragraph that has a "
-                LayoutInline {SPAN} at (0,0) size 969x180 [border: (10px solid #FF0000)]
+                LayoutInline {SPAN} at (0,0) size 747x173 [border: (10px solid #FF0000)]
                   LayoutText {#text} at (239,6) size 747x147
                     text run at (239,6) width 503: "very long span in it, and the span has a 10px red border separated from the span"
                     text run at (0,38) width 747: "by 2pt, and a margin of 30pt. The padding and border should be present on all sides of the span (although vertical lines"
                     text run at (0,70) width 746: "should appear only at the beginning and the end of the whole span, not on each line). The padding, border, and margin"
-                    text run at (0,102) width 737: "should all be noticeable at the beginning and end of the span. However, the line height should not be changed by any"
+                    text run at (0,102) width 736: "should all be noticeable at the beginning and end of the span. However, the line height should not be changed by any"
                     text run at (0,134) width 602: "of them, so the margin should be unnoticeable and the border should overlap text on other lines."
                 LayoutText {#text} at (654,134) size 711x51
                   text run at (654,134) width 57: " The line"
@@ -73,7 +73,7 @@ layer at (0,0) size 785x790 backgroundClip at (0,0) size 785x600 clip at (0,0) s
               LayoutNGBlockFlow {P} at (4,212) size 747x64
                 LayoutText {#text} at (0,0) size 159x15
                   text run at (0,0) width 159: "This is a paragraph that has a "
-                LayoutInline {SPAN} at (0,0) size 885x108 [border: (12px solid #FF0000)]
+                LayoutInline {SPAN} at (0,0) size 726x93 [border: (12px solid #FF0000)]
                   LayoutText {#text} at (173,0) size 726x63
                     text run at (173,0) width 553: "very long span in it, and the span has a 12px red border separated from the span by 2pt of padding (the"
                     text run at (0,16) width 716: "difference between the line-height and the font-size), which should overlap with the lines of text above and below the span, since the"

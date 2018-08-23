@@ -20,8 +20,7 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #endif
 
 namespace extensions {
@@ -61,8 +60,7 @@ class ExtensionWebUITest : public testing::Test {
   content::TestBrowserThreadBundle test_browser_thread_bundle_;
 
 #if defined OS_CHROMEOS
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
   chromeos::ScopedTestUserManager test_user_manager_;
 #endif
 };
@@ -75,6 +73,7 @@ TEST_F(ExtensionWebUITest, ExtensionURLOverride) {
   DictionaryBuilder manifest;
   manifest.Set(manifest_keys::kName, "ext1")
       .Set(manifest_keys::kVersion, "0.1")
+      .Set(manifest_keys::kManifestVersion, 2)
       .Set(std::string(manifest_keys::kChromeURLOverrides),
            DictionaryBuilder().Set("bookmarks", kOverrideResource).Build());
   scoped_refptr<Extension> ext_unpacked(
@@ -110,6 +109,7 @@ TEST_F(ExtensionWebUITest, ExtensionURLOverride) {
   DictionaryBuilder manifest2;
   manifest2.Set(manifest_keys::kName, "ext2")
       .Set(manifest_keys::kVersion, "0.1")
+      .Set(manifest_keys::kManifestVersion, 2)
       .Set(std::string(manifest_keys::kChromeURLOverrides),
            DictionaryBuilder().Set("bookmarks", kOverrideResource2).Build());
   scoped_refptr<Extension> ext_component(
@@ -160,14 +160,9 @@ TEST_F(ExtensionWebUITest, ExtensionURLOverride) {
 TEST_F(ExtensionWebUITest, TestRemovingDuplicateEntriesForHosts) {
   // Test that duplicate entries for a single extension are removed. This could
   // happen because of https://crbug.com/782959.
-  std::unique_ptr<base::DictionaryValue> manifest_overrides =
-      DictionaryBuilder().Set("newtab", "newtab.html").Build();
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("extension")
-          .MergeManifest(
-              DictionaryBuilder()
-                  .Set("chrome_url_overrides", std::move(manifest_overrides))
-                  .Build())
+          .SetManifestPath({"chrome_url_overrides", "newtab"}, "newtab.html")
           .Build();
 
   const GURL newtab_url = extension->GetResourceURL("newtab.html");

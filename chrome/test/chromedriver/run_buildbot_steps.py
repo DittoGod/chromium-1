@@ -213,6 +213,15 @@ def _ArchiveGoodBuild(platform, commit_position):
   if slave_utils.GSUtilCopy(zip_path, build_url):
     util.MarkBuildStepError()
 
+  if util.IsWindows():
+    zip_path = util.Zip(os.path.join(
+        chrome_paths.GetBuildDir([server_name + '.pdb']), server_name + '.pdb'))
+    pdb_name = 'chromedriver_%s_pdb_%s.%s.zip' % (
+        platform, _GetVersion(), commit_position)
+    pdb_url = '%s/%s' % (GS_CONTINUOUS_URL, pdb_name)
+    if slave_utils.GSUtilCopy(zip_path, pdb_url):
+      util.MarkBuildStepError()
+
   (latest_fd, latest_file) = tempfile.mkstemp()
   os.write(latest_fd, build_name)
   os.close(latest_fd)
@@ -264,7 +273,12 @@ def _MaybeRelease(platform):
   # the chromedriver bucket instead of bumping up the release version number.
   candidates.sort(reverse=True)
   for commit_position in candidates:
-    android_result = _CommitPositionState(android_test_results, commit_position)
+    # Due to Android test bot migration (https://crbug.com/790300),
+    # temporarily disabling checking the Android test results.
+    # Android tests are being verified manually.
+
+    #android_result = _CommitPositionState(android_test_results, commit_position)
+    android_result = 'passed'
     if android_result == 'failed':
       print 'Android tests did not pass at commit position', commit_position
     elif android_result == 'passed':
@@ -315,7 +329,7 @@ def _MaybeUpdateLatestRelease(version):
     return
 
   # Check if chromedriver was released on all supported platforms.
-  supported_platforms = ['linux64', 'mac32', 'win32']
+  supported_platforms = ['linux64', 'mac64', 'win32']
   for platform in supported_platforms:
     if not _WasReleased(version, platform):
       return

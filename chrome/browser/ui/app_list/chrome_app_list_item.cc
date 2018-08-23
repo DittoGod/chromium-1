@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/app_list/chrome_app_list_item.h"
 
+#include <utility>
+
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/app_list/app_list_service.h"
+#include "chrome/browser/ui/app_list/app_list_client_impl.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ui/app_list/chrome_app_list_model_updater.h"
 #include "extensions/browser/app_sorting.h"
@@ -16,6 +18,15 @@
 namespace {
 
 AppListControllerDelegate* g_controller_for_test = nullptr;
+
+ash::mojom::AppListItemMetadataPtr CreateDefaultMetadata(
+    const std::string& app_id) {
+  return ash::mojom::AppListItemMetadata::New(
+      app_id, std::string() /* name */, std::string() /* short_name */,
+      std::string() /* folder_id */, syncer::StringOrdinal(),
+      false /* is_folder */, gfx::ImageSkia() /* icon */,
+      false /* is_page_break */);
+}
 
 }  // namespace
 
@@ -47,12 +58,14 @@ void ChromeAppListItem::TestApi::SetPosition(
 // ChromeAppListItem
 ChromeAppListItem::ChromeAppListItem(Profile* profile,
                                      const std::string& app_id)
-    : metadata_(ash::mojom::AppListItemMetadata::New(app_id,
-                                                     "",
-                                                     "",
-                                                     syncer::StringOrdinal(),
-                                                     false)),
-      profile_(profile) {}
+    : metadata_(CreateDefaultMetadata(app_id)), profile_(profile) {}
+
+ChromeAppListItem::ChromeAppListItem(Profile* profile,
+                                     const std::string& app_id,
+                                     AppListModelUpdater* model_updater)
+    : metadata_(CreateDefaultMetadata(app_id)),
+      profile_(profile),
+      model_updater_(model_updater) {}
 
 ChromeAppListItem::~ChromeAppListItem() {
 }
@@ -78,14 +91,19 @@ ash::mojom::AppListItemMetadataPtr ChromeAppListItem::CloneMetadata() const {
   return metadata_.Clone();
 }
 
+void ChromeAppListItem::PerformActivate(int event_flags) {
+  Activate(event_flags);
+  MaybeDismissAppList();
+}
+
 void ChromeAppListItem::Activate(int event_flags) {}
 
 const char* ChromeAppListItem::GetItemType() const {
   return "";
 }
 
-ui::MenuModel* ChromeAppListItem::GetContextMenuModel() {
-  return nullptr;
+void ChromeAppListItem::GetContextMenuModel(GetMenuModelCallback callback) {
+  std::move(callback).Run(nullptr);
 }
 
 bool ChromeAppListItem::IsBadged() const {
@@ -94,6 +112,13 @@ bool ChromeAppListItem::IsBadged() const {
 
 app_list::AppContextMenu* ChromeAppListItem::GetAppContextMenu() {
   return nullptr;
+}
+
+void ChromeAppListItem::MaybeDismissAppList() {
+  // Launching apps can take some time. It looks nicer to dismiss the app list.
+  // Do not close app list for home launcher.
+  if (!GetController()->IsHomeLauncherEnabledInTabletMode())
+    GetController()->DismissView();
 }
 
 void ChromeAppListItem::ContextMenuItemSelected(int command_id,
@@ -107,9 +132,8 @@ extensions::AppSorting* ChromeAppListItem::GetAppSorting() {
 }
 
 AppListControllerDelegate* ChromeAppListItem::GetController() {
-  return g_controller_for_test != nullptr
-             ? g_controller_for_test
-             : AppListService::Get()->GetControllerDelegate();
+  return g_controller_for_test != nullptr ? g_controller_for_test
+                                          : AppListClientImpl::GetInstance();
 }
 
 void ChromeAppListItem::UpdateFromSync(
@@ -140,11 +164,11 @@ void ChromeAppListItem::SetDefaultPositionIfApplicable() {
 }
 
 void ChromeAppListItem::SetIcon(const gfx::ImageSkia& icon) {
-  icon_ = icon;
-  icon_.EnsureRepsForSupportedScales();
+  metadata_->icon = icon;
+  metadata_->icon.EnsureRepsForSupportedScales();
   AppListModelUpdater* updater = model_updater();
   if (updater)
-    updater->SetItemIcon(id(), icon);
+    updater->SetItemIcon(id(), metadata_->icon);
 }
 
 void ChromeAppListItem::SetName(const std::string& name) {
@@ -176,6 +200,27 @@ void ChromeAppListItem::SetPosition(const syncer::StringOrdinal& position) {
     updater->SetItemPosition(id(), position);
 }
 
+void ChromeAppListItem::SetIsPageBreak(bool is_page_break) {
+  metadata_->is_page_break = is_page_break;
+}
+
+void ChromeAppListItem::SetChromeFolderId(const std::string& folder_id) {
+  metadata_->folder_id = folder_id;
+}
+
+void ChromeAppListItem::SetChromeIsFolder(bool is_folder) {
+  metadata_->is_folder = is_folder;
+}
+
+void ChromeAppListItem::SetChromeName(const std::string& name) {
+  metadata_->name = name;
+}
+
+void ChromeAppListItem::SetChromePosition(
+    const syncer::StringOrdinal& position) {
+  metadata_->position = position;
+}
+
 bool ChromeAppListItem::CompareForTest(const ChromeAppListItem* other) const {
   return id() == other->id() && folder_id() == other->folder_id() &&
          name() == other->name() && GetItemType() == other->GetItemType() &&
@@ -183,6 +228,6 @@ bool ChromeAppListItem::CompareForTest(const ChromeAppListItem* other) const {
 }
 
 std::string ChromeAppListItem::ToDebugString() const {
-  return id().substr(0, 8) + " '" + name() + "'" + " [" +
+  return id().substr(0, 8) + " '" + name() + "' (" + folder_id() + ") [" +
          position().ToDebugString() + "]";
 }

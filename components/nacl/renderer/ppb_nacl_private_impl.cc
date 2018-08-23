@@ -62,14 +62,14 @@
 #include "ppapi/shared_impl/var.h"
 #include "ppapi/shared_impl/var_tracker.h"
 #include "ppapi/thunk/enter.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoader.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoaderClient.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_url_response.h"
+#include "third_party/blink/public/web/web_associated_url_loader.h"
+#include "third_party/blink/public/web/web_associated_url_loader_client.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
 
 #if defined(OS_WIN)
 #include "base/win/scoped_handle.h"
@@ -200,8 +200,7 @@ bool IsValidChannelHandle(const IPC::ChannelHandle& channel_handle) {
 void PostPPCompletionCallback(PP_CompletionCallback callback,
                               int32_t status) {
   ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-      FROM_HERE,
-      base::Bind(callback.func, callback.user_data, status));
+      FROM_HERE, base::BindOnce(callback.func, callback.user_data, status));
 }
 
 bool ManifestResolveKey(PP_Instance instance,
@@ -268,7 +267,7 @@ class ManifestServiceProxy : public ManifestServiceChannel::Delegate {
         process_type_ != kPNaClTranslatorProcessType) {
       // Return an error.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(callback, base::Passed(base::File()), 0, 0));
+          FROM_HERE, base::BindOnce(callback, base::File(), 0, 0));
       return;
     }
 
@@ -284,7 +283,7 @@ class ManifestServiceProxy : public ManifestServiceChannel::Delegate {
     if (!ManifestResolveKey(pp_instance_, is_helper_process, key, &url,
                             &pnacl_options)) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(callback, base::Passed(base::File()), 0, 0));
+          FROM_HERE, base::BindOnce(callback, base::File(), 0, 0));
       return;
     }
 
@@ -343,6 +342,12 @@ blink::WebURLRequest CreateWebURLRequest(const blink::WebDocument& document,
         network::mojom::FetchCredentialsMode::kOmit);
   }
 
+  // Plug-ins should not load via service workers as plug-ins may have their own
+  // origin checking logic that may get confused if service workers respond with
+  // resources from another origin.
+  // https://w3c.github.io/ServiceWorker/#implementer-concerns
+  request.SetSkipServiceWorker(true);
+
   return request;
 }
 
@@ -380,16 +385,6 @@ NaClAppProcessType PP_ToNaClAppProcessType(
   return static_cast<NaClAppProcessType>(pp_process_type);
 }
 
-// A dummy IPC::Listener object with a no-op message handler.  We use
-// this with an IPC::SyncChannel where we only send synchronous
-// messages and don't need to handle any messages other than sync
-// replies.
-class NoOpListener : public IPC::Listener {
- public:
-  bool OnMessageReceived(const IPC::Message& message) override { return false; }
-  void OnChannelError() override {}
-};
-
 }  // namespace
 
 // Launch NaCl's sel_ldr process.
@@ -424,8 +419,8 @@ void PPBNaClPrivate::LaunchSelLdr(
       base::File closer(nexe_file_info->handle);
     }
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE, base::Bind(callback.func, callback.user_data,
-                              static_cast<int32_t>(PP_ERROR_FAILED)));
+        FROM_HERE, base::BindOnce(callback.func, callback.user_data,
+                                  static_cast<int32_t>(PP_ERROR_FAILED)));
     return;
   }
 
@@ -433,11 +428,6 @@ void PPBNaClPrivate::LaunchSelLdr(
   instance_info.url = GURL(alleged_url);
 
   uint32_t perm_bits = ppapi::PERMISSION_NONE;
-  // Conditionally block 'Dev' interfaces. We do this for the NaCl process, so
-  // it's clearer to developers when they are using 'Dev' inappropriately. We
-  // must also check on the trusted side of the proxy.
-  if (load_manager->DevInterfacesEnabled())
-    perm_bits |= ppapi::PERMISSION_DEV;
   instance_info.permissions =
       ppapi::PpapiPermissions::GetForCommandLine(perm_bits);
 
@@ -485,9 +475,8 @@ void PPBNaClPrivate::LaunchSelLdr(
           &launch_result,
           &error_message_string))) {
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE,
-        base::Bind(callback.func, callback.user_data,
-                   static_cast<int32_t>(PP_ERROR_FAILED)));
+        FROM_HERE, base::BindOnce(callback.func, callback.user_data,
+                                  static_cast<int32_t>(PP_ERROR_FAILED)));
     return;
   }
 
@@ -507,9 +496,8 @@ void PPBNaClPrivate::LaunchSelLdr(
                                     error_message_string);
     }
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE,
-        base::Bind(callback.func, callback.user_data,
-                   static_cast<int32_t>(PP_ERROR_FAILED)));
+        FROM_HERE, base::BindOnce(callback.func, callback.user_data,
+                                  static_cast<int32_t>(PP_ERROR_FAILED)));
     return;
   }
 
@@ -524,7 +512,8 @@ void PPBNaClPrivate::LaunchSelLdr(
       // translator process.
       *translator_channel = IPC::SyncChannel::Create(
           instance_info.channel_handle, IPC::Channel::MODE_CLIENT,
-          new NoOpListener, content::RenderThread::Get()->GetIOTaskRunner(),
+          /* listener = */ nullptr,
+          content::RenderThread::Get()->GetIOTaskRunner(),
           base::ThreadTaskRunnerHandle::Get(), true,
           content::RenderThread::Get()->GetShutdownEvent());
     } else {
@@ -706,10 +695,8 @@ void GetNexeFd(PP_Instance instance,
   if (!InitializePnaclResourceHost()) {
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
         FROM_HERE,
-        base::Bind(callback,
-                   static_cast<int32_t>(PP_ERROR_FAILED),
-                   false,
-                   PP_kInvalidFileHandle));
+        base::BindOnce(callback, static_cast<int32_t>(PP_ERROR_FAILED), false,
+                       PP_kInvalidFileHandle));
     return;
   }
 
@@ -943,18 +930,16 @@ void PPBNaClPrivate::RequestNaClManifest(PP_Instance instance,
   DCHECK(load_manager);
   if (!load_manager) {
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE,
-        base::Bind(callback.func, callback.user_data,
-                   static_cast<int32_t>(PP_ERROR_FAILED)));
+        FROM_HERE, base::BindOnce(callback.func, callback.user_data,
+                                  static_cast<int32_t>(PP_ERROR_FAILED)));
     return;
   }
 
   std::string url = load_manager->GetManifestURLArgument();
   if (url.empty() || !load_manager->RequestNaClManifest(url)) {
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE,
-        base::Bind(callback.func, callback.user_data,
-                   static_cast<int32_t>(PP_ERROR_FAILED)));
+        FROM_HERE, base::BindOnce(callback.func, callback.user_data,
+                                  static_cast<int32_t>(PP_ERROR_FAILED)));
     return;
   }
 
@@ -978,8 +963,7 @@ void PPBNaClPrivate::RequestNaClManifest(PP_Instance instance,
                                     "could not load manifest url.");
     }
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE,
-        base::Bind(callback.func, callback.user_data, error));
+        FROM_HERE, base::BindOnce(callback.func, callback.user_data, error));
   } else {
     DownloadManifestToBuffer(instance, callback);
   }
@@ -1021,9 +1005,8 @@ void DownloadManifestToBuffer(PP_Instance instance,
       content::PepperPluginInstance::Get(instance);
   if (!load_manager || !plugin_instance) {
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE,
-        base::Bind(callback.func, callback.user_data,
-                   static_cast<int32_t>(PP_ERROR_FAILED)));
+        FROM_HERE, base::BindOnce(callback.func, callback.user_data,
+                                  static_cast<int32_t>(PP_ERROR_FAILED)));
     return;
   }
   const blink::WebDocument& document =
@@ -1033,6 +1016,10 @@ void DownloadManifestToBuffer(PP_Instance instance,
   std::unique_ptr<blink::WebAssociatedURLLoader> url_loader(
       CreateAssociatedURLLoader(document, gurl));
   blink::WebURLRequest request = CreateWebURLRequest(document, gurl);
+
+  // Requests from plug-ins must skip service workers, see the comment in
+  // CreateWebURLRequest.
+  DCHECK(request.GetSkipServiceWorker());
 
   // ManifestDownloader deletes itself after invoking the callback.
   ManifestDownloader* manifest_downloader = new ManifestDownloader(
@@ -1377,9 +1364,8 @@ void PPBNaClPrivate::DownloadNexe(PP_Instance instance,
       content::PepperPluginInstance::Get(instance);
   if (!plugin_instance) {
     ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE,
-        base::Bind(callback.func, callback.user_data,
-                   static_cast<int32_t>(PP_ERROR_FAILED)));
+        FROM_HERE, base::BindOnce(callback.func, callback.user_data,
+                                  static_cast<int32_t>(PP_ERROR_FAILED)));
     return;
   }
   const blink::WebDocument& document =
@@ -1467,8 +1453,9 @@ void DownloadFile(PP_Instance instance,
   DCHECK(load_manager);
   if (!load_manager) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, static_cast<int32_t>(PP_ERROR_FAILED),
-                              kInvalidNaClFileInfo));
+        FROM_HERE,
+        base::BindOnce(callback, static_cast<int32_t>(PP_ERROR_FAILED),
+                       kInvalidNaClFileInfo));
     return;
   }
 
@@ -1483,14 +1470,15 @@ void DownloadFile(PP_Instance instance,
                                               &file_info.token_hi);
     if (handle == PP_kInvalidFileHandle) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(callback, static_cast<int32_t>(PP_ERROR_FAILED),
-                                kInvalidNaClFileInfo));
+          FROM_HERE,
+          base::BindOnce(callback, static_cast<int32_t>(PP_ERROR_FAILED),
+                         kInvalidNaClFileInfo));
       return;
     }
     file_info.handle = handle;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(callback, static_cast<int32_t>(PP_OK), file_info));
+        base::BindOnce(callback, static_cast<int32_t>(PP_OK), file_info));
     return;
   }
 
@@ -1499,8 +1487,9 @@ void DownloadFile(PP_Instance instance,
   const GURL& test_gurl = load_manager->plugin_base_url().Resolve(url);
   if (!test_gurl.is_valid()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, static_cast<int32_t>(PP_ERROR_FAILED),
-                              kInvalidNaClFileInfo));
+        FROM_HERE,
+        base::BindOnce(callback, static_cast<int32_t>(PP_ERROR_FAILED),
+                       kInvalidNaClFileInfo));
     return;
   }
 
@@ -1518,7 +1507,7 @@ void DownloadFile(PP_Instance instance,
     file_info.token_hi = file_token_hi;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(callback, static_cast<int32_t>(PP_OK), file_info));
+        base::BindOnce(callback, static_cast<int32_t>(PP_OK), file_info));
     return;
   }
 
@@ -1531,8 +1520,9 @@ void DownloadFile(PP_Instance instance,
       content::PepperPluginInstance::Get(instance);
   if (!plugin_instance) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, static_cast<int32_t>(PP_ERROR_FAILED),
-                              kInvalidNaClFileInfo));
+        FROM_HERE,
+        base::BindOnce(callback, static_cast<int32_t>(PP_ERROR_FAILED),
+                       kInvalidNaClFileInfo));
     return;
   }
   const blink::WebDocument& document =
@@ -1559,9 +1549,8 @@ void PPBNaClPrivate::LogTranslateTime(const char* histogram_name,
                                       int64_t time_in_us) {
   ppapi::PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
       FROM_HERE,
-      base::Bind(&HistogramTimeTranslation,
-                 std::string(histogram_name),
-                 time_in_us / 1000));
+      base::BindOnce(&HistogramTimeTranslation, std::string(histogram_name),
+                     time_in_us / 1000));
 }
 
 // static
@@ -1691,7 +1680,7 @@ class PexeDownloader : public blink::WebAssociatedURLLoaderClient {
     }
   }
 
-  void DidFinishLoading(double finish_time) override {
+  void DidFinishLoading() override {
     int32_t result = success_ ? PP_OK : PP_ERROR_FAILED;
 
     if (content::PepperPluginInstance::Get(instance_))
@@ -1731,8 +1720,8 @@ void PPBNaClPrivate::StreamPexe(PP_Instance instance,
       content::PepperPluginInstance::Get(instance);
   if (!plugin_instance) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(handler->DidFinishStream, handler_user_data,
-                              static_cast<int32_t>(PP_ERROR_FAILED)));
+        FROM_HERE, base::BindOnce(handler->DidFinishStream, handler_user_data,
+                                  static_cast<int32_t>(PP_ERROR_FAILED)));
     return;
   }
 

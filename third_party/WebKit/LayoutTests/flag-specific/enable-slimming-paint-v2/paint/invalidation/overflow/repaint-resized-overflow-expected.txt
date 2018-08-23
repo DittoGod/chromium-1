@@ -10,19 +10,8 @@
           "object": "LayoutBlockFlow DIV id='s'",
           "rect": [8, 156, 108, 108],
           "reason": "geometry"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [8, 212, 108, 52],
-          "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='s'",
-      "reason": "geometry"
     }
   ]
 }

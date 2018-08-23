@@ -40,7 +40,8 @@ class SurfaceObserver {
   // in response to a BeginFrame, or a CopyOutputRequest is issued.
   //
   // |ack.sequence_number| is only valid if called in response to a BeginFrame.
-  // Should return true if this causes a Display to be damaged.
+  // Should return true if this causes a Display to be damaged resulting in a
+  // draw.
   virtual bool OnSurfaceDamaged(const SurfaceId& surface_id,
                                 const BeginFrameAck& ack) = 0;
 
@@ -54,6 +55,16 @@ class SurfaceObserver {
 
   // Called whenever |surface| will be drawn in the next display frame.
   virtual void OnSurfaceWillBeDrawn(Surface* surface) {}
+
+  // Called whenever the surface reference from the surface that has |parent_id|
+  // to the surface that has |child_id| is added.
+  virtual void OnAddedSurfaceReference(const SurfaceId& parent_id,
+                                       const SurfaceId& child_id) {}
+
+  // Called whenever the surface reference from the surface that has |parent_id|
+  // to the surface that has |child_id| is removed.
+  virtual void OnRemovedSurfaceReference(const SurfaceId& parent_id,
+                                         const SurfaceId& child_id) {}
 };
 
 }  // namespace viz

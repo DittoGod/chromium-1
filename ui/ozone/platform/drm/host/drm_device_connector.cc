@@ -4,12 +4,11 @@
 
 #include "ui/ozone/platform/drm/host/drm_device_connector.h"
 
-#include "base/command_line.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/ui/public/interfaces/constants.mojom.h"
-#include "ui/base/ui_base_switches.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/ozone/platform/drm/host/host_drm_device.h"
 #include "ui/ozone/public/gpu_platform_support_host.h"
 
@@ -43,11 +42,6 @@ DrmDeviceConnector::DrmDeviceConnector(
       ws_runner_(base::ThreadTaskRunnerHandle::IsSet()
                      ? base::ThreadTaskRunnerHandle::Get()
                      : nullptr) {
-  // Invariant: we only have a runner at startup if executing in --mus mode.
-  DCHECK((ws_runner_ &&
-          base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kMus)) ||
-         (!ws_runner_ &&
-          !base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kMus)));
 }
 
 DrmDeviceConnector::~DrmDeviceConnector() {}
@@ -61,14 +55,14 @@ void DrmDeviceConnector::OnGpuProcessLaunched(
 }
 
 void DrmDeviceConnector::OnChannelDestroyed(int host_id) {
-  // TODO(rjkroege): Handle Viz restarting.
-  NOTIMPLEMENTED();
+  host_drm_device_->OnGpuServiceLost();
 }
 
 void DrmDeviceConnector::OnGpuServiceLaunched(
     scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_runner,
-    GpuHostBindInterfaceCallback binder) {
+    GpuHostBindInterfaceCallback binder,
+    GpuHostTerminateCallback terminate_callback) {
   // We need to preserve |binder| to let us bind interfaces later.
   binder_callback_ = std::move(binder);
   if (am_running_in_ws_mode()) {

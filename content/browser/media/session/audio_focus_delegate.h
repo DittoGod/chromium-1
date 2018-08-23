@@ -7,6 +7,12 @@
 
 #include "content/browser/media/session/audio_focus_manager.h"
 
+namespace media_session {
+namespace mojom {
+enum class AudioFocusType;
+}  // namespace mojom
+}  // namespace media_session
+
 namespace content {
 
 class MediaSessionImpl;
@@ -22,7 +28,7 @@ class AudioFocusDelegate {
   virtual ~AudioFocusDelegate() = default;
 
   virtual bool RequestAudioFocus(
-      AudioFocusManager::AudioFocusType audio_focus_type) = 0;
+      media_session::mojom::AudioFocusType audio_focus_type) = 0;
   virtual void AbandonAudioFocus() = 0;
 };
 

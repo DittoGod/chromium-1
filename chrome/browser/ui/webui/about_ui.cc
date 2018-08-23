@@ -31,7 +31,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
@@ -73,10 +73,6 @@
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/webui/theme_source.h"
-#endif
-
-#if defined(OS_WIN)
-#include "chrome/browser/win/enumerate_modules_model.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -227,7 +223,7 @@ class ChromeOSCreditsHandler
     }
     // Load local Chrome OS credits from the disk.
     base::PostTaskWithTraitsAndReply(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::Bind(&ChromeOSCreditsHandler::LoadCreditsFileAsync, this),
         base::Bind(&ChromeOSCreditsHandler::ResponseOnUIThread, this));
   }
@@ -326,85 +322,6 @@ std::string ChromeURLs() {
   return html;
 }
 
-std::string HelpCenterContent() {
-  std::string html;
-  AppendHeader(&html, 0, l10n_util::GetStringUTF8(IDS_CONNECTION_HELP_TITLE));
-  html +=
-      "<meta name=\"viewport\" content=\"initial-scale=1, minimum-scale=1, "
-      "width=device-width\">\n";
-  webui::AppendWebUiCssTextDefaults(&html);
-  html += "<style>";
-  html += l10n_util::GetStringUTF8(IDR_SECURITY_INTERSTITIAL_COMMON_CSS);
-  html += l10n_util::GetStringUTF8(IDR_SECURITY_INTERSTITIAL_CORE_CSS);
-  html += "</style>";
-  AppendBody(&html);
-  html += "<div class=\"interstitial-wrapper\">\n";
-  html += l10n_util::GetStringUTF8(IDS_CONNECTION_HELP_HTML);
-  html += "</div>\n";
-  AppendFooter(&html);
-  return html;
-}
-
-// AboutDnsHandler bounces the request back to the IO thread to collect
-// the DNS information.
-class AboutDnsHandler : public base::RefCountedThreadSafe<AboutDnsHandler> {
- public:
-  static void Start(Profile* profile,
-                    const content::URLDataSource::GotDataCallback& callback) {
-    scoped_refptr<AboutDnsHandler> handler(
-        new AboutDnsHandler(profile, callback));
-    handler->StartOnUIThread();
-  }
-
- private:
-  friend class base::RefCountedThreadSafe<AboutDnsHandler>;
-
-  AboutDnsHandler(Profile* profile,
-                  const content::URLDataSource::GotDataCallback& callback)
-      : profile_(profile),
-        callback_(callback) {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  }
-
-  virtual ~AboutDnsHandler() {}
-
-  // Calls FinishOnUIThread() on completion.
-  void StartOnUIThread() {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    chrome_browser_net::Predictor* predictor = profile_->GetNetworkPredictor();
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&AboutDnsHandler::StartOnIOThread, this, predictor));
-  }
-
-  void StartOnIOThread(chrome_browser_net::Predictor* predictor) {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-    std::string data;
-    AppendHeader(&data, 0, "About DNS");
-    AppendBody(&data);
-    chrome_browser_net::Predictor::PredictorGetHtmlInfo(predictor, &data);
-    AppendFooter(&data);
-
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&AboutDnsHandler::FinishOnUIThread, this, data));
-  }
-
-  void FinishOnUIThread(const std::string& data) {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    std::string data_copy(data);
-    callback_.Run(base::RefCountedString::TakeString(&data_copy));
-  }
-
-  Profile* profile_;
-
-  // Callback to run with the response.
-  content::URLDataSource::GotDataCallback callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(AboutDnsHandler);
-};
-
 #if defined(OS_LINUX) || defined(OS_OPENBSD)
 std::string AboutLinuxProxyConfig() {
   std::string data;
@@ -445,8 +362,6 @@ void AboutUIHTMLSource::StartDataRequest(
   // Add your data source here, in alphabetical order.
   if (source_name_ == chrome::kChromeUIChromeURLsHost) {
     response = ChromeURLs();
-  } else if (source_name_ == chrome::kChromeUIConnectionHelpHost) {
-    response = HelpCenterContent();
   } else if (source_name_ == chrome::kChromeUICreditsHost) {
     int idr = IDR_ABOUT_UI_CREDITS_HTML;
     if (path == kCreditsJsPath)
@@ -462,9 +377,6 @@ void AboutUIHTMLSource::StartDataRequest(
                      .GetRawDataResource(idr)
                      .as_string();
     }
-  } else if (source_name_ == chrome::kChromeUIDNSHost) {
-    AboutDnsHandler::Start(profile(), callback);
-    return;
 #if defined(OS_LINUX) || defined(OS_OPENBSD)
   } else if (source_name_ == chrome::kChromeUILinuxProxyConfigHost) {
     response = AboutLinuxProxyConfig();

@@ -10,12 +10,25 @@
 
 namespace ui {
 
-AXEventGenerator::TargetedEvent::TargetedEvent(ui::AXNode* node, Event event)
-    : node(node), event(event) {}
+AXEventGenerator::EventParams::EventParams(Event event,
+                                           ax::mojom::EventFrom event_from)
+    : event(event), event_from(event_from) {}
+
+AXEventGenerator::TargetedEvent::TargetedEvent(ui::AXNode* node,
+                                               const EventParams& event_params)
+    : node(node), event_params(event_params) {}
+
+bool AXEventGenerator::EventParams::operator==(const EventParams& rhs) {
+  return rhs.event == event;
+}
+
+bool AXEventGenerator::EventParams::operator<(const EventParams& rhs) const {
+  return event < rhs.event;
+}
 
 AXEventGenerator::Iterator::Iterator(
-    const std::map<AXNode*, std::set<Event>>& map,
-    const std::map<AXNode*, std::set<Event>>::const_iterator& head)
+    const std::map<AXNode*, std::set<EventParams>>& map,
+    const std::map<AXNode*, std::set<EventParams>>::const_iterator& head)
     : map_(map), map_iter_(head) {
   if (map_iter_ != map.end())
     set_iter_ = map_iter_->second.begin();
@@ -87,12 +100,16 @@ void AXEventGenerator::AddEvent(ui::AXNode* node,
   // A newly created live region or alert should not *also* fire a
   // live region changed event.
   if (event == Event::LIVE_REGION_CHANGED &&
-      (base::ContainsKey(tree_events_[node], Event::ALERT) ||
-       base::ContainsKey(tree_events_[node], Event::LIVE_REGION_CREATED))) {
+      (base::ContainsKey(
+           tree_events_[node],
+           EventParams(Event::ALERT, ax::mojom::EventFrom::kNone)) ||
+       base::ContainsKey(tree_events_[node],
+                         EventParams(Event::LIVE_REGION_CREATED,
+                                     ax::mojom::EventFrom::kNone)))) {
     return;
   }
 
-  tree_events_[node].insert(event);
+  tree_events_[node].insert(EventParams(event, event_from_));
 }
 
 void AXEventGenerator::OnNodeDataWillChange(AXTree* tree,
@@ -107,7 +124,8 @@ void AXEventGenerator::OnNodeDataWillChange(AXTree* tree,
   if (new_node_data.child_ids != old_node_data.child_ids &&
       new_node_data.role != ax::mojom::Role::kStaticText) {
     AXNode* node = tree_->GetFromId(new_node_data.id);
-    tree_events_[node].insert(Event::CHILDREN_CHANGED);
+    tree_events_[node].insert(
+        EventParams(Event::CHILDREN_CHANGED, ax::mojom::EventFrom::kNone));
   }
 }
 
@@ -126,28 +144,29 @@ void AXEventGenerator::OnStateChanged(AXTree* tree,
   DCHECK_EQ(tree_, tree);
 
   AddEvent(node, Event::STATE_CHANGED);
-  if (state == ax::mojom::State::kExpanded) {
-    AddEvent(node, new_value ? Event::EXPANDED : Event::COLLAPSED);
+  switch (state) {
+    case ax::mojom::State::kExpanded:
+      AddEvent(node, new_value ? Event::EXPANDED : Event::COLLAPSED);
 
-    // TODO(accessibility): tree in the midst of updates. Disallow access to
-    // |node|.
-    if (node->data().role == ax::mojom::Role::kRow ||
-        node->data().role == ax::mojom::Role::kTreeItem) {
-      ui::AXNode* container = node;
-      while (container && !ui::IsRowContainer(container->data().role))
-        container = container->parent();
-      if (container)
-        AddEvent(container, Event::ROW_COUNT_CHANGED);
+      // TODO(accessibility): tree in the midst of updates. Disallow access to
+      // |node|.
+      if (node->data().role == ax::mojom::Role::kRow ||
+          node->data().role == ax::mojom::Role::kTreeItem) {
+        ui::AXNode* container = node;
+        while (container && !ui::IsRowContainer(container->data().role))
+          container = container->parent();
+        if (container)
+          AddEvent(container, Event::ROW_COUNT_CHANGED);
+      }
+      break;
+    case ax::mojom::State::kIgnored: {
+      ui::AXNode* unignored_parent = node->GetUnignoredParent();
+      if (unignored_parent)
+        AddEvent(unignored_parent, Event::CHILDREN_CHANGED);
+      break;
     }
-  }
-  if (state == ax::mojom::State::kSelected) {
-    AddEvent(node, Event::SELECTED_CHANGED);
-    ui::AXNode* container = node;
-    while (container &&
-           !ui::IsContainerWithSelectableChildrenRole(container->data().role))
-      container = container->parent();
-    if (container)
-      AddEvent(container, Event::SELECTED_CHILDREN_CHANGED);
+    default:
+      break;
   }
 }
 
@@ -160,7 +179,10 @@ void AXEventGenerator::OnStringAttributeChanged(AXTree* tree,
 
   switch (attr) {
     case ax::mojom::StringAttribute::kName:
-      AddEvent(node, Event::NAME_CHANGED);
+      // If the name of the root node changes, we expect OnTreeDataChanged to
+      // add a DOCUMENT_TITLE_CHANGED event instead.
+      if (node != tree->root())
+        AddEvent(node, Event::NAME_CHANGED);
 
       // TODO(accessibility): tree in the midst of updates. Disallow
       // access to |node|.
@@ -199,8 +221,12 @@ void AXEventGenerator::OnIntAttributeChanged(AXTree* tree,
 
   switch (attr) {
     case ax::mojom::IntAttribute::kActivedescendantId:
-      AddEvent(node, Event::ACTIVE_DESCENDANT_CHANGED);
-      active_descendant_changed_.push_back(node);
+      // Don't fire on invisible containers, as it confuses some screen readers,
+      // such as NVDA.
+      if (!node->data().HasState(ax::mojom::State::kInvisible)) {
+        AddEvent(node, Event::ACTIVE_DESCENDANT_CHANGED);
+        active_descendant_changed_.push_back(node);
+      }
       break;
     case ax::mojom::IntAttribute::kCheckedState:
       AddEvent(node, Event::CHECKED_STATE_CHANGED);
@@ -239,6 +265,17 @@ void AXEventGenerator::OnBoolAttributeChanged(AXTree* tree,
                                               ax::mojom::BoolAttribute attr,
                                               bool new_value) {
   DCHECK_EQ(tree_, tree);
+
+  if (attr == ax::mojom::BoolAttribute::kSelected) {
+    AddEvent(node, Event::SELECTED_CHANGED);
+    ui::AXNode* container = node;
+    while (container &&
+           !ui::IsContainerWithSelectableChildrenRole(container->data().role))
+      container = container->parent();
+    if (container)
+      AddEvent(container, Event::SELECTED_CHILDREN_CHANGED);
+    return;
+  }
 
   AddEvent(node, Event::OTHER_ATTRIBUTE_CHANGED);
 }
@@ -386,8 +423,8 @@ void AXEventGenerator::FireRelationSourceEvents(AXTree* tree,
                                                 AXNode* target_node) {
   int32_t target_id = target_node->id();
   std::set<AXNode*> source_nodes;
-  auto callback = [&](const auto entry) {
-    const auto target_to_sources = entry.second;
+  auto callback = [&](const auto& entry) {
+    const auto& target_to_sources = entry.second;
     auto sources_it = target_to_sources.find(target_id);
     if (sources_it == target_to_sources.end())
       return;
@@ -400,7 +437,10 @@ void AXEventGenerator::FireRelationSourceEvents(AXTree* tree,
         return;
 
       source_nodes.insert(source_node);
-      AddEvent(source_node, Event::RELATED_NODE_CHANGED);
+
+      // GCC < 6.4 requires this pointer when calling a member
+      // function in anonymous function
+      this->AddEvent(source_node, Event::RELATED_NODE_CHANGED);
     });
   };
 

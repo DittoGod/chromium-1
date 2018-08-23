@@ -5,7 +5,8 @@
     "service_manager:connector": {
       "provides": {
         "browser": [
-          "spellcheck::mojom::SpellChecker"
+          "safe_browsing.mojom.PhishingModelSetter",
+          "spellcheck.mojom.SpellChecker"
         ]
       },
       "requires": {

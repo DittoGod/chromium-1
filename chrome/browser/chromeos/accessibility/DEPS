@@ -1,0 +1,30 @@
+specific_include_rules = {
+  "accessibility_manager\.cc": [
+    # TODO(mash): Fix. https://crbug.com/594887
+    "+ash/accessibility/accessibility_controller.h",
+    "+ash/root_window_controller.h",
+    "+ash/shell.h",
+    # TODO(mash): Fix. https://crbug.com/647781
+    "+ash/sticky_keys/sticky_keys_controller.h",
+  ],
+  "magnification_manager\.cc": [
+    # TODO(mash): Fix. https://crbug.com/817157
+    "+ash/magnifier/magnification_controller.h",
+    "+ash/shell.h",
+  ],
+  "select_to_speak_event_handler\.cc": [
+    # TODO(mash): Port the EventHandler to ash. http://crbug.com/874295
+    "+ash/system/accessibility/select_to_speak_tray_utils.h",
+  ],
+  "switch_access_event_handler\.cc": [
+    # TODO(mash): Fix. https://crbug.com/854025
+    "+ash/shell.h",
+  ],
+
+  # Testing
+  ".*browsertest\.cc": [
+    "+ash/root_window_controller.h",
+    "+ash/system/status_area_widget.h",
+    "+ash/system/unified/unified_system_tray.h",
+  ],
+}

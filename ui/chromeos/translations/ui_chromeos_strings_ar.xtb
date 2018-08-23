@@ -1,6 +1,7 @@
 <?xml version="1.0" ?>
 <!DOCTYPE translationbundle>
 <translationbundle lang="ar">
+<translation id="1012876632442809908">‏جهاز USB-C (المنفذ الأمامي)</translation>
 <translation id="1023220960495960452">‏التحويل الصوتي (فاناكام ← வணக்கம்)</translation>
 <translation id="1045157690796831147">‏التحويل الصوتي (ناماسكار ← നമസ്കാരം)</translation>
 <translation id="1065449928621190041">لوحة المفاتيح الكندية الفرنسية</translation>
@@ -10,34 +11,31 @@
 <translation id="1155759005174418845">الكتالانية</translation>
 <translation id="1208421848177517699">‏التحويل الصوتي (ناماستي ← નમસ્તે)</translation>
 <translation id="1278813325885878377">‏لوحة مفاتيح Qwerty المجرية</translation>
+<translation id="1293264513303784526">‏جهاز USB-C (المنفذ الأيسر)</translation>
 <translation id="1310751437842832374">‏التحويل الصوتي (ماوسام ← ନମସ୍ତେ)</translation>
 <translation id="1337036551624197047">لوحة المفاتيح التشيكية</translation>
 <translation id="1352103415082130575">‏لوحة المفاتيح التايلاندية (Pattachote)</translation>
 <translation id="1358032944105037487">لوحة المفاتيح اليابانية</translation>
-<translation id="1383876407941801731">البحث</translation>
 <translation id="1399648040768741453">لوحة المفاتيح التيلوغوية (صوتية)</translation>
 <translation id="1441841714100794440">‏لوحة المفاتيح الفيتنامية (Telex)</translation>
 <translation id="1455548678241328678">لوحة المفاتيح النرويجية</translation>
 <translation id="148466539719134488">السويسرية</translation>
-<translation id="1510238584712386396">المشغّل</translation>
 <translation id="1547964879613821194">الإنجليزية الكندية</translation>
 <translation id="158809615184981282">لوحة مفاتيح فاروية</translation>
 <translation id="1646136617204068573">لوحة المفاتيح المجرية</translation>
 <translation id="164729547906544836">‏لوحة المفاتيح التاميلية (itrans)</translation>
 <translation id="164969095109328410">‏جهاز Chrome</translation>
-<translation id="169515659049020177">Shift</translation>
 <translation id="1829129547161959350">بطريق</translation>
 <translation id="184633654410729720">‏لوحة المفاتيح التايلاندية (Kedmanee)</translation>
+<translation id="1864454756846565995">‏جهاز USB-C (المنفذ الخلفي)</translation>
 <translation id="1921986354447415460">‏لوحة مفاتيح Turkish-F</translation>
 <translation id="1931134289871235022">السلوفاكية</translation>
 <translation id="1936717151811561466">الفنلندية</translation>
 <translation id="1947424002851288782">لوحة المفاتيح الألمانية</translation>
 <translation id="1984603991036629094">لوحة المفاتيح الأرمينية الصوتية</translation>
-<translation id="1989746695744304008">‏Tab وWindows</translation>
 <translation id="2046702855113914483">رامن</translation>
 <translation id="2080010875307505892">لوحة المفاتيح الصربية</translation>
 <translation id="2136953289241069843">‏التحويل الصوتي (ناماستي ← नमस्कार)</translation>
-<translation id="2145908266289632567">تعديل النص</translation>
 <translation id="2164862903024139959">‏لوحة المفاتيح الفيتنامية (TCVN)</translation>
 <translation id="2168214441502403371">لوحة المفاتيح الفارسية</translation>
 <translation id="2198315389084035571">الصينية المبسطة</translation>
@@ -49,7 +47,6 @@
 <translation id="2468402215065996499">تماغوتشي</translation>
 <translation id="247772113373397749">لوحة المفاتيح الكندية متعددة اللغات</translation>
 <translation id="2494837236724268445">لوحة المفاتيح الغوغاراتية (صوتية)</translation>
-<translation id="2515586267016047495">Alt</translation>
 <translation id="2529133382850673012">لوحة المفاتيح الأمريكية</translation>
 <translation id="255937426064304553">الأمريكية الدولية</translation>
 <translation id="2563185590376525700">ضفدع</translation>
@@ -58,6 +55,7 @@
 <translation id="2771816809568414714">جبن</translation>
 <translation id="2781645665747935084">البلجيكية</translation>
 <translation id="2790805296069989825">لوحة المفاتيح الروسية</translation>
+<translation id="2844169650293029770">‏جهاز USB-C (المنفذ الأمامي الأيسر)</translation>
 <translation id="2870836398458454343">‏التحويل الصوتي (marhaban ← مرحبًا)</translation>
 <translation id="288024221176729610">التشيكية</translation>
 <translation id="2894654529758326923">المعلومات</translation>
@@ -72,7 +70,6 @@
 <translation id="3064388234319122767">‏التحويل الصوتي (ذدرافو ← здраво)</translation>
 <translation id="3088034400796962477">‏التحويل الصوتي (سلام ← salam)</translation>
 <translation id="3116361045094675131">لوحة المفاتيح البريطانية</translation>
-<translation id="3126026824346185272">Ctrl</translation>
 <translation id="3157729859914172001">لوحة المفاتيح (الكمبيوتر الشخصي) الأمريكية الدولية</translation>
 <translation id="3187212781151025377">لوحة المفاتيح العبرية</translation>
 <translation id="3197563288998582412">‏البريطانية Dvorak</translation>
@@ -82,12 +79,13 @@
 <translation id="3280987981688031357">أسطوانة موسيقية</translation>
 <translation id="3296763833017966289">الجورجية</translation>
 <translation id="3338239663705455570">لوحة المفاتيح السلوفينية</translation>
+<translation id="3371140690572404006">‏جهاز USB-C (المنفذ الأمامي الأيمن)</translation>
 <translation id="3399597614303179694">لوحة مفاتيح باللغة المقدونية</translation>
+<translation id="3445925074670675829">‏جهاز USB-C</translation>
 <translation id="3494768541638400973">‏أسلوب Google للإدخال الياباني (للوحة المفاتيح اليابانية)</translation>
 <translation id="3519867315646775981">التحويل الصوتي (שלום ← شالوم)</translation>
 <translation id="3522708245912499433">البرتغالية</translation>
 <translation id="357479282490346887">الليتوانية</translation>
-<translation id="3592821358219525223">إعدادات العرض والنظام</translation>
 <translation id="3603385196401704894">الفرنسية الكندية</translation>
 <translation id="3606220979431771195">Turkish-F</translation>
 <translation id="3619115746895587757">كابتشينو</translation>
@@ -103,6 +101,7 @@
 <translation id="3910699493603749297">لوحة مفاتيح اللغة الخميرية</translation>
 <translation id="391445228316373457">لوحة مفاتيح لغة نيبالية (صوتي)</translation>
 <translation id="3958548648197196644">كيوي</translation>
+<translation id="3995138139523574647">‏جهاز USB-C (المنفذ الخلفي الأيمن)</translation>
 <translation id="4070370845051020638">أسلوب الإدخال باللغة الكانتونية</translation>
 <translation id="4072248638558688893">لوحة المفاتيح التاميلية (صوتية)</translation>
 <translation id="4124935795427217608">أحادي القرن</translation>
@@ -149,6 +148,7 @@
 <translation id="5257456363153333584">يعسوب</translation>
 <translation id="5319782540886810524">لوحة المفاتيح اللاتفية</translation>
 <translation id="5323213332664049067">أمريكا اللاتينية</translation>
+<translation id="5331975486040154427">‏جهاز USB-C (المنفذ الخلفي الأيسر)</translation>
 <translation id="5402367795255837559">لغة برايل</translation>
 <translation id="5412637665001827670">لوحة المفاتيح البلغارية</translation>
 <translation id="5418923334382419584">لوحة مفاتيح اللغة المينمارية</translation>
@@ -169,7 +169,6 @@
 <translation id="5819442873484330149">المجموعة رقم 3 الهانغولية (النهائية)</translation>
 <translation id="5838825566232597749">‏Workman الأمريكية الدولية</translation>
 <translation id="5892290200158927959">‏لوحة مفاتيح BÉPO الفرنسية</translation>
-<translation id="5928303187149237472">تغيير دقة شاشة</translation>
 <translation id="5932901536148835538">Chromebit</translation>
 <translation id="6005282720244019462">لوحة مفاتيح أمريكا اللاتينية</translation>
 <translation id="6012987430370760224">لوحة المفاتيح الماراثية (صوتية)</translation>
@@ -186,12 +185,11 @@
 <translation id="6358884629796491903">تنين</translation>
 <translation id="6462109140674788769">لوحة المفاتيح اليونانية</translation>
 <translation id="6466492211071551451">لوحة المفاتيح الأيرلندية</translation>
+<translation id="6490471652906364588">‏جهاز USB-C (المنفذ الأيمن)</translation>
 <translation id="6503256918647795660">لوحة المفاتيح الفرنسية السويسرية</translation>
 <translation id="6505918941256367791">‏لوحة المفاتيح التاميلية (InScript)</translation>
 <translation id="6509122719576673235">النرويجية</translation>
-<translation id="6629951648264770593"><ph name="MODIFIER" /> + <ph name="KEY" /></translation>
 <translation id="6650726141019353908">فراشة وردية</translation>
-<translation id="6684986274046026054">قفل الشاشة</translation>
 <translation id="6760765581316020278">‏لوحة المفاتيح الفيتنامية (VNI)</translation>
 <translation id="6795884519221689054">باندا</translation>
 <translation id="6808193438228982088">ثعلب</translation>
@@ -206,7 +204,7 @@
 <translation id="6937152069980083337">‏أسلوب الإدخال باللغة اليابانية لـ Google (للوحة المفاتيح بالولايات المتحدة)</translation>
 <translation id="6939777852457331078">‏لوحة مفاتيح US Workman</translation>
 <translation id="6970230597523682626">البلغارية</translation>
-<translation id="6981982820502123353">إمكانية الدخول</translation>
+<translation id="7098389117866926363">‏جهاز USB-C (المنفذ الأيسر في الخلف)</translation>
 <translation id="714034171374937760">Chromebase</translation>
 <translation id="7170467426996704624">‏التحويل الصوتي (سلام ← ሰላም)</translation>
 <translation id="7172053773111046550">لوحة المفاتيح الإستونية</translation>
@@ -220,7 +218,6 @@
 <translation id="7434823369735508263">‏لوحة المفاتيح البريطانية Dvorak</translation>
 <translation id="7460898608667578234">الأوكرانية</translation>
 <translation id="7474889694310679759">لوحة المفاتيح الكندية الإنجليزية</translation>
-<translation id="7500462265946853476">متصفح الويب والصفحة</translation>
 <translation id="751507702149411736">البيلاروسية</translation>
 <translation id="7547811415869834682">الهولندية</translation>
 <translation id="7603724359189955920">شبكات</translation>
@@ -264,11 +261,11 @@
 <translation id="874420130893181774">‏أسلوب إدخال Pinyin التقليدي</translation>
 <translation id="8803496343472038847">لوحة المفاتيح الصوتية الروسية</translation>
 <translation id="8808686172382650546">قط</translation>
-<translation id="8839645518696429828"><ph name="CTRL" /> + <ph name="SHIFT" /> و+ أو -</translation>
 <translation id="885381502874625531">لوحة المفاتيح البيلاروسية</translation>
 <translation id="8900820606136623064">المجرية</translation>
 <translation id="8901822611024316615">‏لوحة المفاتيح التشيكية (تخطيط QWERTY)</translation>
 <translation id="8919081441417203123">الدانماركية</translation>
+<translation id="8938800817013097409">‏جهاز USB-C (المنفذ الأيمن في الخلف)</translation>
 <translation id="8960999352790021682">لوحة المفاتيح البنغالية (صوتية)</translation>
 <translation id="9017798300203431059">روسية صوتية</translation>
 <translation id="913758436357682283">لوحة مفاتيح ميانمار ميانسان</translation>

@@ -9,8 +9,7 @@
 #include "base/stl_util.h"
 #include "chrome/browser/local_discovery/service_discovery_shared_client.h"
 #include "chrome/browser/media/router/discovery/mdns/dns_sd_device_lister.h"
-#include "chrome/common/features.h"
-#include "components/cast_channel/cast_channel_util.h"
+#include "chrome/common/buildflags.h"
 
 using local_discovery::ServiceDiscoveryClient;
 using local_discovery::ServiceDiscoverySharedClient;
@@ -86,8 +85,9 @@ bool DnsSdRegistry::ServiceTypeData::RemoveService(
   return false;
 }
 
-void DnsSdRegistry::ServiceTypeData::ForceDiscovery() {
-  lister_->Discover();
+void DnsSdRegistry::ServiceTypeData::ResetAndDiscover() {
+  lister_->Reset();
+  ClearServices();
 }
 
 bool DnsSdRegistry::ServiceTypeData::ClearServices() {
@@ -147,10 +147,10 @@ void DnsSdRegistry::Publish(const std::string& service_type) {
   DispatchApiEvent(service_type);
 }
 
-void DnsSdRegistry::ForceDiscovery() {
+void DnsSdRegistry::ResetAndDiscover() {
   DCHECK(thread_checker_.CalledOnValidThread());
   for (const auto& next_service : service_data_map_) {
-    next_service.second->ForceDiscovery();
+    next_service.second->ResetAndDiscover();
   }
 }
 
@@ -197,8 +197,11 @@ void DnsSdRegistry::ServiceChanged(const std::string& service_type,
   if (!IsRegistered(service_type))
     return;
 
+  // TODO(imcheng): This should be validated upstream in
+  // dns_sd_device_lister.cc, i.e., |service.ip_address| should be a
+  // valid net::IPAddress.
   net::IPAddress ip_address;
-  if (!cast_channel::IsValidCastIPAddressString(service.ip_address)) {
+  if (!ip_address.AssignFromIPLiteral(service.ip_address)) {
     VLOG(1) << "Invalid IP address: " << service.ip_address;
     return;
   }

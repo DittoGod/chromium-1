@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/extensions/file_manager/device_event_router.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -11,13 +12,14 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
+#include "chromeos/disks/disk.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace file_manager {
 namespace {
 
 namespace file_manager_private = extensions::api::file_manager_private;
-typedef chromeos::disks::DiskMountManager::Disk Disk;
+using chromeos::disks::Disk;
 
 const char kTestDevicePath[] = "/device/test";
 
@@ -32,7 +34,7 @@ class DeviceEventRouterImpl : public DeviceEventRouter {
   DeviceEventRouterImpl()
       : DeviceEventRouter(base::TimeDelta::FromSeconds(0)),
         external_storage_disabled(false) {}
-  ~DeviceEventRouterImpl() override {}
+  ~DeviceEventRouterImpl() override = default;
 
   // DeviceEventRouter overrides.
   void OnDeviceEvent(file_manager_private::DeviceEventType type,
@@ -63,16 +65,20 @@ class DeviceEventRouterImpl : public DeviceEventRouter {
 class DeviceEventRouterTest : public testing::Test {
  protected:
   void SetUp() override {
-    device_event_router.reset(new DeviceEventRouterImpl());
+    device_event_router = std::make_unique<DeviceEventRouterImpl>();
   }
 
   // Creates a disk instance with |device_path| and |mount_path| for testing.
   Disk CreateTestDisk(const std::string& device_path,
                       const std::string& mount_path,
                       bool is_read_only_hardware) {
-    return Disk(device_path, mount_path, false, "", "", "", "", "", "", "", "",
-                "", device_path, chromeos::DEVICE_TYPE_UNKNOWN, 0, false,
-                is_read_only_hardware, false, false, false, false, "vfat", "");
+    return *Disk::Builder()
+                .SetDevicePath(device_path)
+                .SetMountPath(mount_path)
+                .SetSystemPathPrefix(device_path)
+                .SetIsReadOnlyHardware(is_read_only_hardware)
+                .SetFileSystemType("vfat")
+                .Build();
   }
 
   std::unique_ptr<DeviceEventRouterImpl> device_event_router;

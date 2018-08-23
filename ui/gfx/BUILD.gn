@@ -4,7 +4,7 @@
 
 import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
-import("//device/vr/features/features.gni")
+import("//device/vr/buildflags/buildflags.gni")
 import("//testing/test.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 
@@ -37,6 +37,7 @@ jumbo_component("geometry_skia") {
   ]
   deps = [
     "//base",
+    "//gpu/vulkan:buildflags",
     "//skia",
     "//ui/gfx/geometry",
   ]
@@ -59,11 +60,16 @@ jumbo_component("gfx") {
     "color_utils.h",
     "decorated_text.cc",
     "decorated_text.h",
+    "decorated_text_mac.h",
+    "decorated_text_mac.mm",
+    "extension_set.cc",
+    "extension_set.h",
     "favicon_size.cc",
     "favicon_size.h",
     "font.cc",
     "font.h",
     "font_fallback.h",
+    "font_fallback_android.cc",
     "font_fallback_linux.cc",
     "font_fallback_linux.h",
     "font_fallback_mac.mm",
@@ -123,6 +129,7 @@ jumbo_component("gfx") {
     "mac/nswindow_frame_controls.h",
     "mac/nswindow_frame_controls.mm",
     "mac/scoped_cocoa_disable_screen_updates.h",
+    "mac/scoped_cocoa_disable_screen_updates.mm",
     "nine_image_painter.cc",
     "nine_image_painter.h",
     "path.cc",
@@ -134,7 +141,6 @@ jumbo_component("gfx") {
     "path_x11.cc",
     "path_x11.h",
     "platform_font.h",
-    "platform_font_android.cc",
     "platform_font_ios.h",
     "platform_font_ios.mm",
     "platform_font_linux.cc",
@@ -165,7 +171,6 @@ jumbo_component("gfx") {
     "text_elider.h",
     "text_utils.cc",
     "text_utils.h",
-    "text_utils_android.cc",
     "text_utils_ios.mm",
     "ui_gfx_exports.cc",
     "utf16_indexing.cc",
@@ -198,7 +203,6 @@ jumbo_component("gfx") {
       "blit.h",
       "canvas.cc",
       "canvas.h",
-      "canvas_notimplemented.cc",
       "canvas_paint_mac.h",
       "canvas_paint_mac.mm",
       "canvas_skia.cc",
@@ -250,39 +254,12 @@ jumbo_component("gfx") {
     "//base:base_static",
     "//base:i18n",
     "//base/third_party/dynamic_annotations",
-    "//device/vr/features",
+    "//device/vr/buildflags",
     "//skia",
     "//third_party/zlib",
   ]
 
-  # Text rendering conditions (complicated so separated out).
-  if (use_aura || is_mac || (is_android && enable_vr) || is_fuchsia) {
-    # Mac doesn't use RenderTextHarfBuzz by default yet.
-    sources += [
-      "harfbuzz_font_skia.cc",
-      "harfbuzz_font_skia.h",
-      "render_text_harfbuzz.cc",
-      "render_text_harfbuzz.h",
-      "render_text_mac.h",
-      "render_text_mac.mm",
-      "text_utils_skia.cc",
-    ]
-
-    if (!is_ios) {
-      sources += [
-        "render_text.cc",
-        "render_text.h",
-      ]
-    }
-  } else {
-    # We don't support RenderText on these platforms.
-  }
-
-  if (is_android && enable_vr) {
-    sources -= [
-      "platform_font_android.cc",
-      "text_utils_android.cc",
-    ]
+  if (is_android) {
     set_sources_assignment_filter([])
     sources += [
       "platform_font_linux.cc",
@@ -297,25 +274,12 @@ jumbo_component("gfx") {
     sources += [ "scoped_cg_context_save_gstate_mac.h" ]
     set_sources_assignment_filter(sources_assignment_filter)
   } else {
-    deps += [
-      "//cc/paint",
-      "//third_party:freetype_harfbuzz",
-    ]
+    public_deps += [ "//cc/paint" ]
+    deps += [ "//third_party:freetype_harfbuzz" ]
   }
 
   # Android.
   if (is_android) {
-    if (enable_vr) {
-      sources -= [ "canvas_notimplemented.cc" ]
-      sources += [ "font_fallback_android.cc" ]
-    } else {
-      sources -= [
-        "canvas_skia.cc",
-        "path.cc",
-        "selection_model.cc",
-      ]
-    }
-
     if (!is_debug) {
       configs -= [ "//build/config/compiler:default_optimization" ]
       configs += [ "//build/config/compiler:optimize_max" ]
@@ -326,14 +290,21 @@ jumbo_component("gfx") {
       "android",
       "jnigraphics",
     ]
-  } else if (!is_ios) {
-    sources -= [ "canvas_notimplemented.cc" ]
   }
 
   if (!is_ios) {
     sources += [
+      "harfbuzz_font_skia.cc",
+      "harfbuzz_font_skia.h",
       "paint_vector_icon.cc",
       "paint_vector_icon.h",
+      "render_text.cc",
+      "render_text.h",
+      "render_text_harfbuzz.cc",
+      "render_text_harfbuzz.h",
+      "render_text_mac.h",
+      "render_text_mac.mm",
+      "text_utils_skia.cc",
       "vector_icon_types.h",
     ]
   }
@@ -405,20 +376,25 @@ jumbo_component("color_space") {
     "skia_color_space_util.cc",
     "skia_color_space_util.h",
   ]
+  deps = [
+    "//skia:skcms",
+  ]
   public_deps = [
     "//base",
     "//skia",
   ]
   if (is_mac) {
+    sources += [
+      "mac/display_icc_profiles.cc",
+      "mac/display_icc_profiles.h",
+    ]
     libs = [
       "CoreFoundation.framework",
       "CoreGraphics.framework",
     ]
   }
   if (use_x11) {
-    deps = [
-      "//ui/gfx/x",
-    ]
+    deps += [ "//ui/gfx/x" ]
     configs += [ "//build/config/linux:x11" ]
   }
   defines = [ "COLOR_SPACE_IMPLEMENTATION" ]
@@ -564,6 +540,10 @@ source_set("memory_buffer_sources") {
     deps += [ "//third_party/libdrm" ]
   }
 
+  if (is_linux || is_android) {
+    deps += [ "//third_party/libsync" ]
+  }
+
   if (is_mac) {
     sources += [
       "mac/io_surface.cc",
@@ -571,6 +551,10 @@ source_set("memory_buffer_sources") {
     ]
 
     public_deps += [ "//ui/gfx:color_space" ]
+  }
+
+  if (is_win) {
+    public_deps += [ "//ipc:message_support" ]
   }
 }
 
@@ -601,8 +585,6 @@ static_library("test_support") {
     "image/image_unittest_util.h",
     "image/image_unittest_util_ios.mm",
     "image/image_unittest_util_mac.mm",
-    "test/fontconfig_util_linux.cc",
-    "test/fontconfig_util_linux.h",
     "test/gfx_util.cc",
     "test/gfx_util.h",
     "test/icc_profiles.cc",
@@ -626,10 +608,6 @@ static_library("test_support") {
     sources += [ "render_text_test_api.h" ]
 
     deps += [ "//third_party:freetype_harfbuzz" ]
-  }
-
-  if (is_linux) {
-    deps += [ "//third_party/fontconfig" ]
   }
 }
 
@@ -737,7 +715,7 @@ test("gfx_unittests") {
     "//ui/resources:ui_test_pak",
   ]
 
-  if (!is_android && !is_ios) {
+  if (!is_ios) {
     sources += [ "render_text_unittest.cc" ]
     deps += [ "//third_party:freetype_harfbuzz" ]
   }
@@ -793,7 +771,7 @@ test("gfx_unittests") {
   if (!is_ios) {
     deps += [
       "//cc/paint",
-      "//mojo/edk/system",
+      "//mojo/core/embedder",
       "//mojo/public/cpp/bindings",
       "//ui/gfx/geometry/mojo:unit_test",
       "//ui/gfx/image/mojo:unit_test",

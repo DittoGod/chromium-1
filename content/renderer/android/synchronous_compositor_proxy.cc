@@ -7,7 +7,6 @@
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/memory/shared_memory.h"
-#include "cc/ipc/cc_param_traits.h"
 #include "content/common/android/sync_compositor_statics.h"
 #include "content/common/input/sync_compositor_messages.h"
 #include "content/public/common/content_switches.h"
@@ -22,33 +21,20 @@
 namespace content {
 
 SynchronousCompositorProxy::SynchronousCompositorProxy(
-    int routing_id,
-    IPC::Sender* sender,
     ui::SynchronousInputHandlerProxy* input_handler_proxy)
-    : routing_id_(routing_id),
-      sender_(sender),
-      input_handler_proxy_(input_handler_proxy),
+    : input_handler_proxy_(input_handler_proxy),
+      binding_(this),
       use_in_process_zero_copy_software_draw_(
           base::CommandLine::ForCurrentProcess()->HasSwitch(
               switches::kSingleProcess)),
-      layer_tree_frame_sink_(nullptr),
-      inside_receive_(false),
-      hardware_draw_reply_(nullptr),
-      software_draw_reply_(nullptr),
-      hardware_draw_reply_async_(false),
-      compute_scroll_called_via_ipc_(false),
-      browser_needs_begin_frame_state_(false),
-      needs_begin_frame_for_frame_sink_(false),
-      needs_begin_frame_for_animate_input_(false),
-      version_(0u),
       page_scale_factor_(0.f),
       min_page_scale_factor_(0.f),
       max_page_scale_factor_(0.f),
       need_animate_scroll_(false),
       need_invalidate_count_(0u),
+      invalidate_needs_draw_(false),
       did_activate_pending_tree_count_(0u) {
   DCHECK(input_handler_proxy_);
-  input_handler_proxy_->SetOnlySynchronouslyAnimateRootFlings(this);
 }
 
 SynchronousCompositorProxy::~SynchronousCompositorProxy() {
@@ -58,18 +44,22 @@ SynchronousCompositorProxy::~SynchronousCompositorProxy() {
   input_handler_proxy_->SetOnlySynchronouslyAnimateRootFlings(nullptr);
 }
 
+void SynchronousCompositorProxy::Init() {
+  input_handler_proxy_->SetOnlySynchronouslyAnimateRootFlings(this);
+}
+
 void SynchronousCompositorProxy::SetLayerTreeFrameSink(
     SynchronousLayerTreeFrameSink* layer_tree_frame_sink) {
   DCHECK_NE(layer_tree_frame_sink_, layer_tree_frame_sink);
+  DCHECK(layer_tree_frame_sink);
   if (layer_tree_frame_sink_) {
     layer_tree_frame_sink_->SetSyncClient(nullptr);
   }
   layer_tree_frame_sink_ = layer_tree_frame_sink;
-  if (layer_tree_frame_sink_) {
-    layer_tree_frame_sink_->SetSyncClient(this);
-    if (begin_frame_paused_)
-      layer_tree_frame_sink_->SetBeginFrameSourcePaused(true);
-  }
+  layer_tree_frame_sink_->SetSyncClient(this);
+  LayerTreeFrameSinkCreated();
+  if (begin_frame_paused_)
+    layer_tree_frame_sink_->SetBeginFrameSourcePaused(true);
 }
 
 void SynchronousCompositorProxy::SetNeedsSynchronousAnimateInput() {
@@ -78,7 +68,7 @@ void SynchronousCompositorProxy::SetNeedsSynchronousAnimateInput() {
     SendSetNeedsBeginFramesIfNeeded();
   } else {
     need_animate_scroll_ = true;
-    Invalidate();
+    Invalidate(true);
   }
 }
 
@@ -106,8 +96,9 @@ void SynchronousCompositorProxy::UpdateRootLayerState(
   }
 }
 
-void SynchronousCompositorProxy::Invalidate() {
+void SynchronousCompositorProxy::Invalidate(bool needs_draw) {
   ++need_invalidate_count_;
+  invalidate_needs_draw_ |= needs_draw;
   SendAsyncRendererStateIfNeeded();
 }
 
@@ -116,16 +107,8 @@ void SynchronousCompositorProxy::DidActivatePendingTree() {
   SendAsyncRendererStateIfNeeded();
 }
 
-void SynchronousCompositorProxy::SendAsyncRendererStateIfNeeded() {
-  if (inside_receive_)
-    return;
-  SyncCompositorCommonRendererParams params;
-  PopulateCommonParams(&params);
-  Send(new SyncCompositorHostMsg_UpdateState(routing_id_, params));
-}
-
 void SynchronousCompositorProxy::PopulateCommonParams(
-    SyncCompositorCommonRendererParams* params) const {
+    SyncCompositorCommonRendererParams* params) {
   params->version = ++version_;
   params->total_scroll_offset = total_scroll_offset_;
   params->max_scroll_offset = max_scroll_offset_;
@@ -134,118 +117,45 @@ void SynchronousCompositorProxy::PopulateCommonParams(
   params->min_page_scale_factor = min_page_scale_factor_;
   params->max_page_scale_factor = max_page_scale_factor_;
   params->need_invalidate_count = need_invalidate_count_;
+  params->invalidate_needs_draw = invalidate_needs_draw_;
   params->did_activate_pending_tree_count = did_activate_pending_tree_count_;
   if (!compute_scroll_called_via_ipc_)
     params->need_animate_scroll = need_animate_scroll_;
 }
 
-void SynchronousCompositorProxy::OnMessageReceived(
-    const IPC::Message& message) {
-  if (layer_tree_frame_sink_ &&
-      layer_tree_frame_sink_->OnMessageReceived(message))
-    return;
-
-  IPC_BEGIN_MESSAGE_MAP(SynchronousCompositorProxy, message)
-    IPC_MESSAGE_HANDLER(SyncCompositorMsg_ComputeScroll, OnComputeScroll)
-    IPC_MESSAGE_HANDLER_DELAY_REPLY(SyncCompositorMsg_DemandDrawHw,
-                                    DemandDrawHw)
-    IPC_MESSAGE_HANDLER(SyncCompositorMsg_DemandDrawHwAsync, DemandDrawHwAsync)
-    IPC_MESSAGE_HANDLER(SyncCompositorMsg_SetSharedMemory, SetSharedMemory)
-    IPC_MESSAGE_HANDLER(SyncCompositorMsg_ZeroSharedMemory, ZeroSharedMemory)
-    IPC_MESSAGE_HANDLER_DELAY_REPLY(SyncCompositorMsg_DemandDrawSw,
-                                    DemandDrawSw)
-    IPC_MESSAGE_HANDLER(SyncCompositorMsg_ZoomBy, SynchronouslyZoomBy)
-    IPC_MESSAGE_HANDLER(SyncCompositorMsg_SetScroll, SetScroll)
-    IPC_MESSAGE_HANDLER(SyncCompositorMsg_SetBeginFramePaused,
-                        OnSetBeginFrameSourcePaused)
-    IPC_MESSAGE_HANDLER(SyncCompositorMsg_BeginFrame, OnBeginFrame)
-  IPC_END_MESSAGE_MAP()
-}
-
-bool SynchronousCompositorProxy::Send(IPC::Message* message) {
-  return sender_->Send(message);
-}
-
 void SynchronousCompositorProxy::DemandDrawHwAsync(
     const SyncCompositorDemandDrawHwParams& params) {
-  DoDemandDrawHw(params, nullptr);
+  DemandDrawHw(
+      params,
+      base::BindOnce(&SynchronousCompositorProxy::SendDemandDrawHwAsyncReply,
+                     base::Unretained(this)));
 }
 
 void SynchronousCompositorProxy::DemandDrawHw(
     const SyncCompositorDemandDrawHwParams& params,
-    IPC::Message* reply_message) {
-  DCHECK(reply_message);
-  DoDemandDrawHw(params, reply_message);
-}
-
-void SynchronousCompositorProxy::DoDemandDrawHw(
-    const SyncCompositorDemandDrawHwParams& params,
-    IPC::Message* reply_message) {
-  DCHECK(!inside_receive_);
-  inside_receive_ = true;
+    DemandDrawHwCallback callback) {
+  invalidate_needs_draw_ = false;
+  hardware_draw_reply_ = std::move(callback);
 
   if (layer_tree_frame_sink_) {
-    if (!reply_message) {
-      base::AutoReset<bool> scoped_hardware_draw_reply_async(
-          &hardware_draw_reply_async_, true);
-      layer_tree_frame_sink_->DemandDrawHw(
-          params.viewport_size, params.viewport_rect_for_tile_priority,
-          params.transform_for_tile_priority);
-    } else {
-      base::AutoReset<IPC::Message*> scoped_hardware_draw_reply(
-          &hardware_draw_reply_, reply_message);
-      layer_tree_frame_sink_->DemandDrawHw(
-          params.viewport_size, params.viewport_rect_for_tile_priority,
-          params.transform_for_tile_priority);
-    }
+    layer_tree_frame_sink_->DemandDrawHw(params.viewport_size,
+                                         params.viewport_rect_for_tile_priority,
+                                         params.transform_for_tile_priority);
   }
 
-  if (inside_receive_) {
+  // Ensure that a response is always sent even if the reply hasn't
+  // generated a compostior frame.
+  if (hardware_draw_reply_) {
+    SyncCompositorCommonRendererParams common_renderer_params;
+    PopulateCommonParams(&common_renderer_params);
     // Did not swap.
-    if (!reply_message) {
-      SendDemandDrawHwReplyAsync(base::nullopt, 0u);
-    } else {
-      SendDemandDrawHwReply(base::nullopt, 0u, reply_message);
-    }
-    inside_receive_ = false;
+    std::move(hardware_draw_reply_)
+        .Run(common_renderer_params, 0u, 0u, base::nullopt);
   }
 }
 
-void SynchronousCompositorProxy::SubmitCompositorFrameHwAsync(
-    uint32_t layer_tree_frame_sink_id,
-    viz::CompositorFrame frame) {
-  DCHECK(inside_receive_);
-  DCHECK(hardware_draw_reply_async_);
-  SendDemandDrawHwReplyAsync(std::move(frame), layer_tree_frame_sink_id);
-  inside_receive_ = false;
-}
-
-void SynchronousCompositorProxy::SubmitCompositorFrameHw(
-    uint32_t layer_tree_frame_sink_id,
-    viz::CompositorFrame frame) {
-  DCHECK(inside_receive_);
-  DCHECK(hardware_draw_reply_);
-  SendDemandDrawHwReply(std::move(frame), layer_tree_frame_sink_id,
-                        hardware_draw_reply_);
-  inside_receive_ = false;
-}
-
-void SynchronousCompositorProxy::SendDemandDrawHwReplyAsync(
-    base::Optional<viz::CompositorFrame> frame,
-    uint32_t layer_tree_frame_sink_id) {
-  Send(new SyncCompositorHostMsg_ReturnFrame(routing_id_,
-                                             layer_tree_frame_sink_id, frame));
-}
-
-void SynchronousCompositorProxy::SendDemandDrawHwReply(
-    base::Optional<viz::CompositorFrame> frame,
-    uint32_t layer_tree_frame_sink_id,
-    IPC::Message* reply_message) {
-  SyncCompositorCommonRendererParams common_renderer_params;
-  PopulateCommonParams(&common_renderer_params);
-  SyncCompositorMsg_DemandDrawHw::WriteReplyParams(
-      reply_message, common_renderer_params, layer_tree_frame_sink_id, frame);
-  Send(reply_message);
+void SynchronousCompositorProxy::WillSkipDraw() {
+  layer_tree_frame_sink_->WillSkipDraw();
 }
 
 struct SynchronousCompositorProxy::SharedMemoryWithSize {
@@ -256,26 +166,6 @@ struct SynchronousCompositorProxy::SharedMemoryWithSize {
   SharedMemoryWithSize(base::SharedMemoryHandle shm_handle, size_t buffer_size)
       : shm(shm_handle, false), buffer_size(buffer_size), zeroed(true) {}
 };
-
-void SynchronousCompositorProxy::SetSharedMemory(
-    const SyncCompositorSetSharedMemoryParams& params,
-    bool* success,
-    SyncCompositorCommonRendererParams* common_renderer_params) {
-  DCHECK(!inside_receive_);
-  base::AutoReset<bool> scoped_inside_receive(&inside_receive_, true);
-
-  *success = false;
-  if (!base::SharedMemory::IsHandleValid(params.shm_handle))
-    return;
-
-  software_draw_shm_.reset(
-      new SharedMemoryWithSize(params.shm_handle, params.buffer_size));
-  if (!software_draw_shm_->shm.Map(params.buffer_size))
-    return;
-  DCHECK(software_draw_shm_->shm.memory());
-  PopulateCommonParams(common_renderer_params);
-  *success = true;
-}
 
 void SynchronousCompositorProxy::ZeroSharedMemory() {
   // It is possible for this to get called twice, eg. if draw is called before
@@ -290,12 +180,10 @@ void SynchronousCompositorProxy::ZeroSharedMemory() {
 
 void SynchronousCompositorProxy::DemandDrawSw(
     const SyncCompositorDemandDrawSwParams& params,
-    IPC::Message* reply_message) {
-  DCHECK(!inside_receive_);
-  inside_receive_ = true;
+    DemandDrawSwCallback callback) {
+  invalidate_needs_draw_ = false;
+  software_draw_reply_ = std::move(callback);
   if (layer_tree_frame_sink_) {
-    base::AutoReset<IPC::Message*> scoped_software_draw_reply(
-        &software_draw_reply_, reply_message);
     SkCanvas* sk_canvas_for_draw = SynchronousCompositorGetSkCanvas();
     if (use_in_process_zero_copy_software_draw_) {
       DCHECK(sk_canvas_for_draw);
@@ -305,10 +193,15 @@ void SynchronousCompositorProxy::DemandDrawSw(
       DoDemandDrawSw(params);
     }
   }
-  if (inside_receive_) {
+
+  // Ensure that a response is always sent even if the reply hasn't
+  // generated a compostior frame.
+  if (software_draw_reply_) {
+    SyncCompositorCommonRendererParams common_renderer_params;
+    PopulateCommonParams(&common_renderer_params);
     // Did not swap.
-    SendDemandDrawSwReply(base::nullopt, reply_message);
-    inside_receive_ = false;
+    std::move(software_draw_reply_)
+        .Run(common_renderer_params, 0u, base::nullopt);
   }
 }
 
@@ -334,39 +227,24 @@ void SynchronousCompositorProxy::DoDemandDrawSw(
   layer_tree_frame_sink_->DemandDrawSw(&canvas);
 }
 
-void SynchronousCompositorProxy::SubmitCompositorFrameSw(
-    viz::CompositorFrame frame) {
-  DCHECK(inside_receive_);
-  DCHECK(software_draw_reply_);
-  SendDemandDrawSwReply(std::move(frame.metadata), software_draw_reply_);
-  inside_receive_ = false;
-}
-
-void SynchronousCompositorProxy::SendDemandDrawSwReply(
-    base::Optional<viz::CompositorFrameMetadata> metadata,
-    IPC::Message* reply_message) {
-  SyncCompositorCommonRendererParams common_renderer_params;
-  PopulateCommonParams(&common_renderer_params);
-  SyncCompositorMsg_DemandDrawSw::WriteReplyParams(
-      reply_message, common_renderer_params, metadata);
-  Send(reply_message);
-}
-
 void SynchronousCompositorProxy::SubmitCompositorFrame(
     uint32_t layer_tree_frame_sink_id,
     viz::CompositorFrame frame) {
   // Verify that exactly one of these is true.
-  DCHECK(hardware_draw_reply_async_ || hardware_draw_reply_ ||
-         software_draw_reply_);
-  DCHECK(!((hardware_draw_reply_ && software_draw_reply_) ||
-           (hardware_draw_reply_ && hardware_draw_reply_async_) ||
-           (software_draw_reply_ && hardware_draw_reply_async_)));
-  if (hardware_draw_reply_async_) {
-    SubmitCompositorFrameHwAsync(layer_tree_frame_sink_id, std::move(frame));
-  } else if (hardware_draw_reply_) {
-    SubmitCompositorFrameHw(layer_tree_frame_sink_id, std::move(frame));
+  DCHECK(hardware_draw_reply_.is_null() ^ software_draw_reply_.is_null());
+  SyncCompositorCommonRendererParams common_renderer_params;
+  PopulateCommonParams(&common_renderer_params);
+
+  if (hardware_draw_reply_) {
+    std::move(hardware_draw_reply_)
+        .Run(common_renderer_params, layer_tree_frame_sink_id,
+             NextMetadataVersion(), std::move(frame));
   } else if (software_draw_reply_) {
-    SubmitCompositorFrameSw(std::move(frame));
+    std::move(software_draw_reply_)
+        .Run(common_renderer_params, NextMetadataVersion(),
+             std::move(frame.metadata));
+  } else {
+    NOTREACHED();
   }
 }
 
@@ -374,8 +252,7 @@ void SynchronousCompositorProxy::SendSetNeedsBeginFramesIfNeeded() {
   bool needs_begin_frames =
       needs_begin_frame_for_frame_sink_ || needs_begin_frame_for_animate_input_;
   if (browser_needs_begin_frame_state_ != needs_begin_frames)
-    Send(new SyncCompositorHostMsg_SetNeedsBeginFrames(routing_id_,
-                                                       needs_begin_frames));
+    SendSetNeedsBeginFrames(needs_begin_frames);
   browser_needs_begin_frame_state_ = needs_begin_frames;
 }
 
@@ -384,8 +261,11 @@ void SynchronousCompositorProxy::SetNeedsBeginFrames(bool needs_begin_frames) {
   SendSetNeedsBeginFramesIfNeeded();
 }
 
-void SynchronousCompositorProxy::OnComputeScroll(
-    base::TimeTicks animation_time) {
+void SynchronousCompositorProxy::SinkDestroyed() {
+  layer_tree_frame_sink_ = nullptr;
+}
+
+void SynchronousCompositorProxy::ComputeScroll(base::TimeTicks animation_time) {
   compute_scroll_called_via_ipc_ = true;
 
   if (need_animate_scroll_) {
@@ -394,13 +274,13 @@ void SynchronousCompositorProxy::OnComputeScroll(
   }
 }
 
-void SynchronousCompositorProxy::OnSetBeginFrameSourcePaused(bool paused) {
+void SynchronousCompositorProxy::SetBeginFrameSourcePaused(bool paused) {
   begin_frame_paused_ = paused;
   if (layer_tree_frame_sink_)
     layer_tree_frame_sink_->SetBeginFrameSourcePaused(paused);
 }
 
-void SynchronousCompositorProxy::OnBeginFrame(const viz::BeginFrameArgs& args) {
+void SynchronousCompositorProxy::BeginFrame(const viz::BeginFrameArgs& args) {
   if (needs_begin_frame_for_animate_input_) {
     needs_begin_frame_for_animate_input_ = false;
     input_handler_proxy_->SynchronouslyAnimate(args.frame_time);
@@ -410,17 +290,7 @@ void SynchronousCompositorProxy::OnBeginFrame(const viz::BeginFrameArgs& args) {
 
   SyncCompositorCommonRendererParams param;
   PopulateCommonParams(&param);
-  Send(new SyncCompositorHostMsg_BeginFrameResponse(routing_id_, param));
-}
-
-void SynchronousCompositorProxy::SynchronouslyZoomBy(
-    float zoom_delta,
-    const gfx::Point& anchor,
-    SyncCompositorCommonRendererParams* common_renderer_params) {
-  DCHECK(!inside_receive_);
-  base::AutoReset<bool> scoped_inside_receive(&inside_receive_, true);
-  input_handler_proxy_->SynchronouslyZoomBy(zoom_delta, anchor);
-  PopulateCommonParams(common_renderer_params);
+  SendBeginFrameResponse(param);
 }
 
 void SynchronousCompositorProxy::SetScroll(
@@ -429,6 +299,102 @@ void SynchronousCompositorProxy::SetScroll(
     return;
   total_scroll_offset_ = new_total_scroll_offset;
   input_handler_proxy_->SynchronouslySetRootScrollOffset(total_scroll_offset_);
+}
+
+void SynchronousCompositorProxy::SetMemoryPolicy(uint32_t bytes_limit) {
+  if (!layer_tree_frame_sink_)
+    return;
+  layer_tree_frame_sink_->SetMemoryPolicy(bytes_limit);
+}
+
+void SynchronousCompositorProxy::ReclaimResources(
+    uint32_t layer_tree_frame_sink_id,
+    const std::vector<viz::ReturnedResource>& resources) {
+  if (!layer_tree_frame_sink_)
+    return;
+  layer_tree_frame_sink_->ReclaimResources(layer_tree_frame_sink_id, resources);
+}
+
+void SynchronousCompositorProxy::SetSharedMemory(
+    const SyncCompositorSetSharedMemoryParams& params,
+    SetSharedMemoryCallback callback) {
+  bool success = false;
+  SyncCompositorCommonRendererParams common_renderer_params;
+  if (base::SharedMemory::IsHandleValid(params.shm_handle)) {
+    software_draw_shm_.reset(
+        new SharedMemoryWithSize(params.shm_handle, params.buffer_size));
+    if (software_draw_shm_->shm.Map(params.buffer_size)) {
+      DCHECK(software_draw_shm_->shm.memory());
+      PopulateCommonParams(&common_renderer_params);
+      success = true;
+    }
+  }
+  std::move(callback).Run(success, common_renderer_params);
+}
+
+void SynchronousCompositorProxy::ZoomBy(float zoom_delta,
+                                        const gfx::Point& anchor,
+                                        ZoomByCallback callback) {
+  zoom_by_reply_ = std::move(callback);
+  input_handler_proxy_->SynchronouslyZoomBy(zoom_delta, anchor);
+  SyncCompositorCommonRendererParams common_renderer_params;
+  PopulateCommonParams(&common_renderer_params);
+  std::move(zoom_by_reply_).Run(common_renderer_params);
+}
+
+uint32_t SynchronousCompositorProxy::NextMetadataVersion() {
+  return ++metadata_version_;
+}
+
+void SynchronousCompositorProxy::SendDemandDrawHwAsyncReply(
+    const content::SyncCompositorCommonRendererParams&,
+    uint32_t layer_tree_frame_sink_id,
+    uint32_t metadata_version,
+    base::Optional<viz::CompositorFrame> frame) {
+  control_host_->ReturnFrame(layer_tree_frame_sink_id, metadata_version,
+                             std::move(frame));
+}
+
+void SynchronousCompositorProxy::SendBeginFrameResponse(
+    const content::SyncCompositorCommonRendererParams& param) {
+  control_host_->BeginFrameResponse(param);
+}
+
+void SynchronousCompositorProxy::SendAsyncRendererStateIfNeeded() {
+  if (hardware_draw_reply_ || software_draw_reply_ || zoom_by_reply_ || !host_)
+    return;
+
+  SyncCompositorCommonRendererParams params;
+  PopulateCommonParams(&params);
+  host_->UpdateState(params);
+}
+
+void SynchronousCompositorProxy::SendSetNeedsBeginFrames(
+    bool needs_begin_frames) {
+  needs_begin_frame_ = needs_begin_frames;
+  if (host_)
+    host_->SetNeedsBeginFrames(needs_begin_frames);
+}
+
+void SynchronousCompositorProxy::LayerTreeFrameSinkCreated() {
+  DCHECK(layer_tree_frame_sink_);
+  if (host_)
+    host_->LayerTreeFrameSinkCreated();
+}
+
+void SynchronousCompositorProxy::BindChannel(
+    mojom::SynchronousCompositorControlHostPtr control_host,
+    mojom::SynchronousCompositorHostAssociatedPtrInfo host,
+    mojom::SynchronousCompositorAssociatedRequest compositor_request) {
+  control_host_ = std::move(control_host);
+  host_.Bind(std::move(host));
+  binding_.Bind(std::move(compositor_request));
+
+  if (layer_tree_frame_sink_)
+    LayerTreeFrameSinkCreated();
+
+  if (needs_begin_frame_)
+    host_->SetNeedsBeginFrames(true);
 }
 
 }  // namespace content

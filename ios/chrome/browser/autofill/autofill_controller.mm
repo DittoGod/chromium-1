@@ -13,7 +13,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
 #import "components/autofill/ios/browser/autofill_agent.h"
 #import "components/autofill/ios/browser/autofill_client_ios_bridge.h"
 #include "components/autofill/ios/browser/autofill_driver_ios.h"
@@ -23,14 +22,10 @@
 #include "components/infobars/core/infobar_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/profile_identity_provider.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #include "ios/chrome/browser/pref_names.h"
-#include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
 #import "ios/chrome/browser/ui/autofill/chrome_autofill_client_ios.h"
 #import "ios/web/public/web_state/web_state.h"
 
@@ -68,16 +63,9 @@ using autofill::AutofillPopupDelegate;
     infobars::InfoBarManager* infobarManager =
         InfoBarManagerImpl::FromWebState(webState);
     DCHECK(infobarManager);
-    ios::ChromeBrowserState* originalBrowserState =
-        browserState->GetOriginalChromeBrowserState();
-    std::unique_ptr<IdentityProvider> identityProvider(
-        new ProfileIdentityProvider(
-            ios::SigninManagerFactory::GetForBrowserState(originalBrowserState),
-            OAuth2TokenServiceFactory::GetForBrowserState(originalBrowserState),
-            base::Closure()));
     _autofillClient.reset(new autofill::ChromeAutofillClientIOS(
-        browserState, webState, infobarManager, self, passwordGenerationManager,
-        std::move(identityProvider)));
+        browserState, webState, infobarManager, self,
+        passwordGenerationManager));
     autofill::AutofillDriverIOS::CreateForWebStateAndDelegate(
         webState, _autofillClient.get(), self,
         GetApplicationContext()->GetApplicationLocale(),
@@ -129,8 +117,6 @@ using autofill::AutofillPopupDelegate;
 - (void)
 showAutofillPopup:(const std::vector<autofill::Suggestion>&)popup_suggestions
     popupDelegate:(const base::WeakPtr<AutofillPopupDelegate>&)delegate {
-  DCHECK(
-      _browserState->GetPrefs()->GetBoolean(autofill::prefs::kAutofillEnabled));
   // Convert the suggestions into an NSArray for the keyboard.
   NSMutableArray* suggestions = [[NSMutableArray alloc] init];
   for (size_t i = 0; i < popup_suggestions.size(); ++i) {
@@ -139,9 +125,10 @@ showAutofillPopup:(const std::vector<autofill::Suggestion>&)popup_suggestions
     // such as separators ... see blink::WebAutofillClient::MenuItemIDSeparator
     // for example. We can't include that enum because it's from WebKit, but
     // fortunately almost all the entries we are interested in (profile or
-    // autofill entries) are zero or positive. The only negative entry we are
+    // autofill entries) are zero or positive. Negative entries we are
     // interested in is autofill::POPUP_ITEM_ID_CLEAR_FORM, used to show the
-    // "clear form" button.
+    // "clear form" button and autofill::POPUP_ITEM_ID_GOOGLE_PAY_BRANDING, used
+    // to show the "Google Pay" branding.
     NSString* value = nil;
     NSString* displayDescription = nil;
     if (popup_suggestions[i].frontend_id >= 0) {
@@ -153,6 +140,10 @@ showAutofillPopup:(const std::vector<autofill::Suggestion>&)popup_suggestions
     } else if (popup_suggestions[i].frontend_id ==
                autofill::POPUP_ITEM_ID_CLEAR_FORM) {
       // Show the "clear form" button.
+      value = base::SysUTF16ToNSString(popup_suggestions[i].value);
+    } else if (popup_suggestions[i].frontend_id ==
+               autofill::POPUP_ITEM_ID_GOOGLE_PAY_BRANDING) {
+      // Show "GPay branding" icon
       value = base::SysUTF16ToNSString(popup_suggestions[i].value);
     }
 
@@ -182,15 +173,13 @@ showAutofillPopup:(const std::vector<autofill::Suggestion>&)popup_suggestions
 
 - (void)onFormDataFilled:(uint16_t)query_id
                   result:(const autofill::FormData&)result {
-  DCHECK(
-      _browserState->GetPrefs()->GetBoolean(autofill::prefs::kAutofillEnabled));
   [_autofillAgent onFormDataFilled:result];
   if (_autofillManager)
     _autofillManager->OnDidFillAutofillFormData(result, base::TimeTicks::Now());
 }
 
 - (void)sendAutofillTypePredictionsToRenderer:
-    (const std::vector<autofill::FormStructure*>&)forms {
+    (const std::vector<autofill::FormDataPredictions>&)forms {
   [_autofillAgent renderAutofillTypePredictions:forms];
 }
 

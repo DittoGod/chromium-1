@@ -11,7 +11,9 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "components/download/internal/background_service/in_memory_download.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace download {
 
@@ -21,7 +23,7 @@ class InMemoryDownload;
 class InMemoryDownloadFactory : public InMemoryDownload::Factory {
  public:
   InMemoryDownloadFactory(
-      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+      network::mojom::URLLoaderFactory* url_loader_factory,
       BlobTaskProxy::BlobContextGetter blob_context_getter,
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner);
   ~InMemoryDownloadFactory() override;
@@ -34,7 +36,8 @@ class InMemoryDownloadFactory : public InMemoryDownload::Factory {
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       InMemoryDownload::Delegate* delegate) override;
 
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
+  network::mojom::URLLoaderFactory* url_loader_factory_;
+
   BlobTaskProxy::BlobContextGetter blob_context_getter_;
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
 
@@ -59,6 +62,7 @@ class InMemoryDownloadDriver : public DownloadDriver,
       const RequestParams& request_params,
       const std::string& guid,
       const base::FilePath& file_path,
+      scoped_refptr<network::ResourceRequestBody> post_body,
       const net::NetworkTrafficAnnotationTag& traffic_annotation) override;
   void Remove(const std::string& guid) override;
   void Pause(const std::string& guid) override;

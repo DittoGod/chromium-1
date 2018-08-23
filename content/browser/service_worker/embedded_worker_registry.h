@@ -17,11 +17,7 @@
 #include "base/strings/string16.h"
 #include "content/browser/service_worker/service_worker_lifetime_tracker.h"
 #include "content/common/content_export.h"
-#include "content/common/service_worker/service_worker_status_code.h"
-
-namespace IPC {
-class Message;
-}
+#include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 
 namespace content {
 
@@ -46,8 +42,6 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
       const base::WeakPtr<ServiceWorkerContextCore>& context,
       EmbeddedWorkerRegistry* old_registry);
 
-  bool OnMessageReceived(const IPC::Message& message, int process_id);
-
   // Creates and removes a new worker instance entry for bookkeeping.
   // This doesn't actually start or stop the worker.
   std::unique_ptr<EmbeddedWorkerInstance> CreateWorker(
@@ -61,9 +55,8 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
   bool OnWorkerStarted(int process_id, int embedded_worker_id);
   void OnWorkerStopped(int process_id, int embedded_worker_id);
 
-  // Called by EmbeddedWorkerInstance when it learns DevTools has attached to
-  // it.
-  void OnDevToolsAttached(int embedded_worker_id);
+  // Aborts the timer which tracks the lifetime of the worker for UMA logging.
+  void AbortLifetimeTracking(int embedded_worker_id);
 
   // Returns an embedded worker instance for given |embedded_worker_id|.
   EmbeddedWorkerInstance* GetWorker(int embedded_worker_id);
@@ -100,9 +93,6 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
   // called instead of WorkerStopped() in cases when the worker could not be
   // cleanly stopped, e.g., because connection with the renderer was lost.
   void DetachWorker(int process_id, int embedded_worker_id);
-
-  EmbeddedWorkerInstance* GetWorkerForMessage(int process_id,
-                                              int embedded_worker_id);
 
   base::WeakPtr<ServiceWorkerContextCore> context_;
 

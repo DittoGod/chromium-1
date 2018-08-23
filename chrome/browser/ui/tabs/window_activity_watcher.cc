@@ -4,10 +4,12 @@
 
 #include "chrome/browser/ui/tabs/window_activity_watcher.h"
 
+#include "base/logging.h"
 #include "base/optional.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/resource_coordinator/tab_metrics_event.pb.h"
+#include "chrome/browser/resource_coordinator/tab_ranker/window_features.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -16,81 +18,72 @@
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 
+#if defined(USE_AURA)
+#include "ui/aura/window.h"
+#endif
+
 using metrics::WindowMetricsEvent;
+using tab_ranker::WindowFeatures;
 
 namespace {
 
-struct WindowMetrics {
-  bool operator==(const WindowMetrics& other) {
-    return window_id == other.window_id && type == other.type &&
-           show_state == other.show_state && is_active == other.is_active &&
-           tab_count == other.tab_count;
-  }
+// Sets feature values that are dependent on the current window state.
+void UpdateWindowFeatures(const Browser* browser,
+                          WindowFeatures* window_features,
+                          bool is_active) {
+  DCHECK(browser->window());
 
-  bool operator!=(const WindowMetrics& other) { return !operator==(other); }
-
-  // ID for the window, unique within the Chrome session.
-  SessionID::id_type window_id;
-  WindowMetricsEvent::Type type;
   // TODO(michaelpg): Observe the show state and log when it changes.
-  WindowMetricsEvent::ShowState show_state;
-
-  // True if this is the active (frontmost) window.
-  bool is_active;
-
-  // Number of tabs in the tab strip.
-  int tab_count;
-};
-
-// Sets metric values that are dependent on the current window state.
-void UpdateMetrics(const Browser* browser, WindowMetrics* window_metrics) {
   if (browser->window()->IsFullscreen())
-    window_metrics->show_state = WindowMetricsEvent::SHOW_STATE_FULLSCREEN;
+    window_features->show_state = WindowMetricsEvent::SHOW_STATE_FULLSCREEN;
   else if (browser->window()->IsMinimized())
-    window_metrics->show_state = WindowMetricsEvent::SHOW_STATE_MINIMIZED;
+    window_features->show_state = WindowMetricsEvent::SHOW_STATE_MINIMIZED;
   else if (browser->window()->IsMaximized())
-    window_metrics->show_state = WindowMetricsEvent::SHOW_STATE_MAXIMIZED;
+    window_features->show_state = WindowMetricsEvent::SHOW_STATE_MAXIMIZED;
   else
-    window_metrics->show_state = WindowMetricsEvent::SHOW_STATE_NORMAL;
+    window_features->show_state = WindowMetricsEvent::SHOW_STATE_NORMAL;
 
-  window_metrics->is_active = browser->window()->IsActive();
-  window_metrics->tab_count = browser->tab_strip_model()->count();
+  window_features->is_active = is_active;
+  window_features->tab_count = browser->tab_strip_model()->count();
 }
 
-// Returns a populated WindowMetrics for the browser.
-WindowMetrics CreateMetrics(const Browser* browser) {
-  WindowMetrics window_metrics;
-  window_metrics.window_id = browser->session_id().id();
-
+// Returns a populated WindowFeatures for the browser.
+// |is_active| is provided because IsActive() may be incorrect while browser
+// activation is changing (namely, when deactivating a window on Windows).
+WindowFeatures CreateWindowFeatures(const Browser* browser, bool is_active) {
+  WindowMetricsEvent::Type window_type = WindowMetricsEvent::TYPE_UNKNOWN;
   switch (browser->type()) {
     case Browser::TYPE_TABBED:
-      window_metrics.type = WindowMetricsEvent::TYPE_TABBED;
+      window_type = WindowMetricsEvent::TYPE_TABBED;
       break;
     case Browser::TYPE_POPUP:
-      window_metrics.type = WindowMetricsEvent::TYPE_POPUP;
+      window_type = WindowMetricsEvent::TYPE_POPUP;
       break;
+    default:
+      NOTREACHED();
   }
 
-  UpdateMetrics(browser, &window_metrics);
-  return window_metrics;
+  WindowFeatures window_features(browser->session_id(), window_type);
+  UpdateWindowFeatures(browser, &window_features, is_active);
+  return window_features;
 }
 
-// Logs a UKM entry with the metrics from |window_metrics|.
-void LogWindowMetricsUkmEntry(const WindowMetrics& window_metrics) {
+// Logs a UKM entry with the metrics from |window_features|.
+void LogWindowMetricsUkmEntry(const WindowFeatures& window_features) {
   ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
   if (!ukm_recorder)
     return;
 
   ukm::builders::TabManager_WindowMetrics entry(ukm::AssignNewSourceId());
-  entry.SetWindowId(window_metrics.window_id)
-      .SetIsActive(window_metrics.is_active)
-      .SetShowState(window_metrics.show_state)
-      .SetType(window_metrics.type);
+  entry.SetWindowId(window_features.window_id.id())
+      .SetIsActive(window_features.is_active)
+      .SetShowState(window_features.show_state)
+      .SetType(window_features.type);
 
   // Bucketize values for privacy considerations. Use a spacing factor that
   // ensures values up to 3 can be logged exactly; after that, the precise
   // number becomes less significant.
-  int tab_count = window_metrics.tab_count;
+  int tab_count = window_features.tab_count;
   if (tab_count > 3)
     tab_count = ukm::GetExponentialBucketMin(tab_count, 1.5);
   entry.SetTabCount(tab_count);
@@ -113,9 +106,15 @@ class WindowActivityWatcher::BrowserWatcher : public TabStripModelObserver {
 
   ~BrowserWatcher() override = default;
 
+  void MaybeLogWindowMetricsUkmEntry() {
+    MaybeLogWindowMetricsUkmEntry(browser_->window()->IsActive());
+  }
+
   // Logs a new WindowMetrics entry to the UKM recorder if the entry would be
   // different than the last one we logged.
-  void MaybeLogWindowMetricsUkmEntry() {
+  // |is_active| is provided because IsActive() may be incorrect while browser
+  // activation is changing (namely, when deactivating a window on Windows).
+  void MaybeLogWindowMetricsUkmEntry(bool is_active) {
     // Do nothing if the window has no tabs (which can happen when a window is
     // opened, before a tab is added) or is being closed.
     if (browser_->tab_strip_model()->empty() ||
@@ -123,19 +122,20 @@ class WindowActivityWatcher::BrowserWatcher : public TabStripModelObserver {
       return;
     }
 
-    if (!last_window_metrics_) {
-      last_window_metrics_ = CreateMetrics(browser_);
-      LogWindowMetricsUkmEntry(last_window_metrics_.value());
+    if (!last_window_features_) {
+      last_window_features_.emplace(
+          ::CreateWindowFeatures(browser_, is_active));
+      LogWindowMetricsUkmEntry(last_window_features_.value());
       return;
     }
 
     // Copy old state to compare with.
-    WindowMetrics old_metrics = last_window_metrics_.value();
-    UpdateMetrics(browser_, &last_window_metrics_.value());
+    WindowFeatures old_features(last_window_features_.value());
+    UpdateWindowFeatures(browser_, &last_window_features_.value(), is_active);
 
     // We only need to create a new UKM entry if the metrics have changed.
-    if (old_metrics != last_window_metrics_.value())
-      LogWindowMetricsUkmEntry(last_window_metrics_.value());
+    if (old_features != last_window_features_.value())
+      LogWindowMetricsUkmEntry(last_window_features_.value());
   }
 
  private:
@@ -146,7 +146,9 @@ class WindowActivityWatcher::BrowserWatcher : public TabStripModelObserver {
                      bool foreground) override {
     MaybeLogWindowMetricsUkmEntry();
   }
-  void TabDetachedAt(content::WebContents* contents, int index) override {
+  void TabDetachedAt(content::WebContents* contents,
+                     int index,
+                     bool was_active) override {
     MaybeLogWindowMetricsUkmEntry();
   }
 
@@ -154,9 +156,9 @@ class WindowActivityWatcher::BrowserWatcher : public TabStripModelObserver {
   // this outlives us.
   Browser* browser_;
 
-  // The most recent WindowMetrics entry logged. We only log a new UKM entry if
+  // The most recent WindowFeatures entry logged. We only log a new UKM entry if
   // some metric value has changed.
-  base::Optional<WindowMetrics> last_window_metrics_;
+  base::Optional<WindowFeatures> last_window_features_;
 
   // Used to update the tab count for browser windows.
   ScopedObserver<TabStripModel, TabStripModelObserver> observer_;
@@ -168,6 +170,13 @@ class WindowActivityWatcher::BrowserWatcher : public TabStripModelObserver {
 WindowActivityWatcher* WindowActivityWatcher::GetInstance() {
   CR_DEFINE_STATIC_LOCAL(WindowActivityWatcher, instance, ());
   return &instance;
+}
+
+// static
+WindowFeatures WindowActivityWatcher::CreateWindowFeatures(
+    const Browser* browser) {
+  DCHECK(browser->window());
+  return ::CreateWindowFeatures(browser, browser->window()->IsActive());
 }
 
 WindowActivityWatcher::WindowActivityWatcher() {
@@ -195,11 +204,37 @@ void WindowActivityWatcher::OnBrowserRemoved(Browser* browser) {
 }
 
 void WindowActivityWatcher::OnBrowserSetLastActive(Browser* browser) {
-  if (ShouldTrackBrowser(browser))
+  // The browser may not have a window yet if activation calls happen during
+  // initialization.
+  // TODO(michaelpg): The browser window check should be unnecessary
+  // (https://crbug.com/811191, https://crbug.com/811243).
+  if (ShouldTrackBrowser(browser) && browser->window())
     browser_watchers_[browser]->MaybeLogWindowMetricsUkmEntry();
 }
 
 void WindowActivityWatcher::OnBrowserNoLongerActive(Browser* browser) {
-  if (ShouldTrackBrowser(browser))
-    browser_watchers_[browser]->MaybeLogWindowMetricsUkmEntry();
+  // The browser may not have a window yet if activation calls happen during
+  // initialization.
+  // TODO(michaelpg): The browser window check should be unnecessary
+  // (https://crbug.com/811191, https://crbug.com/811243).
+  if (!ShouldTrackBrowser(browser) || !browser->window())
+    return;
+
+#if defined(USE_AURA)
+  // On some platforms, the window is hidden (and deactivated) before it starts
+  // closing. Unless the window is minimized, assume that being deactivated
+  // while hidden means it's about to close, and don't log in that case.
+  if (browser->window()->GetNativeWindow() &&
+      !browser->window()->GetNativeWindow()->IsVisible() &&
+      !browser->window()->IsMinimized()) {
+    return;
+  }
+#endif
+
+  // On Windows, the browser window's IsActive() may still return true until the
+  // WM updates the focused window, and BrowserList::GetLastActive() still
+  // returns this browser until another one is activated. So we explicitly pass
+  // along that the window should be considered inactive.
+  browser_watchers_[browser]->MaybeLogWindowMetricsUkmEntry(
+      /*is_active=*/false);
 }

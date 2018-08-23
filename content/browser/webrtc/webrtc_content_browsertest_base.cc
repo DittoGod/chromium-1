@@ -123,9 +123,9 @@ bool WebRtcContentBrowserTestBase::HasAudioOutputDevices() {
   audio_system->HasOutputDevices(base::BindOnce(
       [](base::Closure finished_callback, bool* result, bool received) {
         *result = received;
-        finished_callback.Run();
+        std::move(finished_callback).Run();
       },
-      base::Passed(run_loop.QuitClosure()), &has_devices));
+      run_loop.QuitClosure(), &has_devices));
   run_loop.Run();
   return has_devices;
 }

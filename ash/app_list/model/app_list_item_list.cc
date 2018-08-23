@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "ash/app_list/model/app_list_item.h"
+#include "base/guid.h"
 #include "base/memory/ptr_util.h"
 
 namespace app_list {
@@ -123,6 +124,39 @@ void AppListItemList::SetItemPosition(AppListItem* item,
     observer.OnListItemMoved(from_index, to_index, item);
 }
 
+AppListItem* AppListItemList::AddPageBreakItemAfter(
+    const AppListItem* previous_item) {
+  size_t previous_index;
+  CHECK(FindItemIndex(previous_item->id(), &previous_index));
+  CHECK(!previous_item->IsInFolder());
+
+  const size_t next_index = previous_index + 1;
+  const AppListItem* next_item =
+      next_index < item_count() ? item_at(next_index) : nullptr;
+  syncer::StringOrdinal position;
+  if (!next_item) {
+    position = previous_item->position().CreateAfter();
+  } else {
+    // It is possible that items were added with the same ordinal. To
+    // successfully add the page break item we need to fix this. We do not try
+    // to fix this when an item is added in order to avoid possible edge cases
+    // with sync.
+    if (previous_item->position().Equals(next_item->position()))
+      FixItemPosition(next_index);
+    position = previous_item->position().CreateBetween(next_item->position());
+  }
+
+  auto page_break_item = std::make_unique<AppListItem>(base::GenerateGUID());
+  page_break_item->set_position(position);
+  page_break_item->set_is_page_break(true);
+
+  AppListItem* item = page_break_item.get();
+  size_t index = GetItemSortOrderIndex(item->position(), item->id());
+  app_list_items_.insert(app_list_items_.begin() + index,
+                         std::move(page_break_item));
+  return item;
+}
+
 void AppListItemList::HighlightItemInstalledFromUI(const std::string& id) {
   // Items within folders are not highlighted (apps are never installed to a
   // folder initially). So just search the top-level list.
@@ -215,6 +249,11 @@ std::unique_ptr<AppListItem> AppListItemList::RemoveItemAt(size_t index) {
 void AppListItemList::DeleteItemAt(size_t index) {
   std::unique_ptr<AppListItem> item = RemoveItemAt(index);
   // |item| will be deleted on destruction.
+}
+
+void AppListItemList::DeleteAllItems() {
+  while (!app_list_items_.empty())
+    DeleteItemAt(app_list_items_.size() - 1);
 }
 
 void AppListItemList::EnsureValidItemPosition(AppListItem* item) {

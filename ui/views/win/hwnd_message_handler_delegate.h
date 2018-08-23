@@ -87,8 +87,13 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
 
   // Returns true if the delegate modifies |insets| to define a custom client
   // area for the window, false if the default client area should be used. If
-  // false is returned, |insets| is not modified.
-  virtual bool GetClientAreaInsets(gfx::Insets* insets) const = 0;
+  // false is returned, |insets| is not modified.  |monitor| is the monitor
+  // this window is on.  Normally that would be determined from the HWND, but
+  // during WM_NCCALCSIZE Windows does not return the correct monitor for the
+  // HWND, so it must be passed in explicitly (see HWNDMessageHandler::
+  // OnNCCalcSize for more details).
+  virtual bool GetClientAreaInsets(gfx::Insets* insets,
+                                   HMONITOR monitor) const = 0;
 
   // Returns the minimum and maximum size the window can be resized to by the
   // user.
@@ -186,7 +191,7 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
 
   // Called when a mouse event is received. Returns true if the event was
   // handled by the delegate.
-  virtual bool HandleMouseEvent(const ui::MouseEvent& event) = 0;
+  virtual bool HandleMouseEvent(ui::MouseEvent* event) = 0;
 
   // Called when a pointer event is received. Returns true if the event was
   // handled by the delegate.
@@ -197,7 +202,7 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   virtual void HandleKeyEvent(ui::KeyEvent* event) = 0;
 
   // Called when a touch event is received.
-  virtual void HandleTouchEvent(const ui::TouchEvent& event) = 0;
+  virtual void HandleTouchEvent(ui::TouchEvent* event) = 0;
 
   // Called when an IME message needs to be processed by the delegate. Returns
   // true if the event was handled and no default processing should be
@@ -241,7 +246,11 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
 
   // Called when a scroll event is received. Returns true if the event was
   // handled by the delegate.
-  virtual bool HandleScrollEvent(const ui::ScrollEvent& event) = 0;
+  virtual bool HandleScrollEvent(ui::ScrollEvent* event) = 0;
+
+  // Called when a gesture event is received. Returns true if the event was
+  // handled by the delegate.
+  virtual bool HandleGestureEvent(ui::GestureEvent* event) = 0;
 
   // Called when the window size is about to change.
   virtual void HandleWindowSizeChanging() = 0;

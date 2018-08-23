@@ -25,6 +25,8 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
       'clearFlashPref',
       'fetchUsbDevices',
       'fetchZoomLevels',
+      'getAllSites',
+      'getFormattedBytes',
       'getDefaultValueForContentType',
       'getExceptionList',
       'getOriginPermissions',
@@ -32,6 +34,7 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
       'isPatternValid',
       'observeProtocolHandlers',
       'observeProtocolHandlersEnabledState',
+      'removeIgnoredHandler',
       'removeProtocolHandler',
       'removeUsbDevice',
       'removeZoomLevel',
@@ -41,6 +44,7 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
       'setOriginPermissions',
       'setProtocolDefault',
       'updateIncognitoStatus',
+      'fetchBlockAutoplayStatus',
     ]);
 
     /** @private {boolean} */
@@ -57,6 +61,9 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
 
     /** @private {!Array<!ProtocolEntry>} */
     this.protocolHandlers_ = [];
+
+    /** @private {!Array<!HandlerEntry>} */
+    this.ignoredProtocols_ = [];
 
     /** @private {boolean} */
     this.isOriginValid_ = true;
@@ -142,6 +149,15 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
     this.protocolHandlers_ = list.slice();
   }
 
+  /**
+   * Sets the prefs to use when testing.
+   * @param {!Array<!HandlerEntry>}
+   */
+  setIgnoredProtocols(list) {
+    // Shallow copy of the passed-in array so mutation won't impact the source
+    this.ignoredProtocols_ = list.slice();
+  }
+
   /** @override */
   setDefaultValueForContentType(contentType, defaultValue) {
     this.methodCalled(
@@ -171,6 +187,50 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
   /** @override */
   clearFlashPref(origin) {
     this.methodCalled('clearFlashPref', origin);
+  }
+
+  /** @override */
+  getAllSites(contentTypes) {
+    this.methodCalled('getAllSites', contentTypes);
+    const origins_set = new Set();
+
+    contentTypes.forEach((contentType) => {
+      this.prefs_.exceptions[contentType].forEach((exception) => {
+        if (exception.origin.includes('*'))
+          return;
+        origins_set.add(exception.origin);
+      });
+    });
+
+    const origins_array = [...origins_set];
+    let result = [];
+    origins_array.forEach((origin, index) => {
+      // Functionality to get the eTLD+1 from an origin exists only on the
+      // C++ side, so just do an (incorrect) approximate extraction here.
+      const host = new URL(origin).host;
+      let urlParts = host.split('.');
+      urlParts = urlParts.slice(Math.max(urlParts.length - 2, 0));
+      const etldPlus1Name = urlParts.join('.');
+
+      let existing = result.find(siteGroup => {
+        return siteGroup.etldPlus1 == etldPlus1Name;
+      });
+
+      if (existing) {
+        existing.origins.push(test_util.createOriginInfo(origin));
+      } else {
+        const entry = test_util.createSiteGroup(etldPlus1Name, [origin]);
+        result.push(entry);
+      }
+    });
+
+    return Promise.resolve(result);
+  }
+
+  /** @override */
+  getFormattedBytes(numBytes) {
+    this.methodCalled('getFormattedBytes', numBytes);
+    return Promise.resolve(`${numBytes} B`);
   }
 
   /** @override */
@@ -302,6 +362,8 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
   observeProtocolHandlers() {
     cr.webUIListenerCallback('setHandlersEnabled', true);
     cr.webUIListenerCallback('setProtocolHandlers', this.protocolHandlers_);
+    cr.webUIListenerCallback(
+        'setIgnoredProtocolHandlers', this.ignoredProtocols_);
     this.methodCalled('observeProtocolHandlers');
   }
 
@@ -324,5 +386,10 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
   /** @override */
   updateIncognitoStatus() {
     this.methodCalled('updateIncognitoStatus', arguments);
+  }
+
+  /** @override */
+  fetchBlockAutoplayStatus() {
+    this.methodCalled('fetchBlockAutoplayStatus');
   }
 }

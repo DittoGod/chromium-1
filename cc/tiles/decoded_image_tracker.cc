@@ -10,7 +10,11 @@ namespace {
 const int kNumFramesToLock = 2;
 }  // namespace
 
-DecodedImageTracker::DecodedImageTracker() = default;
+DecodedImageTracker::DecodedImageTracker(ImageController* controller)
+    : image_controller_(controller) {
+  DCHECK(image_controller_);
+}
+
 DecodedImageTracker::~DecodedImageTracker() {
   for (auto& pair : locked_images_)
     image_controller_->UnlockImageDecode(pair.first);
@@ -20,15 +24,16 @@ void DecodedImageTracker::QueueImageDecode(
     const PaintImage& image,
     const gfx::ColorSpace& target_color_space,
     const base::Callback<void(bool)>& callback) {
+  size_t frame_index = PaintImage::kDefaultFrameIndex;
   TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
                "DecodedImageTracker::QueueImageDecode", "frame_key",
-               image.GetKeyForFrame(image.frame_index()).ToString());
+               image.GetKeyForFrame(frame_index).ToString());
   DCHECK(image_controller_);
   // Queue the decode in the image controller, but switch out the callback for
   // our own.
   auto image_bounds = SkIRect::MakeWH(image.width(), image.height());
   DrawImage draw_image(image, image_bounds, kNone_SkFilterQuality,
-                       SkMatrix::I(), image.frame_index(), target_color_space);
+                       SkMatrix::I(), frame_index, target_color_space);
   image_controller_->QueueImageDecode(
       draw_image, base::Bind(&DecodedImageTracker::ImageDecodeFinished,
                              base::Unretained(this), callback));

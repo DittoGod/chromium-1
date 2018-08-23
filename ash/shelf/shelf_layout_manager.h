@@ -12,6 +12,7 @@
 #include "ash/session/session_observer.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell_observer.h"
+#include "ash/wallpaper/wallpaper_controller_observer.h"
 #include "ash/wm/lock_state_observer.h"
 #include "ash/wm/wm_snap_to_pixel_layout_manager.h"
 #include "ash/wm/workspace/workspace_types.h"
@@ -23,10 +24,6 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/keyboard/keyboard_controller_observer.h"
 #include "ui/wm/public/activation_change_observer.h"
-
-namespace keyboard {
-class KeyboardController;
-}
 
 namespace ui {
 class ImplicitAnimationObserver;
@@ -55,7 +52,8 @@ class ASH_EXPORT ShelfLayoutManager
       public keyboard::KeyboardControllerObserver,
       public LockStateObserver,
       public wm::WmSnapToPixelLayoutManager,
-      public SessionObserver {
+      public SessionObserver,
+      public WallpaperControllerObserver {
  public:
   // The snapping threshold for dragging app list from shelf in tablet mode,
   // measured in DIPs.
@@ -94,7 +92,7 @@ class ASH_EXPORT ShelfLayoutManager
   }
 
   // Stops any animations and sets the bounds of the shelf and status widgets.
-  void LayoutShelfAndUpdateBounds(bool change_work_area);
+  void LayoutShelfAndUpdateBounds();
 
   // Stops any animations, sets the bounds of the shelf and status widgets, and
   // changes the work area
@@ -123,7 +121,9 @@ class ASH_EXPORT ShelfLayoutManager
   }
   ShelfAutoHideState auto_hide_state() const { return state_.auto_hide_state; }
 
-  int chromevox_panel_height() const { return chromevox_panel_height_; }
+  int accessibility_panel_height() const { return accessibility_panel_height_; }
+
+  int docked_magnifier_height() const { return docked_magnifier_height_; }
 
   ShelfWidget* shelf_widget() { return shelf_widget_; }
 
@@ -140,6 +140,11 @@ class ASH_EXPORT ShelfLayoutManager
   // be processed any further, false otherwise.
   bool ProcessGestureEvent(const ui::GestureEvent& event_in_screen);
 
+  // Returns true if a maximized or fullscreen window is being dragged from the
+  // top of the display or from the caption area. Note currently for this case
+  // it's only allowed in tablet mode, not in laptop mode.
+  bool IsDraggingWindowFromTopOrCaptionArea() const;
+
   // Overridden from wm::WmSnapToPixelLayoutManager:
   void OnWindowResized() override;
   void SetChildBounds(aura::Window* child,
@@ -148,10 +153,10 @@ class ASH_EXPORT ShelfLayoutManager
   // Overridden from ShellObserver:
   void OnShelfAutoHideBehaviorChanged(aura::Window* root_window) override;
   void OnPinnedStateChanged(aura::Window* pinned_window) override;
-  void OnVirtualKeyboardStateChanged(bool activated,
-                                     aura::Window* root_window) override;
   void OnAppListVisibilityChanged(bool shown,
                                   aura::Window* root_window) override;
+  void OnSplitViewModeStarted() override;
+  void OnSplitViewModeEnded() override;
 
   // Overridden from wm::ActivationChangeObserver:
   void OnWindowActivated(ActivationReason reason,
@@ -161,8 +166,7 @@ class ASH_EXPORT ShelfLayoutManager
   // Overridden from keyboard::KeyboardControllerObserver:
   void OnKeyboardAppearanceChanged(
       const keyboard::KeyboardStateDescriptor& state) override;
-  void OnKeyboardAvailabilityChanged(const bool is_available) override;
-  void OnKeyboardClosed() override;
+  void OnKeyboardVisibilityStateChanged(bool is_visible) override;
 
   // Overridden from LockStateObserver:
   void OnLockStateEvent(LockStateObserver::EventType event) override;
@@ -170,6 +174,9 @@ class ASH_EXPORT ShelfLayoutManager
   // Overridden from SessionObserver:
   void OnSessionStateChanged(session_manager::SessionState state) override;
   void OnLoginStatusChanged(LoginStatus loing_status) override;
+
+  // Overridden from WallpaperControllerObserver:
+  void OnWallpaperBlurChanged() override;
 
   // TODO(harrym|oshima): These templates will be moved to a new Shelf class.
   // A helper function for choosing values specific to a shelf alignment.
@@ -196,15 +203,20 @@ class ASH_EXPORT ShelfLayoutManager
   // Returns how the shelf background should be painted.
   ShelfBackgroundType GetShelfBackgroundType() const;
 
-  // Set the height of the ChromeVox panel, which takes away space from the
-  // available work area from the top of the screen.
-  void SetChromeVoxPanelHeight(int height);
+  // Set the height of the accessibility panel, which takes away space from the
+  // available work area from the top of the screen. Used by ChromeVox.
+  void SetAccessibilityPanelHeight(int height);
+
+  // Set the height of the Docked Magnifier viewport at the top of the screen,
+  // which will reduce the available screen work area similarly to the ChromeVox
+  // panel height. The Docked Magnifier appears above the ChromeVox panel.
+  void SetDockedMagnifierHeight(int height);
 
  private:
   class UpdateShelfObserver;
   friend class PanelLayoutManagerTest;
   friend class ShelfLayoutManagerTest;
-  friend class WebNotificationTrayTest;
+  friend class NotificationTrayTest;
 
   struct TargetBounds {
     TargetBounds();
@@ -226,6 +238,9 @@ class ASH_EXPORT ShelfLayoutManager
 
     bool IsScreenLocked() const;
 
+    // Returns whether the session is in an active state.
+    bool IsActiveSessionState() const;
+
     // Returns true if the two states are considered equal. As
     // |auto_hide_state| only matters if |visibility_state| is
     // |SHELF_AUTO_HIDE|, Equals() ignores the |auto_hide_state| as
@@ -245,11 +260,9 @@ class ASH_EXPORT ShelfLayoutManager
 
   // Updates the bounds and opacity of the shelf and status widgets.
   // If |observer| is specified, it will be called back when the animations, if
-  // any, are complete. |change_work_area| specifies whether or not to update
-  // the work area of the screen.
+  // any, are complete.
   void UpdateBoundsAndOpacity(const TargetBounds& target_bounds,
                               bool animate,
-                              bool change_work_area,
                               ui::ImplicitAnimationObserver* observer);
 
   // Stops any animations and progresses them to the end.
@@ -349,7 +362,7 @@ class ASH_EXPORT ShelfLayoutManager
   // False when neither the auto hide timer nor the timer task are running.
   bool mouse_over_shelf_when_auto_hide_timer_started_ = false;
 
-  base::ObserverList<ShelfLayoutManagerObserver> observers_;
+  base::ObserverList<ShelfLayoutManagerObserver>::Unchecked observers_;
 
   // The shelf reacts to gesture-drags, and can be set to auto-hide for certain
   // gestures. Swiping up from the shelf in tablet mode can open the
@@ -379,16 +392,26 @@ class ASH_EXPORT ShelfLayoutManager
   // Used to delay updating shelf background.
   UpdateShelfObserver* update_shelf_observer_ = nullptr;
 
-  // The bounds of the keyboard.
-  gfx::Rect keyboard_bounds_;
+  // The occluded bounds of the keyboard. See
+  // ui/keyboard/keyboard_controller_observer.h for details.
+  gfx::Rect keyboard_occluded_bounds_;
+
+  // The displaced bounds of the keyboard. See
+  // ui/keyboard/keyboard_controller_observer.h for details.
+  gfx::Rect keyboard_displaced_bounds_;
 
   // The bounds within the root window not occupied by the shelf nor the virtual
   // keyboard.
   gfx::Rect user_work_area_bounds_;
 
-  // The height of the ChromeVox panel at the top of the screen, which
-  // needs to be removed from the available work area.
-  int chromevox_panel_height_ = 0;
+  // The height of the accessibility panel at the top of the screen, which
+  // needs to be removed from the available work area. Used by ChromeVox.
+  int accessibility_panel_height_ = 0;
+
+  // The height of the Docked Magnifier viewport at the top of the screen, which
+  // similarly to |accessibility_panel_height_| needs to be removed from the
+  // available work area.
+  int docked_magnifier_height_ = 0;
 
   // Whether background blur is enabled.
   const bool is_background_blur_enabled_;
@@ -403,10 +426,9 @@ class ASH_EXPORT ShelfLayoutManager
   ShelfBackgroundType shelf_background_type_before_drag_ =
       SHELF_BACKGROUND_OVERLAP;
 
-  ScopedObserver<keyboard::KeyboardController,
-                 keyboard::KeyboardControllerObserver>
-      keyboard_observer_;
-  ScopedSessionObserver scoped_session_observer_;
+  ScopedSessionObserver scoped_session_observer_{this};
+  ScopedObserver<WallpaperController, ShelfLayoutManager>
+      wallpaper_controller_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ShelfLayoutManager);
 };

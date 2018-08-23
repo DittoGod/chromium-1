@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -24,36 +25,9 @@
         {
           "object": "LayoutBlockFlow DIV",
           "rect": [11, 11, 35, 13],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [11, 11, 35, 13],
-          "reason": "subtree"
+          "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTextControl INPUT id='target'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "subtree"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "subtree"
-    },
-    {
-      "object": "InlineTextBox 'test test test'",
-      "reason": "subtree"
     }
   ]
 }

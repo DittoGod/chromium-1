@@ -12,13 +12,10 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_task_environment.h"
-#include "base/test/test_message_loop.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_sample_types.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -27,24 +24,12 @@
 using testing::_;
 using testing::Return;
 
-#if defined(OS_WIN)
-#define IntToStringType base::IntToString16
-#else
-#define IntToStringType base::IntToString
-#endif
-
 namespace media {
 
 namespace {
 
-const base::FilePath::CharType kBaseFileName[] =
-    FILE_PATH_LITERAL("debug_recording");
-
-const base::FilePath::CharType kFileNameSuffix[] =
-    FILE_PATH_LITERAL("output.1");
-
-// The file extension the mock should return in GetFileExtension().
-const base::FilePath::CharType kFileExtension[] = FILE_PATH_LITERAL("wav");
+const base::FilePath::CharType kFileName[] =
+    FILE_PATH_LITERAL("debug_recording.output.1.wav");
 
 }  // namespace
 
@@ -56,7 +41,7 @@ class MockAudioDebugFileWriter : public AudioDebugFileWriter {
   ~MockAudioDebugFileWriter() override = default;
 
   MOCK_METHOD1(DoStart, void(bool));
-  void Start(base::File file) { DoStart(file.IsValid()); }
+  void Start(base::File file) override { DoStart(file.IsValid()); }
   MOCK_METHOD0(Stop, void());
 
   // Functions with move-only types as arguments can't be mocked directly, so
@@ -76,7 +61,6 @@ class MockAudioDebugFileWriter : public AudioDebugFileWriter {
   }
 
   MOCK_METHOD0(WillWrite, bool());
-  MOCK_METHOD0(GetFileExtension, const base::FilePath::CharType*());
 
   // Set reference data to compare against. Must be called before Write() is
   // called.
@@ -107,11 +91,10 @@ class AudioDebugRecordingHelperUnderTest : public AudioDebugRecordingHelper {
 
  private:
   // Creates the mock writer. After the mock writer is returned, we always
-  // expect GetFileExtension() and Start() to be called on it by the helper.
+  // expect Start() to be called on it by the helper.
   std::unique_ptr<AudioDebugFileWriter> CreateAudioDebugFileWriter(
       const AudioParameters& params) override {
     MockAudioDebugFileWriter* writer = new MockAudioDebugFileWriter(params);
-    EXPECT_CALL(*writer, GetFileExtension()).WillOnce(Return(kFileExtension));
     EXPECT_CALL(*writer, DoStart(true));
     return base::WrapUnique<AudioDebugFileWriter>(writer);
   }
@@ -119,12 +102,9 @@ class AudioDebugRecordingHelperUnderTest : public AudioDebugRecordingHelper {
   DISALLOW_COPY_AND_ASSIGN(AudioDebugRecordingHelperUnderTest);
 };
 
-// The test fixture.
 class AudioDebugRecordingHelperTest : public ::testing::Test {
  public:
-  AudioDebugRecordingHelperTest()
-      : file_name_suffix_(base::FilePath(kFileNameSuffix)) {}
-
+  AudioDebugRecordingHelperTest() {}
   ~AudioDebugRecordingHelperTest() override = default;
 
   // Helper function that creates a recording helper.
@@ -139,30 +119,31 @@ class AudioDebugRecordingHelperTest : public ::testing::Test {
   MOCK_METHOD0(OnAudioDebugRecordingHelperDestruction, void());
 
   // Bound and passed to AudioDebugRecordingHelper::EnableDebugRecording as
-  // AudioDebugRecordingHelper::CreateFileCallback.
-  void CreateFile(const base::FilePath& file_name_suffix,
-                  base::OnceCallback<void(base::File)> reply_callback) {
-    // Check that AudioDebugRecordingHelper::EnableDebugRecording adds file
-    // extension to file name suffix.
-    EXPECT_EQ(file_name_suffix_.AddExtension(kFileExtension), file_name_suffix);
+  // AudioDebugRecordingHelper::CreateWavFileCallback.
+  void CreateWavFile(AudioDebugRecordingStreamType stream_type,
+                     uint32_t id,
+                     base::OnceCallback<void(base::File)> reply_callback) {
+    // Check that AudioDebugRecordingHelper::EnableDebugRecording calls
+    // CreateWavFileCallback with expected stream type and id.
+    EXPECT_EQ(stream_type_, stream_type);
+    EXPECT_EQ(id_, id);
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-    base::FilePath base_file_path(
-        temp_dir.GetPath().Append(base::FilePath(kBaseFileName)));
-    base::FilePath file_path =
-        base_file_path.AddExtension(file_name_suffix.value());
-    base::File debug_file(base::File(
-        file_path, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE));
+    base::FilePath path(temp_dir.GetPath().Append(base::FilePath(kFileName)));
+    base::File debug_file(
+        path, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
     // Run |reply_callback| with a valid file for expected
     // MockAudioDebugFileWriter::Start mocked call to happen.
     std::move(reply_callback).Run(std::move(debug_file));
     // File can be removed right away because MockAudioDebugFileWriter::Start is
     // called synchronously.
-    ASSERT_TRUE(base::DeleteFile(file_path, false));
+    ASSERT_TRUE(base::DeleteFile(path, false));
   }
 
  protected:
-  base::FilePath file_name_suffix_;
+  const AudioDebugRecordingStreamType stream_type_ =
+      AudioDebugRecordingStreamType::kInput;
+  const uint32_t id_ = 1;
 
   // The test task environment.
   base::test::ScopedTaskEnvironment scoped_task_environment_;
@@ -198,8 +179,8 @@ TEST_F(AudioDebugRecordingHelperTest, EnableDisable) {
       CreateRecordingHelper(params, base::OnceClosure());
 
   recording_helper->EnableDebugRecording(
-      file_name_suffix_,
-      base::BindOnce(&AudioDebugRecordingHelperTest::CreateFile,
+      stream_type_, id_,
+      base::BindOnce(&AudioDebugRecordingHelperTest::CreateWavFile,
                      base::Unretained(this)));
   EXPECT_CALL(*static_cast<MockAudioDebugFileWriter*>(
                   recording_helper->debug_writer_.get()),
@@ -207,8 +188,8 @@ TEST_F(AudioDebugRecordingHelperTest, EnableDisable) {
   recording_helper->DisableDebugRecording();
 
   recording_helper->EnableDebugRecording(
-      file_name_suffix_,
-      base::BindOnce(&AudioDebugRecordingHelperTest::CreateFile,
+      stream_type_, id_,
+      base::BindOnce(&AudioDebugRecordingHelperTest::CreateWavFile,
                      base::Unretained(this)));
   EXPECT_CALL(*static_cast<MockAudioDebugFileWriter*>(
                   recording_helper->debug_writer_.get()),
@@ -221,7 +202,7 @@ TEST_F(AudioDebugRecordingHelperTest, OnData) {
   // AudioBus, the other parameters are ignored.
   const int number_of_frames = 100;
   const AudioParameters params(AudioParameters::AUDIO_PCM_LINEAR,
-                               ChannelLayout::CHANNEL_LAYOUT_STEREO, 0, 0,
+                               ChannelLayout::CHANNEL_LAYOUT_STEREO, 0,
                                number_of_frames);
 
   // Setup some data.
@@ -241,8 +222,8 @@ TEST_F(AudioDebugRecordingHelperTest, OnData) {
   recording_helper->OnData(audio_bus.get());
 
   recording_helper->EnableDebugRecording(
-      file_name_suffix_,
-      base::BindOnce(&AudioDebugRecordingHelperTest::CreateFile,
+      stream_type_, id_,
+      base::BindOnce(&AudioDebugRecordingHelperTest::CreateWavFile,
                      base::Unretained(this)));
   MockAudioDebugFileWriter* mock_audio_file_writer =
       static_cast<MockAudioDebugFileWriter*>(
@@ -263,8 +244,8 @@ TEST_F(AudioDebugRecordingHelperTest, OnData) {
   // running the message loop until after disabling, and one call after
   // disabling.
   recording_helper->EnableDebugRecording(
-      file_name_suffix_,
-      base::BindOnce(&AudioDebugRecordingHelperTest::CreateFile,
+      stream_type_, id_,
+      base::BindOnce(&AudioDebugRecordingHelperTest::CreateWavFile,
                      base::Unretained(this)));
   mock_audio_file_writer = static_cast<MockAudioDebugFileWriter*>(
       recording_helper->debug_writer_.get());

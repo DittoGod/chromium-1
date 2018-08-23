@@ -13,6 +13,8 @@
 #include "build/build_config.h"
 #include "remoting/base/auto_thread.h"
 #include "remoting/base/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/transitional_url_loader_factory_owner.h"
 
 namespace remoting {
 
@@ -46,7 +48,11 @@ ChromotingHostContext::ChromotingHostContext(
       url_request_context_getter_(url_request_context_getter),
       system_input_injector_factory_(system_input_injector_factory) {}
 
-ChromotingHostContext::~ChromotingHostContext() = default;
+ChromotingHostContext::~ChromotingHostContext() {
+  if (url_loader_factory_owner_)
+    network_task_runner_->DeleteSoon(FROM_HERE,
+                                     url_loader_factory_owner_.release());
+}
 
 std::unique_ptr<ChromotingHostContext> ChromotingHostContext::Copy() {
   return base::WrapUnique(new ChromotingHostContext(
@@ -96,6 +102,17 @@ ChromotingHostContext::url_request_context_getter() const {
   return url_request_context_getter_;
 }
 
+scoped_refptr<network::SharedURLLoaderFactory>
+ChromotingHostContext::url_loader_factory() {
+  DCHECK(network_task_runner_->RunsTasksInCurrentSequence());
+  if (!url_loader_factory_owner_) {
+    url_loader_factory_owner_ =
+        std::make_unique<network::TransitionalURLLoaderFactoryOwner>(
+            url_request_context_getter_);
+  }
+  return url_loader_factory_owner_->GetURLLoaderFactory();
+}
+
 ui::SystemInputInjectorFactory*
 ChromotingHostContext::system_input_injector_factory() const {
   return system_input_injector_factory_;
@@ -130,10 +147,15 @@ std::unique_ptr<ChromotingHostContext> ChromotingHostContext::Create(
       AutoThread::CreateWithType("ChromotingInputThread", ui_task_runner,
                                  base::MessageLoop::TYPE_IO),
       network_task_runner,
+#if defined(OS_MACOSX)
+      // Mac requires a UI thread for the capturer.
+      AutoThread::CreateWithType("ChromotingCaptureThread", ui_task_runner,
+                                 base::MessageLoop::TYPE_UI),
+#else
       AutoThread::Create("ChromotingCaptureThread", ui_task_runner),
+#endif
       AutoThread::Create("ChromotingEncodeThread", ui_task_runner),
-      base::MakeRefCounted<URLRequestContextGetter>(network_task_runner,
-                                                    file_task_runner),
+      base::MakeRefCounted<URLRequestContextGetter>(network_task_runner),
       nullptr));
 }
 
@@ -155,11 +177,11 @@ std::unique_ptr<ChromotingHostContext> ChromotingHostContext::CreateForChromeOS(
   // stop them explicitly. Therefore, base::DoNothing is passed in as the quit
   // closure.
   scoped_refptr<AutoThreadTaskRunner> io_auto_task_runner =
-      new AutoThreadTaskRunner(io_task_runner, base::Bind(&base::DoNothing));
+      new AutoThreadTaskRunner(io_task_runner, base::DoNothing());
   scoped_refptr<AutoThreadTaskRunner> file_auto_task_runner =
-      new AutoThreadTaskRunner(file_task_runner, base::Bind(&base::DoNothing));
+      new AutoThreadTaskRunner(file_task_runner, base::DoNothing());
   scoped_refptr<AutoThreadTaskRunner> ui_auto_task_runner =
-      new AutoThreadTaskRunner(ui_task_runner, base::Bind(&base::DoNothing));
+      new AutoThreadTaskRunner(ui_task_runner, base::DoNothing());
 
   // Use browser's file thread as the joiner as it is the only browser-thread
   // that allows blocking I/O, which is required by thread joining.

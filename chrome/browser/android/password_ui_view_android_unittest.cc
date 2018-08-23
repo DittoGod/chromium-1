@@ -12,6 +12,10 @@
 #include <vector>
 
 #include "base/android/jni_android.h"
+#include "base/android/jni_string.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -98,12 +102,17 @@ class PasswordUIViewAndroidTest : public ::testing::Test {
     ASSERT_TRUE(testing_profile_manager_.SetUp());
     testing_profile_ =
         testing_profile_manager_.CreateTestingProfile("test profile");
+
+    ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
+    temp_file_ = temp_dir_.GetPath().Append("passwords.csv");
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfileManager testing_profile_manager_;
   TestingProfile* testing_profile_;
   JNIEnv* env_;
+  base::ScopedTempDir temp_dir_;
+  base::FilePath temp_file_;
 };
 
 // Test that the asynchronous processing of password serialization controlled by
@@ -123,14 +132,26 @@ TEST_F(PasswordUIViewAndroidTest, GetSerializedPasswords) {
   std::unique_ptr<PasswordUIViewAndroid, PasswordUIViewAndroidDestroyDeleter>
       password_ui_view(
           new PasswordUIViewAndroid(env_, JavaParamRef<jobject>(nullptr)));
-  std::string serialized_passwords;
+  PasswordUIViewAndroid::SerializationResult serialized_passwords;
   password_ui_view->set_export_target_for_testing(&serialized_passwords);
   password_ui_view->set_credential_provider_for_testing(&provider);
   password_ui_view->HandleSerializePasswords(
-      env_, JavaParamRef<jobject>(nullptr), JavaParamRef<jobject>(nullptr));
+      env_, nullptr,
+      base::android::ConvertUTF8ToJavaString(env_, temp_file_.AsUTF8Unsafe()),
+      nullptr, nullptr);
 
   content::RunAllTasksUntilIdle();
-  EXPECT_EQ(expected_result, serialized_passwords);
+  // The buffer for actual result is 1 byte longer than the expected data to be
+  // able to detect when the actual data are too long.
+  char actual_result[expected_result.size() + 1];
+  int number_of_bytes_read =
+      base::ReadFile(temp_file_, actual_result, expected_result.size() + 1);
+  EXPECT_EQ(static_cast<int>(expected_result.size()), number_of_bytes_read);
+  EXPECT_EQ(expected_result,
+            std::string(actual_result,
+                        (number_of_bytes_read < 0) ? 0 : number_of_bytes_read));
+  EXPECT_EQ(1, serialized_passwords.entries_count);
+  EXPECT_EQ(0, serialized_passwords.error);
 }
 
 // Test that destroying the PasswordUIView when tasks are pending does not lead
@@ -142,11 +163,17 @@ TEST_F(PasswordUIViewAndroidTest, GetSerializedPasswords_Cancelled) {
   std::unique_ptr<PasswordUIViewAndroid, PasswordUIViewAndroidDestroyDeleter>
       password_ui_view(
           new PasswordUIViewAndroid(env_, JavaParamRef<jobject>(nullptr)));
-  std::string serialized_passwords = "this should not get overwritten";
+  PasswordUIViewAndroid::SerializationResult serialized_passwords;
+  serialized_passwords.entries_count = 123;
+  serialized_passwords.error = 567;
   password_ui_view->set_export_target_for_testing(&serialized_passwords);
   password_ui_view->set_credential_provider_for_testing(&provider);
+  base::android::ScopedJavaLocalRef<jstring> java_temp_file =
+      base::android::ConvertUTF8ToJavaString(env_, temp_file_.AsUTF8Unsafe());
   password_ui_view->HandleSerializePasswords(
-      env_, JavaParamRef<jobject>(nullptr), JavaParamRef<jobject>(nullptr));
+      env_, nullptr,
+      base::android::JavaParamRef<jstring>(env_, java_temp_file.obj()), nullptr,
+      nullptr);
   // Register the PasswordUIView for deletion. It should not destruct itself
   // before the background tasks are run. The results of the background tasks
   // are waited for and then thrown out, so |serialized_passwords| should not be
@@ -154,7 +181,31 @@ TEST_F(PasswordUIViewAndroidTest, GetSerializedPasswords_Cancelled) {
   password_ui_view.reset();
   // Now run the background tasks (and the subsequent deletion).
   content::RunAllTasksUntilIdle();
-  EXPECT_EQ("this should not get overwritten", serialized_passwords);
+  EXPECT_EQ(123, serialized_passwords.entries_count);
+  EXPECT_EQ(567, serialized_passwords.error);
+}
+
+// Test that an I/O error is reported.
+TEST_F(PasswordUIViewAndroidTest, GetSerializedPasswords_WriteFailed) {
+  FakeCredentialProvider provider;
+  provider.AddPasswordEntry("https://example.com", "username", "password");
+
+  std::unique_ptr<PasswordUIViewAndroid, PasswordUIViewAndroidDestroyDeleter>
+      password_ui_view(
+          new PasswordUIViewAndroid(env_, JavaParamRef<jobject>(nullptr)));
+  PasswordUIViewAndroid::SerializationResult serialized_passwords;
+  password_ui_view->set_export_target_for_testing(&serialized_passwords);
+  password_ui_view->set_credential_provider_for_testing(&provider);
+  base::android::ScopedJavaLocalRef<jstring> java_temp_file =
+      base::android::ConvertUTF8ToJavaString(env_, "Non-existing file");
+  password_ui_view->HandleSerializePasswords(
+      env_, nullptr,
+      base::android::JavaParamRef<jstring>(env_, java_temp_file.obj()), nullptr,
+      nullptr);
+  // Now run the background tasks (and the subsequent deletion).
+  content::RunAllTasksUntilIdle();
+  EXPECT_EQ(0, serialized_passwords.entries_count);
+  EXPECT_LT(0, serialized_passwords.error);
 }
 
 }  //  namespace android

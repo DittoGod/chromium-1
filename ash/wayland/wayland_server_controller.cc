@@ -6,30 +6,33 @@
 
 #include <memory>
 
+#include "ash/keyboard/arc/arc_input_method_surface_manager.h"
 #include "ash/public/cpp/ash_switches.h"
 #include "ash/public/cpp/config.h"
+#include "ash/system/message_center/arc/arc_notification_surface_manager_impl.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "components/exo/display.h"
 #include "components/exo/file_helper.h"
 #include "components/exo/wayland/server.h"
 #include "components/exo/wm_helper.h"
+#include "ui/aura/env.h"
 
 namespace ash {
 
 class WaylandServerController::WaylandWatcher
-    : public base::MessagePumpLibevent::Watcher {
+    : public base::MessagePumpLibevent::FdWatcher {
  public:
   explicit WaylandWatcher(exo::wayland::Server* server)
       : controller_(FROM_HERE), server_(server) {
-    base::MessageLoopForUI::current()->WatchFileDescriptor(
+    base::MessageLoopCurrentForUI::Get()->WatchFileDescriptor(
         server_->GetFileDescriptor(),
         true,  // persistent
         base::MessagePumpLibevent::WATCH_READ, &controller_, this);
   }
 
-  // base::MessagePumpLibevent::Watcher:
+  // base::MessagePumpLibevent::FdWatcher:
   void OnFileCanReadWithoutBlocking(int fd) override {
     server_->Dispatch(base::TimeDelta());
     server_->Flush();
@@ -37,7 +40,7 @@ class WaylandServerController::WaylandWatcher
   void OnFileCanWriteWithoutBlocking(int fd) override { NOTREACHED(); }
 
  private:
-  base::MessagePumpLibevent::FileDescriptorWatcher controller_;
+  base::MessagePumpLibevent::FdWatchController controller_;
   exo::wayland::Server* const server_;
 
   DISALLOW_COPY_AND_ASSIGN(WaylandWatcher);
@@ -45,13 +48,16 @@ class WaylandServerController::WaylandWatcher
 
 // static
 std::unique_ptr<WaylandServerController>
-WaylandServerController::CreateIfNecessary() {
+WaylandServerController::CreateIfNecessary(
+    std::unique_ptr<exo::FileHelper> file_helper,
+    aura::Env* env) {
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kAshEnableWaylandServer)) {
     return nullptr;
   }
 
-  return base::WrapUnique(new WaylandServerController());
+  return base::WrapUnique(
+      new WaylandServerController(std::move(file_helper), env));
 }
 
 WaylandServerController::~WaylandServerController() {
@@ -62,14 +68,18 @@ WaylandServerController::~WaylandServerController() {
   wm_helper_.reset();
 }
 
-WaylandServerController::WaylandServerController() {
-  wm_helper_ = std::make_unique<exo::WMHelper>();
+WaylandServerController::WaylandServerController(
+    std::unique_ptr<exo::FileHelper> file_helper,
+    aura::Env* env) {
+  arc_notification_surface_manager_ =
+      std::make_unique<ArcNotificationSurfaceManagerImpl>();
+  arc_input_method_surface_manager_ =
+      std::make_unique<ArcInputMethodSurfaceManager>();
+  wm_helper_ = std::make_unique<exo::WMHelper>(env);
   exo::WMHelper::SetInstance(wm_helper_.get());
-  // TODO(penghuang): wire up notification surface manager.
-  // http://crbug.com/768439
-  // TODO(hirono): wire up the file helper. http://crbug.com/768395
   display_ = std::make_unique<exo::Display>(
-      nullptr /* notification_surface_manager */, nullptr /* file_helper */);
+      arc_notification_surface_manager_.get(),
+      arc_input_method_surface_manager_.get(), std::move(file_helper));
   wayland_server_ = exo::wayland::Server::Create(display_.get());
   // Wayland server creation can fail if XDG_RUNTIME_DIR is not set correctly.
   if (wayland_server_)

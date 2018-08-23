@@ -7,7 +7,8 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/task/post_task.h"
 #include "content/browser/frame_host/navigation_controller_impl.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
@@ -72,7 +73,7 @@ class ScreenshotData : public base::RefCountedThreadSafe<ScreenshotData> {
     // Encode the A8 bitmap to grayscale PNG treating alpha as color intensity.
     std::vector<unsigned char> data;
     if (gfx::PNGCodec::EncodeA8SkBitmap(grayscale_bitmap, &data))
-      data_ = new base::RefCountedBytes(data);
+      data_ = base::RefCountedBytes::TakeVector(&data);
   }
 
   scoped_refptr<base::RefCountedBytes> data_;
@@ -92,8 +93,10 @@ NavigationEntryScreenshotManager::~NavigationEntryScreenshotManager() {
 }
 
 void NavigationEntryScreenshotManager::TakeScreenshot() {
-  if (OverscrollConfig::GetMode() != OverscrollConfig::Mode::kParallaxUi)
+  if (OverscrollConfig::GetHistoryNavigationMode() !=
+      OverscrollConfig::HistoryNavigationMode::kParallaxUi) {
     return;
+  }
 
   NavigationEntryImpl* entry = owner_->GetLastCommittedEntry();
   if (!entry)
@@ -125,12 +128,8 @@ void NavigationEntryScreenshotManager::TakeScreenshot() {
   const gfx::Size view_size_on_screen = view->GetViewBounds().size();
   view->CopyFromSurface(
       gfx::Rect(), view_size_on_screen,
-      // TODO(crbug/759310): This should be BindOnce, but requires a public
-      // interface change.
-      base::BindRepeating(&NavigationEntryScreenshotManager::OnScreenshotTaken,
-                          screenshot_factory_.GetWeakPtr(),
-                          entry->GetUniqueID()),
-      kN32_SkColorType);
+      base::BindOnce(&NavigationEntryScreenshotManager::OnScreenshotTaken,
+                     screenshot_factory_.GetWeakPtr(), entry->GetUniqueID()));
 }
 
 // Implemented here and not in NavigationEntry because this manager keeps track
@@ -151,15 +150,14 @@ void NavigationEntryScreenshotManager::SetMinScreenshotIntervalMS(
 
 void NavigationEntryScreenshotManager::OnScreenshotTaken(
     int unique_id,
-    const SkBitmap& bitmap,
-    ReadbackResponse response) {
+    const SkBitmap& bitmap) {
   NavigationEntryImpl* entry = owner_->GetEntryWithUniqueID(unique_id);
   if (!entry) {
     LOG(ERROR) << "Invalid entry with unique id: " << unique_id;
     return;
   }
 
-  if ((response != READBACK_SUCCESS) || bitmap.empty() || bitmap.isNull()) {
+  if (bitmap.drawsNothing()) {
     if (!ClearScreenshot(entry))
       OnScreenshotSet(entry);
     return;

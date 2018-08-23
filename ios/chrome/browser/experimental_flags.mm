@@ -22,8 +22,9 @@
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/signin/core/browser/signin_switches.h"
 #include "components/variations/variations_associated_data.h"
+#include "ios/chrome/browser/browsing_data/browsing_data_features.h"
 #include "ios/chrome/browser/chrome_switches.h"
-#import "ios/chrome/browser/ui/ntp/recent_tabs/recent_tabs_feature.h"
+#include "ios/chrome/browser/ui/ui_feature_flags.h"
 #include "ios/web/public/web_view_creation_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -107,9 +108,8 @@ bool MustClearApplicationGroupSandbox() {
   return value;
 }
 
-bool IsNewFeedbackKitEnabled() {
-  return [[NSUserDefaults standardUserDefaults]
-      boolForKey:@"NewFeedbackKitEnabled"];
+bool IsNewClearBrowsingDataUIEnabled() {
+  return base::FeatureList::IsEnabled(kNewClearBrowsingDataUI);
 }
 
 bool IsThirdPartyKeyboardWorkaroundEnabled() {
@@ -127,7 +127,19 @@ bool IsThirdPartyKeyboardWorkaroundEnabled() {
 }
 
 bool IsRecentTabsUIRebootEnabled() {
-  return base::FeatureList::IsEnabled(kRecentTabsUIReboot);
+  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
+}
+
+bool IsBookmarksUIRebootEnabled() {
+  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
+}
+
+bool IsReadingListUIRebootEnabled() {
+  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
+}
+
+bool IsSettingsUIRebootEnabled() {
+  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
 }
 
 }  // namespace experimental_flags

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/containers/span.h"
 #include "base/macros.h"
 #include "device/fido/public_key.h"
@@ -19,11 +20,16 @@ namespace device {
 // An uncompressed ECPublicKey consisting of 64 bytes:
 // - the 32-byte x coordinate
 // - the 32-byte y coordinate.
-class ECPublicKey : public PublicKey {
+class COMPONENT_EXPORT(DEVICE_FIDO) ECPublicKey : public PublicKey {
  public:
   static std::unique_ptr<ECPublicKey> ExtractFromU2fRegistrationResponse(
       std::string algorithm,
       base::span<const uint8_t> u2f_data);
+
+  // Parse a public key encoded in ANSI X9.62 uncompressed format.
+  static std::unique_ptr<ECPublicKey> ParseX962Uncompressed(
+      std::string algorithm,
+      base::span<const uint8_t> input);
 
   ECPublicKey(std::string algorithm,
               std::vector<uint8_t> x,
@@ -40,6 +46,7 @@ class ECPublicKey : public PublicKey {
   std::vector<uint8_t> EncodeAsCOSEKey() const override;
 
  private:
+  // Note that these values might not be minimal and might not be on the curve.
   const std::vector<uint8_t> x_coordinate_;
   const std::vector<uint8_t> y_coordinate_;
 

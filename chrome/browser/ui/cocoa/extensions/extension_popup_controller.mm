@@ -27,7 +27,6 @@
 #include "extensions/browser/notification_types.h"
 #include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/cocoa/window_size_constants.h"
-#include "ui/base/material_design/material_design_controller.h"
 
 using content::BrowserContext;
 using content::RenderViewHost;
@@ -37,7 +36,7 @@ using extensions::ExtensionViewHost;
 namespace {
 
 // The duration for any animations that might be invoked by this controller.
-const NSTimeInterval kAnimationDuration = 0.2;
+const NSTimeInterval kPopupAnimationDuration = 0.2;
 
 // There should only be one extension popup showing at one time. Keep a
 // reference to it here.
@@ -181,14 +180,8 @@ class ExtensionPopupNotificationBridge :
                          anchoredAt:anchoredAt])) {
     beingInspected_ = devMode;
     ignoreWindowDidResignKey_ = NO;
-    if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
-      // Under MD, bubbles never have arrows.
-      [[self bubble] setArrowLocation:info_bubble::kNoArrow];
-      [[self bubble] setAlignment:info_bubble::kAlignTrailingEdgeToAnchorEdge];
-    } else {
-      [[self bubble] setArrowLocation:info_bubble::kTopTrailing];
-      [[self bubble] setAlignment:info_bubble::kAlignArrowToAnchor];
-    }
+    [[self bubble] setArrowLocation:info_bubble::kNoArrow];
+    [[self bubble] setAlignment:info_bubble::kAlignTrailingEdgeToAnchorEdge];
     if (!gAnimationsEnabled)
       [window setAllowedAnimations:info_bubble::kAnimateNone];
   }
@@ -378,7 +371,7 @@ class ExtensionPopupNotificationBridge :
       ([animator alphaValue] != targetAlpha ||
        !NSEqualRects([window frame], [animator frame]))) {
     [NSAnimationContext beginGrouping];
-    [[NSAnimationContext currentContext] setDuration:kAnimationDuration];
+    [[NSAnimationContext currentContext] setDuration:kPopupAnimationDuration];
     [animator setAlphaValue:targetAlpha];
     [animator setFrame:frame display:YES];
     [NSAnimationContext endGrouping];

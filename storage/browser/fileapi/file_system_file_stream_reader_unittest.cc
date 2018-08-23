@@ -44,8 +44,8 @@ void ReadFromReader(storage::FileSystemFileStreamReader* reader,
                     std::string* data,
                     size_t size,
                     int* result) {
-  ASSERT_TRUE(reader != NULL);
-  ASSERT_TRUE(result != NULL);
+  ASSERT_TRUE(reader != nullptr);
+  ASSERT_TRUE(result != nullptr);
   *result = net::OK;
   net::TestCompletionCallback callback;
   size_t total_bytes_read = 0;
@@ -76,13 +76,12 @@ class FileSystemFileStreamReaderTest : public testing::Test {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
     file_system_context_ =
-        CreateFileSystemContextForTesting(NULL, temp_dir_.GetPath());
+        CreateFileSystemContextForTesting(nullptr, temp_dir_.GetPath());
 
     file_system_context_->OpenFileSystem(
-        GURL(kURLOrigin),
-        storage::kFileSystemTypeTemporary,
+        GURL(kURLOrigin), storage::kFileSystemTypeTemporary,
         storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
-        base::Bind(&OnOpenFileSystem));
+        base::BindOnce(&OnOpenFileSystem));
     base::RunLoop().RunUntilIdle();
 
     WriteFile(kTestFileName, kTestData, kTestDataSize,
@@ -157,7 +156,7 @@ TEST_F(FileSystemFileStreamReaderTest, NonExistent) {
 
 TEST_F(FileSystemFileStreamReaderTest, Empty) {
   const char kFileName[] = "empty";
-  WriteFile(kFileName, NULL, 0, NULL);
+  WriteFile(kFileName, nullptr, 0, nullptr);
 
   std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kFileName, 0, base::Time()));
@@ -197,7 +196,7 @@ TEST_F(FileSystemFileStreamReaderTest, GetLengthAfterModified) {
     result = callback.WaitForResult();
   ASSERT_EQ(net::ERR_UPLOAD_FILE_CHANGED, result);
 
-  // With NULL expected modification time this should work.
+  // With nullptr expected modification time this should work.
   reader.reset(CreateFileReader(kTestFileName, 0, base::Time()));
   result = reader->GetLength(callback.callback());
   if (result == net::ERR_IO_PENDING)
@@ -239,7 +238,7 @@ TEST_F(FileSystemFileStreamReaderTest, ReadAfterModified) {
   ASSERT_EQ(net::ERR_UPLOAD_FILE_CHANGED, result);
   ASSERT_EQ(0U, data.size());
 
-  // With NULL expected modification time this should work.
+  // With nullptr expected modification time this should work.
   data.clear();
   reader.reset(CreateFileReader(kTestFileName, 0, base::Time()));
   ReadFromReader(reader.get(), &data, kTestDataSize, &result);

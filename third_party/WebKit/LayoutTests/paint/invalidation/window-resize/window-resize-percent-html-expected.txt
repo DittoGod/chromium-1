@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [600, 250],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -23,20 +24,6 @@
         }
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    }
   ]
 }
 {
@@ -44,6 +31,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [400, 250],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -64,20 +52,6 @@
         }
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    }
   ]
 }
 {
@@ -85,6 +59,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [400, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -110,20 +85,6 @@
         }
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    }
   ]
 }
 {
@@ -131,6 +92,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -155,20 +117,6 @@
           "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "incremental"
     }
   ]
 }

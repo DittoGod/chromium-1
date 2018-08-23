@@ -20,14 +20,6 @@
 
 namespace policy {
 
-namespace {
-
-// Determines the time, measured from the time of issue, after which the command
-// queue will consider this command expired if the command has not been started.
-const int kCommandExpirationTimeInMinutes = 10;
-
-}  // namespace
-
 DeviceCommandRebootJob::DeviceCommandRebootJob(
     chromeos::PowerManagerClient* power_manager_client)
     : power_manager_client_(power_manager_client) {
@@ -42,14 +34,8 @@ enterprise_management::RemoteCommand_Type DeviceCommandRebootJob::GetType()
   return enterprise_management::RemoteCommand_Type_DEVICE_REBOOT;
 }
 
-bool DeviceCommandRebootJob::IsExpired(base::TimeTicks now) {
-  return now > issued_time() + base::TimeDelta::FromMinutes(
-                                   kCommandExpirationTimeInMinutes);
-}
-
-void DeviceCommandRebootJob::RunImpl(
-    const CallbackWithResult& succeeded_callback,
-    const CallbackWithResult& failed_callback) {
+void DeviceCommandRebootJob::RunImpl(CallbackWithResult succeeded_callback,
+                                     CallbackWithResult failed_callback) {
   SYSLOG(INFO) << "Running reboot command.";
 
   // Determines the time delta between the command having been issued and the
@@ -64,17 +50,13 @@ void DeviceCommandRebootJob::RunImpl(
     SYSLOG(WARNING) << "Ignoring reboot command issued " << delta
                     << " before current boot time";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(succeeded_callback, nullptr));
+        FROM_HERE, base::BindOnce(std::move(succeeded_callback), nullptr));
     return;
   }
 
   SYSLOG(INFO) << "Rebooting immediately.";
   power_manager_client_->RequestRestart(power_manager::REQUEST_RESTART_OTHER,
                                         "policy device command");
-}
-
-base::TimeDelta DeviceCommandRebootJob::GetCommmandTimeout() const {
-  return base::TimeDelta::FromMinutes(kCommandExpirationTimeInMinutes);
 }
 
 }  // namespace policy

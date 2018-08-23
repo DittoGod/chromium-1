@@ -13,13 +13,12 @@
 
 #include "base/base_paths.h"
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #if defined(OS_MACOSX)
 #include "base/mac/authorization_util.h"
 #include "base/mac/scoped_authorizationref.h"
@@ -35,11 +34,13 @@
 #include "components/component_updater/component_updater_paths.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/component_updater/pref_names.h"
+#include "components/crx_file/crx_verifier.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/utils.h"
 #include "content/public/browser/browser_thread.h"
+#include "crypto/sha2.h"
 
 using content::BrowserThread;
 
@@ -51,10 +52,12 @@ namespace component_updater {
 namespace {
 
 // CRX hash. The extension id is: npdjjkjlcidkjlamlmmdelcjbcpdjocm.
-const uint8_t kSha2Hash[] = {0xdf, 0x39, 0x9a, 0x9b, 0x28, 0x3a, 0x9b, 0x0c,
-                             0xbc, 0xc3, 0x4b, 0x29, 0x12, 0xf3, 0x9e, 0x2c,
-                             0x19, 0x7a, 0x71, 0x4b, 0x0a, 0x7c, 0x80, 0x1c,
-                             0xf6, 0x29, 0x7c, 0x0a, 0x5f, 0xea, 0x67, 0xb7};
+const uint8_t kRecoverySha2Hash[] = {
+    0xdf, 0x39, 0x9a, 0x9b, 0x28, 0x3a, 0x9b, 0x0c, 0xbc, 0xc3, 0x4b,
+    0x29, 0x12, 0xf3, 0x9e, 0x2c, 0x19, 0x7a, 0x71, 0x4b, 0x0a, 0x7c,
+    0x80, 0x1c, 0xf6, 0x29, 0x7c, 0x0a, 0x5f, 0xea, 0x67, 0xb7};
+static_assert(arraysize(kRecoverySha2Hash) == crypto::kSHA256Length,
+              "Wrong hash length");
 
 // File name of the recovery binary on different platforms.
 const base::FilePath::CharType kRecoveryFileName[] =
@@ -228,7 +231,7 @@ void DoElevatedInstallRecoveryComponent(const base::FilePath& path) {
   // This task joins a process, hence .WithBaseSyncPrimitives().
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::WithBaseSyncPrimitives(), base::TaskPriority::BACKGROUND,
+      {base::WithBaseSyncPrimitives(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&WaitForElevatedInstallToComplete,
                      base::Passed(&process)));
@@ -237,7 +240,7 @@ void DoElevatedInstallRecoveryComponent(const base::FilePath& path) {
 void ElevatedInstallRecoveryComponent(const base::FilePath& installer_path) {
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&DoElevatedInstallRecoveryComponent, installer_path));
 }
@@ -296,9 +299,12 @@ void RecoveryRegisterHelper(ComponentUpdateService* cus, PrefService* prefs) {
   recovery.name = "recovery";
   recovery.installer = new RecoveryComponentInstaller(version, prefs);
   recovery.version = version;
-  recovery.pk_hash.assign(kSha2Hash, &kSha2Hash[sizeof(kSha2Hash)]);
+  recovery.pk_hash.assign(kRecoverySha2Hash,
+                          &kRecoverySha2Hash[sizeof(kRecoverySha2Hash)]);
   recovery.supports_group_policy_enable_component_updates = true;
   recovery.requires_network_encryption = false;
+  recovery.crx_format_requirement =
+      crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF;
   if (!cus->RegisterComponent(recovery)) {
     NOTREACHED() << "Recovery component registration failed.";
   }
@@ -368,7 +374,7 @@ bool RecoveryComponentInstaller::RunInstallCommand(
   // This task joins a process, hence .WithBaseSyncPrimitives().
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::WithBaseSyncPrimitives(), base::TaskPriority::BACKGROUND,
+      {base::WithBaseSyncPrimitives(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&WaitForInstallToComplete, base::Passed(&process),
                      installer_folder, prefs_));
@@ -423,7 +429,7 @@ bool RecoveryComponentInstaller::DoInstall(
 
   // Passed the basic tests. Copy the installation to a permanent directory.
   base::FilePath path;
-  if (!PathService::Get(DIR_RECOVERY_BASE, &path))
+  if (!base::PathService::Get(DIR_RECOVERY_BASE, &path))
     return false;
   if (!base::PathExists(path) && !base::CreateDirectory(path))
     return false;

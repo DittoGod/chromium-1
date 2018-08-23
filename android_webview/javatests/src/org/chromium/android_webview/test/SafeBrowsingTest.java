@@ -41,14 +41,12 @@ import org.chromium.android_webview.SafeBrowsingAction;
 import org.chromium.android_webview.test.TestAwContentsClient.OnReceivedError2Helper;
 import org.chromium.android_webview.test.util.GraphicsTestUtils;
 import org.chromium.base.Callback;
-import org.chromium.base.LocaleUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.InMemorySharedPreferences;
-import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.components.safe_browsing.SafeBrowsingApiBridge;
 import org.chromium.components.safe_browsing.SafeBrowsingApiHandler;
 import org.chromium.components.safe_browsing.SafeBrowsingApiHandler.Observer;
@@ -92,6 +90,9 @@ public class SafeBrowsingTest {
     // Used to check which thread a callback is invoked on.
     private volatile boolean mOnUiThread;
 
+    // Used to verify the getSafeBrowsingPrivacyPolicyUrl() API.
+    private volatile Uri mPrivacyPolicyUrl;
+
     // These colors correspond to the body.background attribute in GREEN_HTML_PATH, SAFE_HTML_PATH,
     // MALWARE_HTML_PATH, IFRAME_HTML_PATH, etc. They should only be changed if those values are
     // changed as well
@@ -117,11 +118,10 @@ public class SafeBrowsingTest {
     // A gray page with an iframe to MALWARE_HTML_PATH
     private static final String IFRAME_HTML_PATH = RESOURCE_PATH + "/iframe.html";
 
-    private static final String INTERSTITIAL_PAGE_TITLE = "Security error";
-
     // These URLs will be CTS-tested and should not be changed.
     private static final String WEB_UI_MALWARE_URL = "chrome://safe-browsing/match?type=malware";
     private static final String WEB_UI_PHISHING_URL = "chrome://safe-browsing/match?type=phishing";
+    private static final String WEB_UI_HOST = "safe-browsing";
 
     /**
      * A fake SafeBrowsingApiHandler which treats URLs ending in MALWARE_HTML_PATH as malicious URLs
@@ -138,7 +138,7 @@ public class SafeBrowsingTest {
         private static final long CHECK_DELTA_US = 10;
 
         @Override
-        public boolean init(Context context, Observer result) {
+        public boolean init(Observer result) {
             mObserver = result;
             return true;
         }
@@ -151,10 +151,6 @@ public class SafeBrowsingTest {
         public void startUriLookup(final long callbackId, String uri, int[] threatsOfInterest) {
             final String metadata;
             Arrays.sort(threatsOfInterest);
-
-            // TODO(ntfschr): remove this assert once we support Unwanted Software warnings
-            // (crbug/729272)
-            Assert.assertEquals(Arrays.binarySearch(threatsOfInterest, UNWANTED_SOFTWARE_CODE), -1);
 
             if (uri.endsWith(PHISHING_HTML_PATH)
                     && Arrays.binarySearch(threatsOfInterest, PHISHING_CODE) >= 0) {
@@ -190,24 +186,35 @@ public class SafeBrowsingTest {
 
     private static class TestAwWebContentsObserver extends AwWebContentsObserver {
         private CallbackHelper mDidAttachInterstitialPageHelper;
+        private CallbackHelper mDidDetachInterstitialPageHelper;
 
         public TestAwWebContentsObserver(WebContents webContents, AwContents awContents,
                 TestAwContentsClient contentsClient) {
             super(webContents, awContents, contentsClient);
             mDidAttachInterstitialPageHelper = new CallbackHelper();
+            mDidDetachInterstitialPageHelper = new CallbackHelper();
         }
 
         public CallbackHelper getAttachedInterstitialPageHelper() {
             return mDidAttachInterstitialPageHelper;
         }
 
+        public CallbackHelper getDetachedInterstitialPageHelper() {
+            return mDidDetachInterstitialPageHelper;
+        }
+
         @Override
         public void didAttachInterstitialPage() {
             mDidAttachInterstitialPageHelper.notifyCalled();
         }
+
+        @Override
+        public void didDetachInterstitialPage() {
+            mDidDetachInterstitialPageHelper.notifyCalled();
+        }
     }
 
-    private static class MockAwContents extends AwContents {
+    private static class MockAwContents extends TestAwContents {
         private boolean mCanShowInterstitial;
         private boolean mCanShowBigInterstitial;
 
@@ -320,10 +327,10 @@ public class SafeBrowsingTest {
         mTestServer = EmbeddedTestServer.createAndStartServer(
                 InstrumentationRegistry.getInstrumentation().getContext());
         InstrumentationRegistry.getInstrumentation().runOnMainSync(
-                () -> mWebContentsObserver = new TestAwWebContentsObserver(
-                        mContainerView.getContentViewCore().getWebContents(), mAwContents,
-                        mContentsClient) {
-                });
+                ()
+                        -> mWebContentsObserver =
+                                   new TestAwWebContentsObserver(mContainerView.getWebContents(),
+                                           mAwContents, mContentsClient) {});
     }
 
     @After
@@ -400,15 +407,6 @@ public class SafeBrowsingTest {
         evaluateJavaScriptOnInterstitialOnUiThread(script, null);
     }
 
-    private void waitForInterstitialToChangeTitle() {
-        CriteriaHelper.pollUiThread(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return INTERSTITIAL_PAGE_TITLE.equals(mAwContents.getTitle());
-            }
-        });
-    }
-
     private void loadPathAndWaitForInterstitial(final String path) throws Exception {
         int interstitialCount =
                 mWebContentsObserver.getAttachedInterstitialPageHelper().getCallCount();
@@ -471,14 +469,13 @@ public class SafeBrowsingTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
-    public void testSafeBrowsingDoesNotBlockUnwantedSoftwarePages() throws Throwable {
-        // TODO(ntfschr): this is a temporary check until we add support for Unwanted Software
-        // warnings (crbug/729272)
+    public void testSafeBrowsingBlocksUnwantedSoftwarePages() throws Throwable {
         loadGreenPage();
-        final String responseUrl = mTestServer.getURL(UNWANTED_SOFTWARE_HTML_PATH);
-        mActivityTestRule.loadUrlSync(
-                mAwContents, mContentsClient.getOnPageFinishedHelper(), responseUrl);
-        assertTargetPageHasLoaded(UNWANTED_SOFTWARE_PAGE_BACKGROUND_COLOR);
+        loadPathAndWaitForInterstitial(UNWANTED_SOFTWARE_HTML_PATH);
+        assertGreenPageNotShowing();
+        assertTargetPageNotShowing(UNWANTED_SOFTWARE_PAGE_BACKGROUND_COLOR);
+        // Assume that we are rendering the interstitial, since we see neither the previous page nor
+        // the target page
     }
 
     @Test
@@ -499,15 +496,25 @@ public class SafeBrowsingTest {
     public void testSafeBrowsingWhitelistedUnsafePagesDontShowInterstitial() throws Throwable {
         loadGreenPage();
         final String responseUrl = mTestServer.getURL(MALWARE_HTML_PATH);
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            String host = Uri.parse(responseUrl).getHost();
-            ArrayList<String> s = new ArrayList<String>();
-            s.add(host);
-            AwContentsStatics.setSafeBrowsingWhitelist(s, null);
-        });
+        verifyWhiteListRule(Uri.parse(responseUrl).getHost(), true);
         mActivityTestRule.loadUrlSync(
                 mAwContents, mContentsClient.getOnPageFinishedHelper(), responseUrl);
         assertTargetPageHasLoaded(MALWARE_PAGE_BACKGROUND_COLOR);
+    }
+
+    @DisabledTest(message = "crbug.com/855732")
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testSafeBrowsingWhitelistHardcodedWebUiPages() throws Throwable {
+        loadGreenPage();
+        verifyWhiteListRule(WEB_UI_HOST, true);
+        mActivityTestRule.loadUrlSync(
+                mAwContents, mContentsClient.getOnPageFinishedHelper(), WEB_UI_MALWARE_URL);
+        mActivityTestRule.loadUrlSync(
+                mAwContents, mContentsClient.getOnPageFinishedHelper(), WEB_UI_PHISHING_URL);
+
+        // Assume the pages are whitelisted, since we successfully loaded them.
     }
 
     @Test
@@ -626,19 +633,17 @@ public class SafeBrowsingTest {
     @Feature({"AndroidWebView"})
     public void testSafeBrowsingDontProceedNavigatesBackForMainFrame() throws Throwable {
         loadGreenPage();
-        final String originalTitle = mActivityTestRule.getTitleOnUiThread(mAwContents);
         loadPathAndWaitForInterstitial(MALWARE_HTML_PATH);
-        waitForInterstitialToChangeTitle();
         waitForInterstitialDomToLoad();
-        clickBackToSafety();
 
-        // Make sure we navigate back to previous page
-        CriteriaHelper.pollUiThread(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return originalTitle.equals(mAwContents.getTitle());
-            }
-        });
+        int interstitialCount =
+                mWebContentsObserver.getDetachedInterstitialPageHelper().getCallCount();
+        clickBackToSafety();
+        mWebContentsObserver.getDetachedInterstitialPageHelper().waitForCallback(interstitialCount);
+
+        mActivityTestRule.waitForVisualStateCallback(mAwContents);
+        assertTargetPageNotShowing(MALWARE_PAGE_BACKGROUND_COLOR);
+        assertGreenPageShowing();
     }
 
     @Test
@@ -646,19 +651,17 @@ public class SafeBrowsingTest {
     @Feature({"AndroidWebView"})
     public void testSafeBrowsingDontProceedNavigatesBackForSubResource() throws Throwable {
         loadGreenPage();
-        final String originalTitle = mActivityTestRule.getTitleOnUiThread(mAwContents);
         loadPathAndWaitForInterstitial(IFRAME_HTML_PATH);
-        waitForInterstitialToChangeTitle();
         waitForInterstitialDomToLoad();
-        clickBackToSafety();
 
-        // Make sure we navigate back to previous page
-        CriteriaHelper.pollUiThread(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return originalTitle.equals(mAwContents.getTitle());
-            }
-        });
+        int interstitialCount =
+                mWebContentsObserver.getDetachedInterstitialPageHelper().getCallCount();
+        clickBackToSafety();
+        mWebContentsObserver.getDetachedInterstitialPageHelper().waitForCallback(interstitialCount);
+
+        mActivityTestRule.waitForVisualStateCallback(mAwContents);
+        assertTargetPageNotShowing(IFRAME_EMBEDDER_BACKGROUND_COLOR);
+        assertGreenPageShowing();
     }
 
     @Test
@@ -728,6 +731,17 @@ public class SafeBrowsingTest {
         loadPathAndWaitForInterstitial(PHISHING_HTML_PATH);
         assertGreenPageNotShowing();
         assertTargetPageNotShowing(PHISHING_PAGE_BACKGROUND_COLOR);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testSafeBrowsingCanShowQuietUnwantedSoftwareInterstitial() throws Throwable {
+        mAwContents.setCanShowBigInterstitial(false);
+        loadGreenPage();
+        loadPathAndWaitForInterstitial(UNWANTED_SOFTWARE_HTML_PATH);
+        assertGreenPageNotShowing();
+        assertTargetPageNotShowing(UNWANTED_SOFTWARE_PAGE_BACKGROUND_COLOR);
     }
 
     @Test
@@ -833,7 +847,6 @@ public class SafeBrowsingTest {
 
     @Test
     @SmallTest
-    @RetryOnFailure // crbug/765932
     @Feature({"AndroidWebView"})
     public void testSafeBrowsingOnSafeBrowsingHitForSubresource() throws Throwable {
         mContentsClient.setSafeBrowsingAction(SafeBrowsingAction.BACK_TO_SAFETY);
@@ -989,8 +1002,13 @@ public class SafeBrowsingTest {
     private String appendLocale(String url) throws Exception {
         return Uri.parse(url)
                 .buildUpon()
-                .appendQueryParameter("hl", LocaleUtils.getDefaultLocaleString())
+                .appendQueryParameter("hl", getSafeBrowsingLocaleOnUiThreadForTesting())
                 .toString();
+    }
+
+    private String getSafeBrowsingLocaleOnUiThreadForTesting() throws Exception {
+        return ThreadUtils.runOnUiThreadBlocking(
+                () -> AwContents.getSafeBrowsingLocaleForTesting());
     }
 
     @Test
@@ -1002,7 +1020,7 @@ public class SafeBrowsingTest {
                 Uri.parse("https://transparencyreport.google.com/safe-browsing/search")
                         .buildUpon()
                         .appendQueryParameter("url", responseUrl)
-                        .appendQueryParameter("hl", LocaleUtils.getDefaultLocaleString())
+                        .appendQueryParameter("hl", getSafeBrowsingLocaleOnUiThreadForTesting())
                         .toString();
         loadInterstitialAndClickLink(MALWARE_HTML_PATH, "diagnostic-link", diagnosticUrl);
     }
@@ -1014,7 +1032,7 @@ public class SafeBrowsingTest {
         final String whitepaperUrl =
                 Uri.parse("https://www.google.com/chrome/browser/privacy/whitepaper.html")
                         .buildUpon()
-                        .appendQueryParameter("hl", LocaleUtils.getDefaultLocaleString())
+                        .appendQueryParameter("hl", getSafeBrowsingLocaleOnUiThreadForTesting())
                         .fragment("extendedreport")
                         .toString();
         loadInterstitialAndClickLink(PHISHING_HTML_PATH, "whitepaper-link", whitepaperUrl);
@@ -1027,7 +1045,7 @@ public class SafeBrowsingTest {
         final String privacyPolicyUrl =
                 Uri.parse("https://www.google.com/chrome/browser/privacy/")
                         .buildUpon()
-                        .appendQueryParameter("hl", LocaleUtils.getDefaultLocaleString())
+                        .appendQueryParameter("hl", getSafeBrowsingLocaleOnUiThreadForTesting())
                         .fragment("safe-browsing-policies")
                         .toString();
         loadInterstitialAndClickLink(PHISHING_HTML_PATH, "privacy-link", privacyPolicyUrl);
@@ -1103,10 +1121,41 @@ public class SafeBrowsingTest {
         final Uri privacyPolicyUrl =
                 Uri.parse("https://www.google.com/chrome/browser/privacy/")
                         .buildUpon()
-                        .appendQueryParameter("hl", LocaleUtils.getDefaultLocaleString())
+                        .appendQueryParameter("hl", getSafeBrowsingLocaleOnUiThreadForTesting())
                         .fragment("safe-browsing-policies")
                         .build();
-        Assert.assertEquals(privacyPolicyUrl, AwContentsStatics.getSafeBrowsingPrivacyPolicyUrl());
-        Assert.assertNotNull(AwContentsStatics.getSafeBrowsingPrivacyPolicyUrl());
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> { mPrivacyPolicyUrl = AwContentsStatics.getSafeBrowsingPrivacyPolicyUrl(); });
+        Assert.assertEquals(privacyPolicyUrl, this.mPrivacyPolicyUrl);
+        Assert.assertNotNull(this.mPrivacyPolicyUrl);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testDestroyWebViewWithInterstitialShowing() throws Throwable {
+        loadPathAndWaitForInterstitial(MALWARE_HTML_PATH);
+        destroyOnMainSync();
+        // As long as we've reached this line without crashing, there should be no bug.
+    }
+
+    private void destroyOnMainSync() throws Exception {
+        // The AwActivityTestRule method invokes AwContents#destroy() on the main thread, but
+        // Awcontents#destroy() posts an asynchronous task itself to destroy natives. Therefore, we
+        // still need to wait for the real work to actually finish.
+        mActivityTestRule.destroyAwContentsOnMainSync(mAwContents);
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                try {
+                    return ThreadUtils.runOnUiThreadBlocking(() -> {
+                        int count_aw_contents = AwContents.getNativeInstanceCount();
+                        return count_aw_contents == 0;
+                    });
+                } catch (Exception e) {
+                    return false;
+                }
+            }
+        });
     }
 }

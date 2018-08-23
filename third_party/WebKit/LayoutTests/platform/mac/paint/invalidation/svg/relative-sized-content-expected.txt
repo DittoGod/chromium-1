@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -28,28 +29,10 @@
         },
         {
           "object": "LayoutSVGRoot svg",
-          "rect": [9, 69, 400, 400],
-          "reason": "geometry"
+          "rect": [109, 69, 300, 400],
+          "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow div id='contentBox'",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGRoot svg",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGRect rect id='targetRect'",
-      "reason": "geometry"
     }
   ]
 }

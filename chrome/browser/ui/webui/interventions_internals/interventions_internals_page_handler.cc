@@ -12,12 +12,14 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/flag_descriptions.h"
-#include "chrome/browser/net/nqe/ui_network_quality_estimator_service.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/previews/core/previews_experiments.h"
 #include "components/previews/core/previews_switches.h"
 #include "net/nqe/network_quality_estimator_params.h"
+#include "services/network/public/cpp/network_quality_tracker.h"
+#include "services/network/public/cpp/network_switches.h"
 
 namespace {
 
@@ -98,11 +100,9 @@ std::string GetEnabledStateForSwitch(const std::string& switch_name) {
 
 InterventionsInternalsPageHandler::InterventionsInternalsPageHandler(
     mojom::InterventionsInternalsPageHandlerRequest request,
-    previews::PreviewsUIService* previews_ui_service,
-    UINetworkQualityEstimatorService* ui_nqe_service)
+    previews::PreviewsUIService* previews_ui_service)
     : binding_(this, std::move(request)),
       previews_ui_service_(previews_ui_service),
-      ui_nqe_service_(ui_nqe_service),
       current_estimated_ect_(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN) {
   logger_ = previews_ui_service_->previews_logger();
   DCHECK(logger_);
@@ -111,7 +111,8 @@ InterventionsInternalsPageHandler::InterventionsInternalsPageHandler(
 InterventionsInternalsPageHandler::~InterventionsInternalsPageHandler() {
   DCHECK(logger_);
   logger_->RemoveObserver(this);
-  ui_nqe_service_->RemoveEffectiveConnectionTypeObserver(this);
+  g_browser_process->network_quality_tracker()
+      ->RemoveEffectiveConnectionTypeObserver(this);
 }
 
 void InterventionsInternalsPageHandler::SetClientPage(
@@ -119,7 +120,8 @@ void InterventionsInternalsPageHandler::SetClientPage(
   page_ = std::move(page);
   DCHECK(page_);
   logger_->AddAndNotifyObserver(this);
-  ui_nqe_service_->AddEffectiveConnectionTypeObserver(this);
+  g_browser_process->network_quality_tracker()
+      ->AddEffectiveConnectionTypeObserver(this);
 }
 
 void InterventionsInternalsPageHandler::OnEffectiveConnectionTypeChanged(
@@ -235,7 +237,7 @@ void InterventionsInternalsPageHandler::GetPreviewsFlagsDetails(
   ect_status->link = kEctFlagLink;
   std::string ect_value =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kForceEffectiveConnectionType);
+          network::switches::kForceEffectiveConnectionType);
   ect_status->value = ect_value.empty() ? GetNonFlagEctValue() : ect_value;
   ect_status->htmlId = kEctFlagHtmlId;
   flags.push_back(std::move(ect_status));

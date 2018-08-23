@@ -45,6 +45,11 @@ class ASH_EXPORT ClientControlledState : public BaseState {
                                      const gfx::Rect& requested_bounds) = 0;
   };
 
+  // Adjust bounds to ensure window visibility, which is used for window added
+  // to a new workspace.
+  static void AdjustBoundsForMinimumWindowVisibility(aura::Window* window,
+                                                     gfx::Rect* bounds);
+
   explicit ClientControlledState(std::unique_ptr<Delegate> delegate);
   ~ClientControlledState() override;
 
@@ -52,6 +57,7 @@ class ASH_EXPORT ClientControlledState : public BaseState {
   // delegating to |Delegate|. The Delegate should use this to
   // apply the bounds change to the window.
   void set_bounds_locally(bool set) { set_bounds_locally_ = set; }
+  bool set_bounds_locally() const { return set_bounds_locally_; }
 
   // Type of animation type to be applied when changing bounds locally.
   // TODO(oshima): Use transform animation for snapping.
@@ -74,6 +80,7 @@ class ASH_EXPORT ClientControlledState : public BaseState {
                           const WMEvent* event) override;
   void HandleTransitionEvents(WindowState* window_state,
                               const WMEvent* event) override;
+  void OnWindowDestroying(WindowState* window_state) override;
 
   // Enters next state. This is used when the state moves from one to another
   // within the same desktop mode. Returns true if the state has changed, or

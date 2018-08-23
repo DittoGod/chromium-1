@@ -6,14 +6,16 @@ import logging
 
 from benchmarks import memory
 from core import perf_benchmark
+from measurements import smoothness
 from telemetry import benchmark
 from telemetry import story
 from telemetry.timeline import chrome_trace_category_filter
 from telemetry.timeline import chrome_trace_config
 from telemetry.web_perf import timeline_based_measurement
+from contrib.vr_benchmarks import vr_browsing_mode_pages
 from contrib.vr_benchmarks import webvr_sample_pages
 from contrib.vr_benchmarks import webvr_wpr_pages
-from contrib.vr_benchmarks import vr_browsing_mode_pages
+from contrib.vr_benchmarks import webxr_sample_pages
 
 
 class _BaseVRBenchmark(perf_benchmark.PerfBenchmark):
@@ -45,7 +47,7 @@ class _BaseVRBenchmark(perf_benchmark.PerfBenchmark):
              'benchmark to run without issues.')
 
 
-class _BaseWebVRBenchmark(_BaseVRBenchmark):
+class _BaseWebVRWebXRBenchmark(_BaseVRBenchmark):
 
   SUPPORTED_PLATFORMS = [story.expectations.ALL_ANDROID]
 
@@ -65,19 +67,32 @@ class _BaseWebVRBenchmark(_BaseVRBenchmark):
         chrome_trace_config.MemoryDumpConfig())
     return options
 
-  def SetExtraBrowserOptions(self, options):
-    memory.SetExtraBrowserOptionsForMemoryMeasurement(options)
-    options.AppendExtraBrowserArgs([
-        '--enable-webvr',
-    ])
-
   @classmethod
   def ShouldAddValue(cls, name, from_first_story_run):
     del from_first_story_run  # unused
     return memory.DefaultShouldAddValueForMemoryMeasurement(name)
 
 
-@benchmark.Owner(emails=['bsheedy@chromium.org', 'leilei@chromium.org'])
+class _BaseWebVRBenchmark(_BaseWebVRWebXRBenchmark):
+
+  def SetExtraBrowserOptions(self, options):
+    memory.SetExtraBrowserOptionsForMemoryMeasurement(options)
+    options.AppendExtraBrowserArgs([
+        '--enable-webvr',
+    ])
+
+
+class _BaseWebXRBenchmark(_BaseWebVRWebXRBenchmark):
+
+  def SetExtraBrowserOptions(self, options):
+    memory.SetExtraBrowserOptionsForMemoryMeasurement(options)
+    options.AppendExtraBrowserArgs([
+        '--enable-features=WebXR',
+    ])
+
+
+@benchmark.Info(emails=['bsheedy@chromium.org', 'leilei@chromium.org'])
+# pylint: disable=too-many-ancestors
 class XrWebVrStatic(_BaseWebVRBenchmark):
   """Measures WebVR performance with synthetic sample pages."""
 
@@ -89,7 +104,21 @@ class XrWebVrStatic(_BaseWebVRBenchmark):
     return 'xr.webvr.static'
 
 
-@benchmark.Owner(emails=['bsheedy@chromium.org', 'tiborg@chromium.org'])
+@benchmark.Info(emails=['bsheedy@chromium.org', 'tiborg@chromium.org'])
+# pylint: disable=too-many-ancestors
+class XrWebXrStatic(_BaseWebXRBenchmark):
+  """Measures WebXR performance with synthetic sample pages."""
+
+  def CreateStorySet(self, options):
+    return webxr_sample_pages.WebXrSamplePageSet()
+
+  @classmethod
+  def Name(cls):
+    return 'xr.webxr.static'
+
+
+@benchmark.Info(emails=['bsheedy@chromium.org', 'tiborg@chromium.org'])
+# pylint: disable=too-many-ancestors
 class XrWebVrWprStatic(_BaseWebVRBenchmark):
   """Measures WebVR performance with WPR copies of live websites."""
 
@@ -101,7 +130,8 @@ class XrWebVrWprStatic(_BaseWebVRBenchmark):
     return 'xr.webvr.wpr.static'
 
 
-@benchmark.Owner(emails=['bsheedy@chromium.org', 'tiborg@chromium.org'])
+@benchmark.Info(emails=['bsheedy@chromium.org', 'tiborg@chromium.org'])
+# pylint: disable=too-many-ancestors
 class XrWebVrLiveStatic(_BaseWebVRBenchmark):
   """Measures WebVR performance with live websites.
 
@@ -123,9 +153,7 @@ class XrWebVrLiveStatic(_BaseWebVRBenchmark):
     return 'xr.webvr.live.static'
 
 
-@benchmark.Owner(emails=['tiborg@chromium.org'])
-class XrBrowsingStatic(_BaseVRBenchmark):
-  """Benchmark for testing the VR performance in VR Browsing Mode."""
+class _BaseBrowsingBenchmark(_BaseVRBenchmark):
 
   SUPPORTED_PLATFORMS = [story.expectations.ALL_ANDROID]
 
@@ -145,9 +173,6 @@ class XrBrowsingStatic(_BaseVRBenchmark):
         chrome_trace_config.MemoryDumpConfig())
     return options
 
-  def CreateStorySet(self, options):
-    return vr_browsing_mode_pages.VrBrowsingModePageSet()
-
   def SetExtraBrowserOptions(self, options):
     options.clear_sytem_cache_for_browser_and_profile_on_start = True
     options.AppendExtraBrowserArgs([
@@ -156,6 +181,40 @@ class XrBrowsingStatic(_BaseVRBenchmark):
         '--enable-vr-shell',
     ])
 
+
+@benchmark.Info(emails=['tiborg@chromium.org'])
+class XrBrowsingStatic(_BaseBrowsingBenchmark):
+  """Benchmark for testing the VR Browsing Mode performance on sample pages."""
+
+  def CreateStorySet(self, options):
+    return vr_browsing_mode_pages.VrBrowsingModePageSet()
+
   @classmethod
   def Name(cls):
     return 'xr.browsing.static'
+
+
+@benchmark.Info(emails=['tiborg@chromium.org', 'bsheedy@chromium.org'])
+class XrBrowsingWprStatic(_BaseBrowsingBenchmark):
+  """Benchmark for testing the VR Browsing Mode performance on WPR pages."""
+
+  def CreateStorySet(self, options):
+    return vr_browsing_mode_pages.VrBrowsingModeWprPageSet()
+
+  @classmethod
+  def Name(cls):
+    return 'xr.browsing.wpr.static'
+
+
+@benchmark.Info(emails=['tiborg@chromium.org', 'bsheedy@chromium.org'])
+class XrBrowsingWprSmoothness(_BaseBrowsingBenchmark):
+  """Benchmark for testing VR browser scrolling smoothness and throughput."""
+
+  test = smoothness.Smoothness
+
+  def CreateStorySet(self, options):
+    return vr_browsing_mode_pages.VrBrowsingModeWprSmoothnessPageSet()
+
+  @classmethod
+  def Name(cls):
+    return 'xr.browsing.wpr.smoothness'

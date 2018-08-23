@@ -2,7 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-static_library("browser") {
+import("//build/config/jumbo.gni")
+
+jumbo_static_library("browser") {
   sources = [
     "password_data_type_controller.cc",
     "password_data_type_controller.h",
@@ -28,6 +30,10 @@ static_library("browser") {
     "//net",
     "//url",
   ]
+
+  if (!is_ios) {
+    deps += [ "//components/safe_browsing/common:safe_browsing_prefs" ]
+  }
 }
 
 source_set("unit_tests") {
@@ -55,4 +61,11 @@ source_set("unit_tests") {
     "//testing/gmock",
     "//testing/gtest",
   ]
+
+  if (!is_ios) {
+    deps += [
+      "//components/safe_browsing:features",
+      "//components/safe_browsing/common:safe_browsing_prefs",
+    ]
+  }
 }

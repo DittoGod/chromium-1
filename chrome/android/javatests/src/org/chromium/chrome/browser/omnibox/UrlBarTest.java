@@ -66,12 +66,12 @@ import java.util.concurrent.atomic.AtomicReference;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @CommandLineParameter({"", "disable-features=" + ChromeFeatureList.SPANNABLE_INLINE_AUTOCOMPLETE})
 public class UrlBarTest {
-    // 9000+ chars of goodness
 
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
             new ChromeActivityTestRule<>(ChromeActivity.class);
 
+    // 9000+ chars of goodness
     private static final String HUGE_URL =
             "data:text/plain,H"
             + new String(new char[9000]).replace('\0', 'u')
@@ -252,16 +252,10 @@ public class UrlBarTest {
             }
         });
         Assert.assertFalse(state.hasAutocomplete);
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.SPANNABLE_INLINE_AUTOCOMPLETE)) {
-            // Note: new model clears autocomplete text when non-IME change has been made.
-            // The autocomplete gets removed.
-            Assert.assertEquals("tast", state.textWithoutAutocomplete);
-            Assert.assertEquals("tast", state.textWithAutocomplete);
-        } else {
-            // The autocomplete gets committed.
-            Assert.assertEquals("tasting is fun", state.textWithoutAutocomplete);
-            Assert.assertEquals("tasting is fun", state.textWithAutocomplete);
-        }
+        // Clears autocomplete text when non-IME change has been made.
+        // The autocomplete gets removed.
+        Assert.assertEquals("tast", state.textWithoutAutocomplete);
+        Assert.assertEquals("tast", state.textWithAutocomplete);
 
         // Replace part of the autocomplete text.
         setTextAndVerifyNoAutocomplete(urlBar, "test");

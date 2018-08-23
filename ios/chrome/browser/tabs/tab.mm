@@ -15,7 +15,6 @@
 #include "base/ios/block_types.h"
 #include "base/json/string_escape.h"
 #include "base/logging.h"
-#include "base/mac/bind_objc_block.h"
 #include "base/mac/foundation_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
@@ -26,7 +25,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/history/core/browser/history_context.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/top_sites.h"
@@ -39,12 +38,10 @@
 #include "components/search_engines/template_url_service.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
-#import "ios/chrome/browser/app_launcher/app_launcher_tab_helper.h"
 #include "ios/chrome/browser/application_context.h"
-#import "ios/chrome/browser/autofill/form_input_accessory_view_controller.h"
-#import "ios/chrome/browser/autofill/form_suggestion_tab_helper.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
+#import "ios/chrome/browser/download/download_manager_tab_helper.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #import "ios/chrome/browser/find_in_page/find_in_page_controller.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
@@ -53,33 +50,25 @@
 #include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #import "ios/chrome/browser/metrics/tab_usage_recorder.h"
 #include "ios/chrome/browser/pref_names.h"
-#import "ios/chrome/browser/prerender/prerender_service.h"
-#import "ios/chrome/browser/prerender/prerender_service_factory.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache_factory.h"
 #import "ios/chrome/browser/snapshots/snapshot_tab_helper.h"
 #import "ios/chrome/browser/tabs/legacy_tab_helper.h"
-#import "ios/chrome/browser/tabs/tab_delegate.h"
 #import "ios/chrome/browser/tabs/tab_dialog_delegate.h"
-#import "ios/chrome/browser/tabs/tab_headers_delegate.h"
 #import "ios/chrome/browser/tabs/tab_helper_util.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_private.h"
 #include "ios/chrome/browser/translate/chrome_ios_translate_client.h"
 #import "ios/chrome/browser/u2f/u2f_controller.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
-#import "ios/chrome/browser/ui/commands/open_url_command.h"
 #import "ios/chrome/browser/ui/commands/show_signin_command.h"
 #import "ios/chrome/browser/ui/open_in_controller.h"
 #import "ios/chrome/browser/ui/overscroll_actions/overscroll_actions_controller.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/voice/voice_search_navigations_tab_helper.h"
 #import "ios/chrome/browser/web/page_placeholder_tab_helper.h"
-#import "ios/chrome/browser/web/passkit_dialog_provider.h"
 #import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
@@ -170,10 +159,7 @@ NSString* const kTabUrlKey = @"url";
 @synthesize overscrollActionsController = _overscrollActionsController;
 @synthesize overscrollActionsControllerDelegate =
     overscrollActionsControllerDelegate_;
-@synthesize passKitDialogProvider = passKitDialogProvider_;
-@synthesize delegate = delegate_;
 @synthesize dialogDelegate = dialogDelegate_;
-@synthesize tabHeadersDelegate = tabHeadersDelegate_;
 
 #pragma mark - Initializers
 
@@ -191,7 +177,6 @@ NSString* const kTabUrlKey = @"url";
         ios::ChromeBrowserState::FromBrowserState(webState->GetBrowserState());
 
     [self updateLastVisitedTimestamp];
-    [[self webController] setDelegate:self];
   }
   return self;
 }
@@ -213,9 +198,18 @@ NSString* const kTabUrlKey = @"url";
 #pragma mark - Properties
 
 - (NSString*)title {
-  base::string16 title = self.webState->GetTitle();
-  if (title.empty())
-    title = l10n_util::GetStringUTF16(IDS_DEFAULT_TAB_TITLE);
+  base::string16 title;
+
+  web::WebState* webState = self.webState;
+  if (!webState->GetNavigationManager()->GetVisibleItem() &&
+      DownloadManagerTabHelper::FromWebState(webState)->has_download_task()) {
+    title = l10n_util::GetStringUTF16(IDS_DOWNLOAD_TAB_TITLE);
+  } else {
+    title = webState->GetTitle();
+    if (title.empty())
+      title = l10n_util::GetStringUTF16(IDS_DEFAULT_TAB_TITLE);
+  }
+
   return base::SysUTF16ToNSString(title);
 }
 
@@ -371,6 +365,16 @@ NSString* const kTabUrlKey = @"url";
   [_overscrollActionsController clear];
 }
 
+- (void)notifyTabOfUrlMayStartLoading:(const GURL&)url {
+  NSString* urlString = base::SysUTF8ToNSString(url.spec());
+  if ([urlString length]) {
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:kTabUrlMayStartLoadingNotificationForCrashReporting
+                      object:self
+                    userInfo:@{kTabUrlKey : urlString}];
+  }
+}
+
 #pragma mark - Public API (relatinge to User agent)
 
 - (BOOL)usesDesktopUserAgent {
@@ -396,10 +400,26 @@ NSString* const kTabUrlKey = @"url";
                                               webState:self.webState];
 }
 
+- (GURL)XCallbackFromRequestURL:(const GURL&)requestURL
+                      originURL:(const GURL&)originURL {
+  // Create U2FController object lazily.
+  if (!_secondFactorController)
+    _secondFactorController = [[U2FController alloc] init];
+  return [_secondFactorController
+      XCallbackFromRequestURL:requestURL
+                    originURL:originURL
+                       tabURL:self.webState->GetLastCommittedURL()
+                        tabID:self.tabId];
+}
+
 #pragma mark - CRWWebStateObserver protocol
 
 - (void)webState:(web::WebState*)webState
     didStartNavigation:(web::NavigationContext*)navigation {
+  // Notify tab of Url may start loading, this notification is not sent in cases
+  // of app launching, history api navigations, and hash change navigations.
+  [self notifyTabOfUrlMayStartLoading:navigation->GetUrl()];
+
   [self.dialogDelegate cancelDialogForTab:self];
   [_openInController disable];
 }
@@ -408,23 +428,11 @@ NSString* const kTabUrlKey = @"url";
     didLoadPageWithSuccess:(BOOL)loadSuccess {
   DCHECK([self loadFinished]);
 
-  // Cancel prerendering if response is "application/octet-stream". It can be a
-  // video file which should not be played from preload tab (crbug.com/436813).
-  if (self.isPrerenderTab &&
-      self.webState->GetContentsMimeType() == "application/octet-stream") {
-    [self discardPrerender];
-  }
-
   if (loadSuccess) {
     scoped_refptr<net::HttpResponseHeaders> headers =
         _webStateImpl->GetHttpResponseHeaders();
     [self handleExportableFile:headers.get()];
   }
-}
-
-- (void)webStateDidSuppressDialog:(web::WebState*)webState {
-  DCHECK(self.isPrerenderTab);
-  [self discardPrerender];
 }
 
 - (void)renderProcessGoneForWebState:(web::WebState*)webState {
@@ -435,7 +443,6 @@ NSString* const kTabUrlKey = @"url";
 - (void)webStateDestroyed:(web::WebState*)webState {
   DCHECK_EQ(_webStateImpl, webState);
   self.overscrollActionsControllerDelegate = nil;
-  self.passKitDialogProvider = nil;
 
   [_openInController detachFromWebController];
   _openInController = nil;
@@ -450,135 +457,14 @@ NSString* const kTabUrlKey = @"url";
   _webStateImpl = nullptr;
 }
 
-#pragma mark - CRWWebDelegate protocol
-
-- (BOOL)openExternalURL:(const GURL&)url
-              sourceURL:(const GURL&)sourceURL
-            linkClicked:(BOOL)linkClicked {
-  // Make a local url copy for possible modification.
-  GURL finalURL = url;
-
-  // Check if it's a direct FIDO U2F x-callback call. If so, do not open it, to
-  // prevent pages from spoofing requests with different origins.
-  if (finalURL.SchemeIs("u2f-x-callback"))
-    return NO;
-
-  // Block attempts to open this application's settings in the native system
-  // settings application.
-  if (finalURL.SchemeIs("app-settings"))
-    return NO;
-
-  // Check if it's a FIDO U2F call.
-  if (finalURL.SchemeIs("u2f")) {
-    // Create U2FController object lazily.
-    if (!_secondFactorController)
-      _secondFactorController = [[U2FController alloc] init];
-
-    DCHECK([self navigationManager]);
-    GURL origin =
-        [self navigationManager]->GetLastCommittedItem()->GetURL().GetOrigin();
-
-    // Compose u2f-x-callback URL and update urlToOpen.
-    finalURL = [_secondFactorController
-        XCallbackFromRequestURL:finalURL
-                      originURL:origin
-                         tabURL:self.webState->GetLastCommittedURL()
-                          tabID:self.tabId];
-
-    if (!finalURL.is_valid())
-      return NO;
-  }
-
-  AppLauncherTabHelper* appLauncherTabHelper =
-      AppLauncherTabHelper::FromWebState(self.webState);
-  if (appLauncherTabHelper->RequestToLaunchApp(finalURL, sourceURL,
-                                               linkClicked)) {
-    // Clears pending navigation history after successfully launching the
-    // external app.
-    DCHECK([self navigationManager]);
-    [self navigationManager]->DiscardNonCommittedItems();
-    // Ensure the UI reflects the current entry, not the just-discarded pending
-    // entry.
-    [_parentTabModel notifyTabChanged:self];
-
-    if (sourceURL.is_valid()) {
-      ReadingListModel* model =
-          ReadingListModelFactory::GetForBrowserState(_browserState);
-      if (model && model->loaded())
-        model->SetReadStatus(sourceURL, true);
-    }
-
-    return YES;
-  }
-  return NO;
-}
-
-- (BOOL)webController:(CRWWebController*)webController
-        shouldOpenURL:(const GURL&)url
-      mainDocumentURL:(const GURL&)mainDocumentURL {
-  // chrome:// URLs are only allowed if the mainDocumentURL is also a chrome://
-  // URL.
-  if (url.SchemeIs(kChromeUIScheme) &&
-      !mainDocumentURL.SchemeIs(kChromeUIScheme)) {
-    return NO;
-  }
-
-  // Always allow frame loads.
-  BOOL isFrameLoad = (url != mainDocumentURL);
-  if (isFrameLoad)
-    return YES;
-
-  // TODO(crbug.com/546402): If this turns out to be useful, find a less hacky
-  // hook point to send this from.
-  NSString* urlString = base::SysUTF8ToNSString(url.spec());
-  if ([urlString length]) {
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:kTabUrlMayStartLoadingNotificationForCrashReporting
-                      object:self
-                    userInfo:@{kTabUrlKey : urlString}];
-  }
-
-  return YES;
-}
-
-- (BOOL)webController:(CRWWebController*)webController
-    shouldOpenExternalURL:(const GURL&)URL {
-  if (self.isPrerenderTab) {
-    [self discardPrerender];
-    return NO;
-  }
-  return YES;
-}
-
-- (CGFloat)headerHeightForWebController:(CRWWebController*)webController {
-  return [self.tabHeadersDelegate tabHeaderHeightForTab:self];
-}
-
-- (void)webController:(CRWWebController*)webController
-    didLoadPassKitObject:(NSData*)data {
-  [self.passKitDialogProvider presentPassKitDialog:data];
-}
-
 #pragma mark - Private methods
-
-- (void)discardPrerender {
-  DCHECK(self.isPrerenderTab);
-  [delegate_ discardPrerender];
-}
-
-- (BOOL)isPrerenderTab {
-  DCHECK(_browserState);
-  PrerenderService* prerenderService =
-      PrerenderServiceFactory::GetForBrowserState(_browserState);
-  return prerenderService &&
-         prerenderService->IsWebStatePrerendered(self.webState);
-}
 
 - (OpenInController*)openInController {
   if (!_openInController) {
     _openInController = [[OpenInController alloc]
         initWithRequestContext:_browserState->GetRequestContext()
                  webController:self.webController];
+    _openInController.baseView = self.view;
   }
   return _openInController;
 }

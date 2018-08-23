@@ -5,8 +5,8 @@
 #include "chrome/browser/prerender/prerender_util.h"
 
 #include "base/metrics/histogram_macros.h"
-#include "components/google/core/browser/google_util.h"
-#include "extensions/features/features.h"
+#include "components/google/core/common/google_util.h"
+#include "extensions/buildflags/buildflags.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)

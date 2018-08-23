@@ -9,7 +9,11 @@
 #include <vector>
 
 #include "ash/animation/animation_change_type.h"
-#include "ash/keyboard/keyboard_observer_register.h"
+#include "ash/app_list/app_list_controller_impl.h"
+#include "ash/app_list/model/app_list_view_state.h"
+#include "ash/app_list/views/app_list_view.h"
+#include "ash/public/cpp/app_list/app_list_constants.h"
+#include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_util.h"
@@ -19,21 +23,20 @@
 #include "ash/shelf/shelf_layout_manager_observer.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
-#include "ash/sidebar/sidebar.h"
 #include "ash/system/status_area_widget.h"
+#include "ash/wallpaper/wallpaper_controller.h"
 #include "ash/wm/fullscreen_window_finder.h"
+#include "ash/wm/lock_state_controller.h"
 #include "ash/wm/mru_window_tracker.h"
+#include "ash/wm/overview/window_selector_controller.h"
 #include "ash/wm/screen_pinning_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_state.h"
+#include "ash/wm/window_util.h"
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/i18n/rtl.h"
-#include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/app_list_features.h"
-#include "ui/app_list/presenter/app_list.h"
-#include "ui/app_list/views/app_list_view.h"
+#include "ui/base/hit_test.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_observer.h"
@@ -86,6 +89,12 @@ bool IsAppListWindow(const aura::Window* window) {
   return parent && parent->id() == kShellWindowId_AppListContainer;
 }
 
+bool IsTabletModeEnabled() {
+  return Shell::Get()
+      ->tablet_mode_controller()
+      ->IsTabletModeWindowManagerEnabled();
+}
+
 }  // namespace
 
 // ShelfLayoutManager::UpdateShelfObserver -------------------------------------
@@ -134,6 +143,10 @@ bool ShelfLayoutManager::State::IsScreenLocked() const {
   return session_state == session_manager::SessionState::LOCKED;
 }
 
+bool ShelfLayoutManager::State::IsActiveSessionState() const {
+  return session_state == session_manager::SessionState::ACTIVE;
+}
+
 bool ShelfLayoutManager::State::Equals(const State& other) const {
   return other.visibility_state == visibility_state &&
          (visibility_state != SHELF_AUTO_HIDE ||
@@ -151,15 +164,15 @@ ShelfLayoutManager::ShelfLayoutManager(ShelfWidget* shelf_widget, Shelf* shelf)
       shelf_widget_(shelf_widget),
       shelf_(shelf),
       is_background_blur_enabled_(
-          app_list::features::IsBackgroundBlurEnabled()),
-      keyboard_observer_(this),
-      scoped_session_observer_(this) {
+          app_list::features::IsBackgroundBlurEnabled()) {
   DCHECK(shelf_widget_);
   DCHECK(shelf_);
   Shell::Get()->AddShellObserver(this);
-  ShellPort::Get()->AddLockStateObserver(this);
+  Shell::Get()->lock_state_controller()->AddObserver(this);
   Shell::Get()->activation_client()->AddObserver(this);
   state_.session_state = Shell::Get()->session_controller()->GetSessionState();
+  keyboard::KeyboardController::Get()->AddObserver(this);
+  wallpaper_controller_observer_.Add(Shell::Get()->wallpaper_controller());
 }
 
 ShelfLayoutManager::~ShelfLayoutManager() {
@@ -168,8 +181,9 @@ ShelfLayoutManager::~ShelfLayoutManager() {
 
   for (auto& observer : observers_)
     observer.WillDeleteShelfLayoutManager();
+  keyboard::KeyboardController::Get()->RemoveObserver(this);
   Shell::Get()->RemoveShellObserver(this);
-  ShellPort::Get()->RemoveLockStateObserver(this);
+  Shell::Get()->lock_state_controller()->RemoveObserver(this);
 }
 
 void ShelfLayoutManager::PrepareForShutdown() {
@@ -188,12 +202,13 @@ bool ShelfLayoutManager::IsVisible() const {
 }
 
 gfx::Rect ShelfLayoutManager::GetIdealBounds() {
+  const int shelf_size = ShelfConstants::shelf_size();
   aura::Window* shelf_window = shelf_widget_->GetNativeWindow();
   gfx::Rect rect(screen_util::GetDisplayBoundsInParent(shelf_window));
   return SelectValueForShelfAlignment(
-      gfx::Rect(rect.x(), rect.bottom() - kShelfSize, rect.width(), kShelfSize),
-      gfx::Rect(rect.x(), rect.y(), kShelfSize, rect.height()),
-      gfx::Rect(rect.right() - kShelfSize, rect.y(), kShelfSize,
+      gfx::Rect(rect.x(), rect.bottom() - shelf_size, rect.width(), shelf_size),
+      gfx::Rect(rect.x(), rect.y(), shelf_size, rect.height()),
+      gfx::Rect(rect.right() - shelf_size, rect.y(), shelf_size,
                 rect.height()));
 }
 
@@ -203,10 +218,10 @@ gfx::Size ShelfLayoutManager::GetPreferredSize() {
   return target_bounds.shelf_bounds_in_root.size();
 }
 
-void ShelfLayoutManager::LayoutShelfAndUpdateBounds(bool change_work_area) {
+void ShelfLayoutManager::LayoutShelfAndUpdateBounds() {
   TargetBounds target_bounds;
   CalculateTargetBounds(state_, &target_bounds);
-  UpdateBoundsAndOpacity(target_bounds, false, change_work_area, nullptr);
+  UpdateBoundsAndOpacity(target_bounds, false, nullptr);
 
   // Update insets in ShelfWindowTargeter when shelf bounds change.
   for (auto& observer : observers_)
@@ -214,7 +229,12 @@ void ShelfLayoutManager::LayoutShelfAndUpdateBounds(bool change_work_area) {
 }
 
 void ShelfLayoutManager::LayoutShelf() {
-  LayoutShelfAndUpdateBounds(true);
+  // The ShelfWidget may be partially closed (no native widget) during shutdown
+  // so skip layout.
+  if (in_shutdown_)
+    return;
+
+  LayoutShelfAndUpdateBounds();
 }
 
 ShelfVisibilityState ShelfLayoutManager::CalculateShelfVisibility() {
@@ -230,12 +250,6 @@ ShelfVisibilityState ShelfLayoutManager::CalculateShelfVisibility() {
 }
 
 void ShelfLayoutManager::UpdateVisibilityState() {
-  // Shelf is not available before login.
-  // TODO(crbug.com/701157): Remove this when the login webui fake-shelf is
-  // replaced with views.
-  if (!Shell::Get()->session_controller()->IsActiveUserSessionStarted())
-    return;
-
   // Bail out early after shelf is destroyed.
   aura::Window* shelf_window = shelf_widget_->GetNativeWindow();
   if (in_shutdown_ || !shelf_window)
@@ -244,8 +258,8 @@ void ShelfLayoutManager::UpdateVisibilityState() {
   if (shelf_->ShouldHideOnSecondaryDisplay(state_.session_state)) {
     // Needed to hide system tray on secondary display.
     SetState(SHELF_HIDDEN);
-  } else if ((state_.IsScreenLocked() || state_.IsAddingSecondaryUser())) {
-    // Needed to show system tray on web UI lock screen.
+  } else if (!state_.IsActiveSessionState()) {
+    // Needed to show system tray in non active session state.
     SetState(SHELF_VISIBLE);
   } else if (Shell::Get()->screen_pinning_controller()->IsPinned()) {
     SetState(SHELF_HIDDEN);
@@ -258,7 +272,9 @@ void ShelfLayoutManager::UpdateVisibilityState() {
 
     switch (window_state) {
       case wm::WORKSPACE_WINDOW_STATE_FULL_SCREEN: {
-        if (IsShelfAutoHideForFullscreenMaximized()) {
+        if (IsDraggingWindowFromTopOrCaptionArea()) {
+          SetState(SHELF_VISIBLE);
+        } else if (IsShelfAutoHideForFullscreenMaximized()) {
           SetState(SHELF_AUTO_HIDE);
         } else if (IsShelfHiddenForFullscreen()) {
           SetState(SHELF_HIDDEN);
@@ -270,7 +286,9 @@ void ShelfLayoutManager::UpdateVisibilityState() {
         break;
       }
       case wm::WORKSPACE_WINDOW_STATE_MAXIMIZED:
-        if (IsShelfAutoHideForFullscreenMaximized()) {
+        if (IsDraggingWindowFromTopOrCaptionArea()) {
+          SetState(SHELF_VISIBLE);
+        } else if (IsShelfAutoHideForFullscreenMaximized()) {
           SetState(SHELF_AUTO_HIDE);
         } else {
           SetState(CalculateShelfVisibility());
@@ -399,6 +417,27 @@ bool ShelfLayoutManager::ProcessGestureEvent(
   return false;
 }
 
+bool ShelfLayoutManager::IsDraggingWindowFromTopOrCaptionArea() const {
+  // Currently dragging maximized or fullscreen window from the top or the
+  // caption area is only allowed in tablet mode.
+  if (!IsTabletModeEnabled())
+    return false;
+
+  // TODO(minch): Check active window directly if removed search field
+  // in overview mode. http://crbug.com/866679
+  auto windows = Shell::Get()->mru_window_tracker()->BuildMruWindowList();
+  for (auto* window : windows) {
+    wm::WindowState* window_state = wm::GetWindowState(window);
+    if (window_state && window_state->is_dragged() &&
+        (window_state->IsMaximized() || window_state->IsFullscreen()) &&
+        (window_state->drag_details()->window_component == HTCLIENT ||
+         window_state->drag_details()->window_component == HTCAPTION)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // ShelfLayoutManager, wm::WmSnapToPixelLayoutManager implementation:
 
@@ -429,21 +468,25 @@ void ShelfLayoutManager::OnPinnedStateChanged(aura::Window* pinned_window) {
   UpdateVisibilityState();
 }
 
-void ShelfLayoutManager::OnVirtualKeyboardStateChanged(
-    bool activated,
-    aura::Window* root_window) {
-  UpdateKeyboardObserverFromStateChanged(
-      activated, root_window, shelf_widget_->GetNativeWindow()->GetRootWindow(),
-      &keyboard_observer_);
-}
-
 void ShelfLayoutManager::OnAppListVisibilityChanged(bool shown,
                                                     aura::Window* root_window) {
+  // Shell may be under destruction.
+  if (!shelf_widget_ || !shelf_widget_->GetNativeWindow())
+    return;
+
   if (shelf_widget_->GetNativeWindow()->GetRootWindow() != root_window)
     return;
 
   is_app_list_visible_ = shown;
   MaybeUpdateShelfBackground(AnimationChangeType::IMMEDIATE);
+}
+
+void ShelfLayoutManager::OnSplitViewModeStarted() {
+  MaybeUpdateShelfBackground(AnimationChangeType::ANIMATE);
+}
+
+void ShelfLayoutManager::OnSplitViewModeEnded() {
+  MaybeUpdateShelfBackground(AnimationChangeType::ANIMATE);
 }
 
 void ShelfLayoutManager::OnWindowActivated(ActivationReason reason,
@@ -454,39 +497,44 @@ void ShelfLayoutManager::OnWindowActivated(ActivationReason reason,
 
 void ShelfLayoutManager::OnKeyboardAppearanceChanged(
     const keyboard::KeyboardStateDescriptor& state) {
-  // If in locked mode, change the work area.
-  bool change_work_area = state.is_locked;
-  keyboard_bounds_ = state.occluded_bounds;
-  LayoutShelfAndUpdateBounds(change_work_area);
+  keyboard_occluded_bounds_ = state.occluded_bounds;
+  keyboard_displaced_bounds_ = state.displaced_bounds;
+
+  LayoutShelfAndUpdateBounds();
 }
 
-void ShelfLayoutManager::OnKeyboardAvailabilityChanged(
-    const bool is_available) {
+void ShelfLayoutManager::OnKeyboardVisibilityStateChanged(
+    const bool is_visible) {
   // On login screen if keyboard has been just hidden, update bounds just once
   // but ignore target_bounds.work_area_insets since shelf overlaps with login
   // window.
   if (Shell::Get()->session_controller()->IsUserSessionBlocked() &&
-      !is_available) {
+      !is_visible) {
     Shell::Get()->SetDisplayWorkAreaInsets(shelf_widget_->GetNativeWindow(),
                                            gfx::Insets());
   }
-}
-
-void ShelfLayoutManager::OnKeyboardClosed() {
-  keyboard_observer_.RemoveAll();
 }
 
 ShelfBackgroundType ShelfLayoutManager::GetShelfBackgroundType() const {
   if (state_.pre_lock_screen_animation_active)
     return SHELF_BACKGROUND_DEFAULT;
 
-  // Handle all non active screen states, including OOBE and pre-login.
-  if (state_.session_state != session_manager::SessionState::ACTIVE)
-    return SHELF_BACKGROUND_OVERLAP;
+  // Handle all other non active screen states, including OOBE and pre-login.
+  if (state_.session_state == session_manager::SessionState::OOBE)
+    return SHELF_BACKGROUND_OOBE;
+  if (state_.session_state != session_manager::SessionState::ACTIVE) {
+    if (!Shell::Get()->wallpaper_controller()->IsWallpaperBlurred())
+      return SHELF_BACKGROUND_LOGIN_NONBLURRED_WALLPAPER;
+    return SHELF_BACKGROUND_LOGIN;
+  }
 
-  // If the app list is active, hide the shelf background to prevent overlap.
-  if (is_app_list_visible_)
+  // If the app list is active and the home launcher is not shown, hide the
+  // shelf background to prevent overlap.
+  if (is_app_list_visible_ && !Shell::Get()
+                                   ->app_list_controller()
+                                   ->IsHomeLauncherEnabledInTabletMode()) {
     return SHELF_BACKGROUND_APP_LIST;
+  }
 
   if (state_.visibility_state != SHELF_AUTO_HIDE &&
       state_.window_state == wm::WORKSPACE_WINDOW_STATE_MAXIMIZED) {
@@ -498,11 +546,20 @@ ShelfBackgroundType ShelfLayoutManager::GetShelfBackgroundType() const {
     return SHELF_BACKGROUND_OVERLAP;
   }
 
+  // If split view mode is active, make the shelf fully opapue.
+  if (Shell::Get()->IsSplitViewModeActive())
+    return SHELF_BACKGROUND_SPLIT_VIEW;
+
   return SHELF_BACKGROUND_DEFAULT;
 }
 
-void ShelfLayoutManager::SetChromeVoxPanelHeight(int height) {
-  chromevox_panel_height_ = height;
+void ShelfLayoutManager::SetAccessibilityPanelHeight(int height) {
+  accessibility_panel_height_ = height;
+  LayoutShelf();
+}
+
+void ShelfLayoutManager::SetDockedMagnifierHeight(int height) {
+  docked_magnifier_height_ = height;
   LayoutShelf();
 }
 
@@ -579,7 +636,7 @@ void ShelfLayoutManager::SetState(ShelfVisibilityState visibility_state) {
   TargetBounds target_bounds;
   CalculateTargetBounds(state_, &target_bounds);
   UpdateBoundsAndOpacity(
-      target_bounds, true /* animate */, true /* change_work_area */,
+      target_bounds, true /* animate */,
       delay_background_change ? update_shelf_observer_ : nullptr);
 
   // OnAutoHideStateChanged Should be emitted when:
@@ -596,7 +653,6 @@ void ShelfLayoutManager::SetState(ShelfVisibilityState visibility_state) {
 void ShelfLayoutManager::UpdateBoundsAndOpacity(
     const TargetBounds& target_bounds,
     bool animate,
-    bool change_work_area,
     ui::ImplicitAnimationObserver* observer) {
   StatusAreaWidget* status_widget = shelf_widget_->status_area_widget();
   base::AutoReset<bool> auto_reset_updating_bounds(&updating_bounds_, true);
@@ -647,15 +703,24 @@ void ShelfLayoutManager::UpdateBoundsAndOpacity(
                               &status_bounds);
     status_widget->SetBounds(status_bounds);
 
-    // For crbug.com/622431, when the shelf alignment is BOTTOM_LOCKED, we
-    // don't set display work area, as it is not real user-set alignment.
-    if (!state_.IsScreenLocked() && change_work_area &&
-        shelf_->alignment() != SHELF_ALIGNMENT_BOTTOM_LOCKED) {
+    // Do not update the work area when the alignment changes to BOTTOM_LOCKED
+    // to prevent window movement when the screen is locked: crbug.com/622431
+    // The work area is initialized with BOTTOM_LOCKED insets to prevent window
+    // movement on async preference initialization in tests: crbug.com/834369
+    const display::Display display =
+        display::Screen::GetScreen()->GetDisplayNearestWindow(
+            shelf_widget_->GetNativeWindow());
+    bool in_overview =
+        Shell::Get()->window_selector_controller()->IsSelecting();
+    if (!in_overview && !state_.IsScreenLocked() &&
+        (shelf_->alignment() != SHELF_ALIGNMENT_BOTTOM_LOCKED ||
+         display.work_area() == display.bounds())) {
       gfx::Insets insets;
       // If user session is blocked (login to new user session or add user to
       // the existing session - multi-profile) then give 100% of work area only
       // if keyboard is not shown.
-      if (!state_.IsAddingSecondaryUser() || !keyboard_bounds_.IsEmpty())
+      if (!state_.IsAddingSecondaryUser() ||
+          !keyboard_displaced_bounds_.IsEmpty())
         insets = target_bounds.work_area_insets;
       Shell::Get()->SetDisplayWorkAreaInsets(shelf_widget_->GetNativeWindow(),
                                              insets);
@@ -682,7 +747,7 @@ void ShelfLayoutManager::StopAnimating() {
 
 void ShelfLayoutManager::CalculateTargetBounds(const State& state,
                                                TargetBounds* target_bounds) {
-  int shelf_size = kShelfSize;
+  int shelf_size = ShelfConstants::shelf_size();
   if (state.visibility_state == SHELF_AUTO_HIDE &&
       state.auto_hide_state == SHELF_AUTO_HIDE_HIDDEN) {
     // Auto-hidden shelf always starts with the default size. If a gesture-drag
@@ -690,15 +755,15 @@ void ShelfLayoutManager::CalculateTargetBounds(const State& state,
     // takes care of setting the height properly.
     shelf_size = kShelfAutoHideSize;
   } else if (state.visibility_state == SHELF_HIDDEN ||
-             (!keyboard_bounds_.IsEmpty() &&
-              !keyboard::IsKeyboardOverscrollEnabled())) {
+             !keyboard_displaced_bounds_.IsEmpty()) {
     shelf_size = 0;
   }
 
   aura::Window* shelf_window = shelf_widget_->GetNativeWindow();
   gfx::Rect available_bounds =
       screen_util::GetDisplayBoundsWithShelf(shelf_window);
-  available_bounds.Inset(0, chromevox_panel_height_, 0, 0);
+  available_bounds.Inset(
+      0, accessibility_panel_height_ + docked_magnifier_height_, 0, 0);
   int shelf_width = PrimaryAxisValue(available_bounds.width(), shelf_size);
   int shelf_height = PrimaryAxisValue(shelf_size, available_bounds.height());
   int bottom_shelf_vertical_offset = available_bounds.bottom() - shelf_height;
@@ -707,15 +772,17 @@ void ShelfLayoutManager::CalculateTargetBounds(const State& state,
       gfx::Point(available_bounds.x(), bottom_shelf_vertical_offset),
       gfx::Point(available_bounds.x(), available_bounds.y()),
       gfx::Point(available_bounds.right() - shelf_width, available_bounds.y()));
-  target_bounds->shelf_bounds_in_root =
-      gfx::Rect(shelf_origin.x(), shelf_origin.y(), shelf_width, shelf_height);
+
+  target_bounds->shelf_bounds_in_root = screen_util::SnapBoundsToDisplayEdge(
+      gfx::Rect(shelf_origin.x(), shelf_origin.y(), shelf_width, shelf_height),
+      shelf_widget_->GetNativeWindow());
 
   gfx::Size status_size(
       shelf_widget_->status_area_widget()->GetWindowBoundsInScreen().size());
   if (shelf_->IsHorizontalAlignment())
-    status_size.set_height(kShelfSize);
+    status_size.set_height(shelf_size);
   else
-    status_size.set_width(kShelfSize);
+    status_size.set_width(shelf_size);
 
   gfx::Point status_origin = SelectValueForShelfAlignment(
       gfx::Point(0, 0),
@@ -735,17 +802,16 @@ void ShelfLayoutManager::CalculateTargetBounds(const State& state,
   // should probably be pushed to a separate component. This would simplify or
   // remove entirely the dependency on keyboard and dock.
 
-  if (!keyboard_bounds_.IsEmpty() && !keyboard::IsKeyboardOverscrollEnabled()) {
+  if (!keyboard_displaced_bounds_.IsEmpty()) {
     // Also push in the work area inset for the keyboard if it is visible.
-    gfx::Insets keyboard_insets(0, 0, keyboard_bounds_.height(), 0);
+    gfx::Insets keyboard_insets(0, 0, keyboard_displaced_bounds_.height(), 0);
     target_bounds->work_area_insets += keyboard_insets;
   }
 
-  // Also push in the work area insets for the ChromeVox panel if it's visible.
-  if (chromevox_panel_height_) {
-    gfx::Insets chromevox_insets(chromevox_panel_height_, 0, 0, 0);
-    target_bounds->work_area_insets += chromevox_insets;
-  }
+  // Also push in the work area insets for both the ChromeVox panel and the
+  // Docked Magnifier.
+  target_bounds->work_area_insets += gfx::Insets(
+      accessibility_panel_height_ + docked_magnifier_height_, 0, 0, 0);
 
   target_bounds->opacity = ComputeTargetOpacity(state);
   target_bounds->status_opacity =
@@ -769,7 +835,7 @@ void ShelfLayoutManager::CalculateTargetBounds(const State& state,
                 shelf_height - status_size.height()));
 
   available_bounds.Subtract(target_bounds->shelf_bounds_in_root);
-  available_bounds.Subtract(keyboard_bounds_);
+  available_bounds.Subtract(keyboard_occluded_bounds_);
 
   aura::Window* root = shelf_window->GetRootWindow();
   ::wm::ConvertRectToScreen(root, &available_bounds);
@@ -791,7 +857,7 @@ void ShelfLayoutManager::UpdateTargetBoundsForGesture(
     // changed since then, e.g. because the tray-menu was shown because of the
     // drag), then allow the drag some resistance-free region at first to make
     // sure the shelf sticks with the finger until the shelf is visible.
-    resistance_free_region = kShelfSize - kShelfAutoHideSize;
+    resistance_free_region = ShelfConstants::shelf_size() - kShelfAutoHideSize;
   }
 
   bool resist = SelectValueForShelfAlignment(
@@ -840,7 +906,8 @@ void ShelfLayoutManager::UpdateTargetBoundsForGesture(
       target_bounds->status_bounds_in_shelf.set_x(0);
     } else {
       target_bounds->status_bounds_in_shelf.set_x(
-          target_bounds->shelf_bounds_in_root.width() - kShelfSize);
+          target_bounds->shelf_bounds_in_root.width() -
+          ShelfConstants::shelf_size());
     }
   }
 }
@@ -882,8 +949,8 @@ gfx::Rect ShelfLayoutManager::GetAutoHideShowShelfRegionInScreen() const {
   else
     show_shelf_region_in_screen.set_width(kMaxAutoHideShowShelfRegionSize);
 
-  // TODO: Figure out if we need any special handling when the keyboard is
-  // visible.
+  // TODO(pkotwicz): Figure out if we need any special handling when the
+  // keyboard is visible.
   return show_shelf_region_in_screen;
 }
 
@@ -913,14 +980,12 @@ ShelfAutoHideState ShelfLayoutManager::CalculateAutoHideState(
   if (visibility_state != SHELF_AUTO_HIDE)
     return SHELF_AUTO_HIDE_HIDDEN;
 
-  if (shelf_widget_->IsShowingAppList())
+  if (shelf_widget_->IsShowingAppList() &&
+      !Shell::Get()
+           ->app_list_controller()
+           ->IsHomeLauncherEnabledInTabletMode()) {
     return SHELF_AUTO_HIDE_SHOWN;
-
-  Sidebar* sidebar =
-      RootWindowController::ForWindow(shelf_widget_->GetNativeView())
-          ->sidebar();
-  if (sidebar && sidebar->IsVisible())
-    return SHELF_AUTO_HIDE_SHOWN;
+  }
 
   if (shelf_widget_->status_area_widget() &&
       shelf_widget_->status_area_widget()->ShouldShowShelf())
@@ -1043,9 +1108,12 @@ void ShelfLayoutManager::OnSessionStateChanged(
 
   TargetBounds target_bounds;
   CalculateTargetBounds(state_, &target_bounds);
-  UpdateBoundsAndOpacity(target_bounds, true /* animate */,
-                         true /* change_work_area */, nullptr);
+  UpdateBoundsAndOpacity(target_bounds, true /* animate */, nullptr);
   UpdateVisibilityState();
+}
+
+void ShelfLayoutManager::OnWallpaperBlurChanged() {
+  MaybeUpdateShelfBackground(AnimationChangeType::ANIMATE);
 }
 
 void ShelfLayoutManager::OnLoginStatusChanged(LoginStatus loing_status) {
@@ -1094,12 +1162,12 @@ void ShelfLayoutManager::StartGestureDrag(
     const gfx::Rect shelf_bounds = GetIdealBounds();
     shelf_background_type_before_drag_ = shelf_background_type_;
     gesture_drag_status_ = GESTURE_DRAG_APPLIST_IN_PROGRESS;
-    Shell::Get()->app_list()->Show(
+    Shell::Get()->app_list_controller()->Show(
         display::Screen::GetScreen()
             ->GetDisplayNearestWindow(shelf_widget_->GetNativeWindow())
             .id(),
-        app_list::kSwipeFromShelf);
-    Shell::Get()->app_list()->UpdateYPositionAndOpacity(
+        app_list::kSwipeFromShelf, gesture_in_screen.time_stamp());
+    Shell::Get()->app_list_controller()->UpdateYPositionAndOpacity(
         shelf_bounds.y(), GetAppListBackgroundOpacityOnShelfOpacity());
     launcher_above_shelf_bottom_amount_ =
         shelf_bounds.bottom() - gesture_in_screen.location().y();
@@ -1123,13 +1191,13 @@ void ShelfLayoutManager::UpdateGestureDrag(
     // Dismiss the app list if the shelf changed to vertical alignment during
     // dragging.
     if (!shelf_->IsHorizontalAlignment()) {
-      Shell::Get()->app_list()->Dismiss();
+      Shell::Get()->app_list_controller()->DismissAppList();
       launcher_above_shelf_bottom_amount_ = 0.f;
       gesture_drag_status_ = GESTURE_DRAG_NONE;
       return;
     }
     const gfx::Rect shelf_bounds = GetIdealBounds();
-    Shell::Get()->app_list()->UpdateYPositionAndOpacity(
+    Shell::Get()->app_list_controller()->UpdateYPositionAndOpacity(
         std::min(gesture_in_screen.location().y(), shelf_bounds.y()),
         GetAppListBackgroundOpacityOnShelfOpacity());
     launcher_above_shelf_bottom_amount_ =
@@ -1187,7 +1255,7 @@ void ShelfLayoutManager::CompleteGestureDrag(
   // behavior if there is at least one window visible.
   gesture_drag_status_ = GESTURE_DRAG_COMPLETE_IN_PROGRESS;
   if (shelf_->auto_hide_behavior() != new_auto_hide_behavior &&
-      HasVisibleWindow()) {
+      HasVisibleWindow() && !IsTabletModeEnabled()) {
     shelf_->SetAutoHideBehavior(new_auto_hide_behavior);
   } else {
     UpdateVisibilityState();
@@ -1202,8 +1270,8 @@ void ShelfLayoutManager::CompleteAppListDrag(
   if (gesture_drag_status_ == GESTURE_DRAG_NONE)
     return;
 
-  using app_list::mojom::AppListState;
-  AppListState app_list_state = AppListState::PEEKING;
+  using app_list::AppListViewState;
+  AppListViewState app_list_state = AppListViewState::PEEKING;
   if (gesture_in_screen.type() == ui::ET_SCROLL_FLING_START &&
       fabs(gesture_in_screen.details().velocity_y()) >
           kAppListDragVelocityThreshold) {
@@ -1211,38 +1279,36 @@ void ShelfLayoutManager::CompleteAppListDrag(
     // list if the fling was fast enough and in the correct direction, otherwise
     // close it.
     app_list_state = gesture_in_screen.details().velocity_y() < 0
-                         ? AppListState::FULLSCREEN_ALL_APPS
-                         : AppListState::CLOSED;
+                         ? AppListViewState::FULLSCREEN_ALL_APPS
+                         : AppListViewState::CLOSED;
   } else {
     // Snap the app list to corresponding state according to the snapping
     // thresholds.
-    if (Shell::Get()
-            ->tablet_mode_controller()
-            ->IsTabletModeWindowManagerEnabled()) {
+    if (IsTabletModeEnabled()) {
       app_list_state = launcher_above_shelf_bottom_amount_ >
                                kAppListDragSnapToFullscreenThreshold
-                           ? AppListState::FULLSCREEN_ALL_APPS
-                           : AppListState::CLOSED;
+                           ? AppListViewState::FULLSCREEN_ALL_APPS
+                           : AppListViewState::CLOSED;
     } else {
       if (launcher_above_shelf_bottom_amount_ <=
           kAppListDragSnapToClosedThreshold)
-        app_list_state = AppListState::CLOSED;
+        app_list_state = AppListViewState::CLOSED;
       else if (launcher_above_shelf_bottom_amount_ <=
                kAppListDragSnapToPeekingThreshold)
-        app_list_state = AppListState::PEEKING;
+        app_list_state = AppListViewState::PEEKING;
       else
-        app_list_state = AppListState::FULLSCREEN_ALL_APPS;
+        app_list_state = AppListViewState::FULLSCREEN_ALL_APPS;
     }
   }
 
-  Shell::Get()->app_list()->EndDragFromShelf(app_list_state);
+  Shell::Get()->app_list_controller()->EndDragFromShelf(app_list_state);
 
   gesture_drag_status_ = GESTURE_DRAG_NONE;
 }
 
 void ShelfLayoutManager::CancelGestureDrag() {
   if (gesture_drag_status_ == GESTURE_DRAG_APPLIST_IN_PROGRESS) {
-    Shell::Get()->app_list()->Dismiss();
+    Shell::Get()->app_list_controller()->DismissAppList();
   } else {
     gesture_drag_status_ = GESTURE_DRAG_CANCEL_IN_PROGRESS;
     UpdateVisibilityState();
@@ -1269,6 +1335,15 @@ bool ShelfLayoutManager::CanStartFullscreenAppListDrag(
   if (scroll_y_hint >= 0)
     return false;
 
+  // In overview mode, app list for tablet mode is hidden temporarily and will
+  // be shown automatically after overview mode ends. So prevent opening it
+  // here.
+  if (Shell::Get()
+          ->app_list_controller()
+          ->IsHomeLauncherEnabledInTabletMode()) {
+    return false;
+  }
+
   return true;
 }
 
@@ -1276,13 +1351,14 @@ float ShelfLayoutManager::GetAppListBackgroundOpacityOnShelfOpacity() {
   float shelf_opacity = shelf_widget_->GetBackgroundAlphaValue(
                             shelf_background_type_before_drag_) /
                         static_cast<float>(ShelfBackgroundAnimator::kMaxAlpha);
-  if (launcher_above_shelf_bottom_amount_ < kShelfSize)
+  const int shelf_size = ShelfConstants::shelf_size();
+  if (launcher_above_shelf_bottom_amount_ < shelf_size)
     return shelf_opacity;
   float launcher_above_shelf_amount =
-      std::max(0.f, launcher_above_shelf_bottom_amount_ - kShelfSize);
+      std::max(0.f, launcher_above_shelf_bottom_amount_ - shelf_size);
   float coefficient =
       std::min(launcher_above_shelf_amount /
-                   (app_list::AppListView::kNumOfShelfSize * kShelfSize),
+                   (app_list::AppListView::kNumOfShelfSize * shelf_size),
                1.0f);
   float app_list_view_opacity =
       is_background_blur_enabled_

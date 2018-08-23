@@ -19,21 +19,21 @@
 
       #add-user-button {
         /* Add user button must be lined up with the start of users' names. */
-        -webkit-margin-start: var(--settings-box-row-indent);
+        margin-inline-start: var(--settings-box-row-indent);
       }
 
       .block {
         display: block;
       }
     </style>
-    <template is="dom-if" if="[[isWhitelistManaged_]]">
-      <div class="settings-box">$i18n{settingsManagedLabel}</div>
-    </template>
-    <template is="dom-if" if="[[!isWhitelistManaged_]]">
-      <template is="dom-if" if="[[!isOwner_]]">
-        <div class="settings-box">$i18n{usersModifiedByOwnerLabel}</div>
-      </template>
-    </template>
+    <div class="settings-box" hidden$="[[!isWhitelistManaged_]]">
+      $i18n{settingsManagedLabel}
+    </div>
+    <div class="settings-box"
+        hidden$="[[shouldHideModifiedByOwnerLabel_(
+            isWhitelistManaged_, isOwner_)]]">
+      $i18n{usersModifiedByOwnerLabel}
+    </div>
     <settings-toggle-button class="first"
         pref="{{prefs.cros.accounts.allowBWSI}}"
         label="$i18n{guestBrowsingLabel}"

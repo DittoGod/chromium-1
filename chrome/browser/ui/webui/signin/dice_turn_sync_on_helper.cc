@@ -5,11 +5,13 @@
 #include "chrome/browser/ui/webui/signin/dice_turn_sync_on_helper.h"
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/cloud/user_policy_signin_service.h"
 #include "chrome/browser/policy/cloud/user_policy_signin_service_factory.h"
@@ -20,10 +22,13 @@
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/signin/signin_util.h"
+#include "chrome/browser/signin/unified_consent_helper.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/webui/signin/dice_turn_sync_on_helper_delegate_impl.h"
 #include "chrome/browser/ui/webui/signin/signin_utils_desktop.h"
+#include "chrome/browser/unified_consent/unified_consent_service_factory.h"
 #include "components/browser_sync/profile_sync_service.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/account_tracker_service.h"
@@ -32,7 +37,8 @@
 #include "components/signin/core/browser/signin_metrics.h"
 #include "components/signin/core/browser/signin_pref_names.h"
 #include "components/sync/base/sync_prefs.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "components/unified_consent/unified_consent_service.h"
+#include "content/public/browser/storage_partition.h"
 
 namespace {
 
@@ -46,6 +52,7 @@ AccountInfo GetAccountInfo(Profile* profile, const std::string& account_id) {
 DiceTurnSyncOnHelper::DiceTurnSyncOnHelper(
     Profile* profile,
     signin_metrics::AccessPoint signin_access_point,
+    signin_metrics::PromoAction signin_promo_action,
     signin_metrics::Reason signin_reason,
     const std::string& account_id,
     SigninAbortedMode signin_aborted_mode,
@@ -55,23 +62,33 @@ DiceTurnSyncOnHelper::DiceTurnSyncOnHelper(
       signin_manager_(SigninManagerFactory::GetForProfile(profile)),
       token_service_(ProfileOAuth2TokenServiceFactory::GetForProfile(profile)),
       signin_access_point_(signin_access_point),
+      signin_promo_action_(signin_promo_action),
       signin_reason_(signin_reason),
       signin_aborted_mode_(signin_aborted_mode),
       account_info_(GetAccountInfo(profile, account_id)),
       weak_pointer_factory_(this) {
   DCHECK(delegate_);
-  DCHECK(signin::IsDicePrepareMigrationEnabled());
   DCHECK(profile_);
-  DCHECK(!account_info_.gaia.empty());
-  DCHECK(!account_info_.email.empty());
   // Should not start syncing if the profile is already authenticated
   DCHECK(!signin_manager_->IsAuthenticated());
 
   // Force sign-in uses the modal sign-in flow.
   DCHECK(!signin_util::IsForceSigninEnabled());
 
+  if (account_info_.gaia.empty() || account_info_.email.empty()) {
+    LOG(ERROR) << "Cannot turn Sync On for invalid account.";
+    base::SequencedTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
+    return;
+  }
+
+  DCHECK(!account_info_.gaia.empty());
+  DCHECK(!account_info_.email.empty());
+
   if (HasCanOfferSigninError()) {
-    AbortAndDelete();
+    // Do not self-destruct synchronously in the constructor.
+    base::SequencedTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(&DiceTurnSyncOnHelper::AbortAndDelete,
+                                  base::Unretained(this)));
     return;
   }
 
@@ -96,12 +113,14 @@ DiceTurnSyncOnHelper::DiceTurnSyncOnHelper(
     Profile* profile,
     Browser* browser,
     signin_metrics::AccessPoint signin_access_point,
+    signin_metrics::PromoAction signin_promo_action,
     signin_metrics::Reason signin_reason,
     const std::string& account_id,
     SigninAbortedMode signin_aborted_mode)
     : DiceTurnSyncOnHelper(
           profile,
           signin_access_point,
+          signin_promo_action,
           signin_reason,
           account_id,
           signin_aborted_mode,
@@ -234,7 +253,9 @@ void DiceTurnSyncOnHelper::LoadPolicyWithCachedCredentials() {
   policy::UserPolicySigninService* policy_service =
       policy::UserPolicySigninServiceFactory::GetForProfile(profile_);
   policy_service->FetchPolicyForSignedInUser(
-      account_info_.email, dm_token_, client_id_, profile_->GetRequestContext(),
+      AccountIdFromAccountInfo(account_info_), dm_token_, client_id_,
+      content::BrowserContext::GetDefaultStoragePartition(profile_)
+          ->GetURLLoaderFactoryForBrowserProcess(),
       base::Bind(&DiceTurnSyncOnHelper::OnPolicyFetchComplete,
                  weak_pointer_factory_.GetWeakPtr()));
 }
@@ -302,7 +323,8 @@ DiceTurnSyncOnHelper::GetProfileSyncService() {
 void DiceTurnSyncOnHelper::SigninAndShowSyncConfirmationUI() {
   // Signin.
   signin_manager_->OnExternalSigninCompleted(account_info_.email);
-  signin_metrics::LogSigninAccessPointCompleted(signin_access_point_);
+  signin_metrics::LogSigninAccessPointCompleted(signin_access_point_,
+                                                signin_promo_action_);
   signin_metrics::LogSigninReason(signin_reason_);
   base::RecordAction(base::UserMetricsAction("Signin_Signin_Succeed"));
 
@@ -313,10 +335,14 @@ void DiceTurnSyncOnHelper::SigninAndShowSyncConfirmationUI() {
     // progress.
     // TODO(https://crbug.com/811211): Remove this handle.
     sync_blocker_ = sync_service->GetSetupInProgressHandle();
-
-    if (SyncStartupTracker::GetSyncServiceState(profile_) ==
-        SyncStartupTracker::SYNC_STARTUP_PENDING) {
-      // Wait until sync is initialized so that the confirmation UI can be
+    bool is_enterprise_user =
+        !policy::BrowserPolicyConnector::IsNonEnterpriseUser(
+            account_info_.email);
+    if (is_enterprise_user &&
+        SyncStartupTracker::GetSyncServiceState(profile_) ==
+            SyncStartupTracker::SYNC_STARTUP_PENDING) {
+      // For enterprise users it is important to wait until sync is initialized
+      // so that the confirmation UI can be
       // aware of startup errors. This is needed to make sure that the sync
       // confirmation dialog is shown only after the sync service had a chance
       // to check whether sync was disabled by admin.
@@ -351,12 +377,15 @@ void DiceTurnSyncOnHelper::FinishSyncSetupAndDelete(
     LoginUIService::SyncConfirmationUIClosedResult result) {
   switch (result) {
     case LoginUIService::CONFIGURE_SYNC_FIRST:
+      EnableUnifiedConsentIfNeeded();
       delegate_->ShowSyncSettings();
       break;
     case LoginUIService::SYNC_WITH_DEFAULT_SETTINGS: {
       browser_sync::ProfileSyncService* sync_service = GetProfileSyncService();
-      if (sync_service)
+      if (sync_service) {
         sync_service->SetFirstSetupComplete();
+        EnableUnifiedConsentIfNeeded();
+      }
       break;
     }
     case LoginUIService::ABORT_SIGNIN:
@@ -376,4 +405,11 @@ void DiceTurnSyncOnHelper::AbortAndDelete() {
     token_service_->RevokeCredentials(account_info_.account_id);
   }
   delete this;
+}
+
+void DiceTurnSyncOnHelper::EnableUnifiedConsentIfNeeded() {
+  if (IsUnifiedConsentEnabled(profile_)) {
+    UnifiedConsentServiceFactory::GetForProfile(profile_)
+        ->SetUnifiedConsentGiven(true);
+  }
 }

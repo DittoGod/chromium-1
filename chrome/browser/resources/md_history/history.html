@@ -8,6 +8,11 @@
   <link rel="stylesheet" href="chrome://resources/css/md_colors.css">
 
   <style>
+    html {
+      /* Remove 300ms delay for 'click' event, when using touch interface. */
+      touch-action: manipulation;
+    }
+
     html,
     body {
       height: 100%;
@@ -46,11 +51,12 @@
     }
 
     #loading-toolbar {
-      -webkit-padding-start: 24px;
       align-items: center;
       background: var(--md-toolbar-color);
       color: #fff;
       height: 56px;
+      letter-spacing: .25px;
+      padding-inline-start: 24px;
     }
 
     #loading-message {

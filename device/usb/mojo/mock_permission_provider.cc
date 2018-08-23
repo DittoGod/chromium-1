@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <utility>
 
+#include "base/strings/utf_string_conversions.h"
 #include "device/usb/public/mojom/device.mojom.h"
 
 using ::testing::Return;
@@ -15,11 +16,19 @@ using ::testing::_;
 namespace device {
 namespace usb {
 
-MockPermissionProvider::MockPermissionProvider() : weak_factory_(this) {
-  ON_CALL(*this, HasDevicePermission(_)).WillByDefault(Return(true));
-}
+const char MockPermissionProvider::kRestrictedSerialNumber[] = "no_permission";
+
+MockPermissionProvider::MockPermissionProvider() : weak_factory_(this) {}
 
 MockPermissionProvider::~MockPermissionProvider() = default;
+
+bool MockPermissionProvider::HasDevicePermission(
+    const mojom::UsbDeviceInfo& device_info) const {
+  return device_info.serial_number ==
+                 base::ASCIIToUTF16(kRestrictedSerialNumber)
+             ? false
+             : true;
+}
 
 base::WeakPtr<PermissionProvider> MockPermissionProvider::GetWeakPtr() {
   return weak_factory_.GetWeakPtr();

@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -32,32 +33,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='remove_child'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutBlockFlow (floating) DIV id='remove' class='outer'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutBlockFlow (floating) DIV id='keep_outer' class='outer'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='keep_inner'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='abs_pos'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='keep_child'",
-      "reason": "geometry"
     }
   ]
 }

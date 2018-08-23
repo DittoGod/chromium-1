@@ -72,7 +72,7 @@ class DriveNotificationManager : public KeyedService,
   static std::string NotificationSourceToString(NotificationSource source);
 
   invalidation::InvalidationService* invalidation_service_;
-  base::ObserverList<DriveNotificationObserver> observers_;
+  base::ObserverList<DriveNotificationObserver>::Unchecked observers_;
 
   // True when Drive File Sync Service is registered for Drive notifications.
   bool push_notification_registered_;
@@ -83,7 +83,7 @@ class DriveNotificationManager : public KeyedService,
 
   // The timer is used for polling based notification. XMPP should usually be
   // used but notification is done per polling when XMPP is not working.
-  base::Timer polling_timer_;
+  base::OneShotTimer polling_timer_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.

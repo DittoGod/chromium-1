@@ -202,16 +202,43 @@ bool IsCompactTablet();
 // vertical size class.
 bool IsCompactHeight();
 
-// Returns the current first responder.
+// Whether the |environment| has a compact vertical size class.
+bool IsCompactHeight(id<UITraitEnvironment> environment);
+
+// Whether the the main application window's rootViewController has a regular
+// vertical and regular horizontal size class.
+bool IsRegularXRegularSizeClass();
+
+// Whether the |environment| has a regular vertical and regular horizontal
+// size class. the main application window's rootViewController
+bool IsRegularXRegularSizeClass(id<UITraitEnvironment> environment);
+
+// Returns whether the toolbar is split between top and bottom toolbar or if it
+// is displayed as only one toolbar.
+bool IsSplitToolbarMode();
+
+// Returns whether the |environment|'s toolbar is split between top and bottom
+// toolbar or if it is displayed as only one toolbar.
+bool IsSplitToolbarMode(id<UITraitEnvironment> environment);
+
+// Returns the current first responder for keyWindow.
 UIResponder* GetFirstResponder();
 
-// On iOS10 and above, trigger a haptic vibration for various types of
-// actions. This is a no-op for devices that do not support haptic feedback.
-void TriggerHapticFeedbackForAction();
+// Trigger a haptic vibration for various types of actions. This is a no-op for
+// devices that do not support haptic feedback.
 void TriggerHapticFeedbackForSelectionChange();
+// |impactStyle| should represent the mass of the object in the collision
+// simulated by this feedback.
+void TriggerHapticFeedbackForImpact(UIImpactFeedbackStyle impactStyle);
+// |type| represent the type of notification associated with this feedback.
 void TriggerHapticFeedbackForNotification(UINotificationFeedbackType type);
 
 // Returns the safeAreaInsets for a given view.
 UIEdgeInsets SafeAreaInsetsForView(UIView* view);
+
+// Returns the text for tabs count to be displayed in toolbar and tab_grid.
+// As an easter egg, show a smiley face instead of the count if the user has
+// more than 99 tabs open.
+NSString* TextForTabCount(long count);
 
 #endif  // IOS_CHROME_BROWSER_UI_UIKIT_UI_UTIL_H_

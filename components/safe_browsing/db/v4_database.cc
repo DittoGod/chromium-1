@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/safe_browsing/db/v4_database.h"
+
 #include <memory>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/files/file_util.h"
@@ -10,7 +13,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/safe_browsing/db/v4_database.h"
 #include "components/safe_browsing/proto/webui.pb.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -66,9 +68,9 @@ void V4Database::Create(
   const scoped_refptr<base::SingleThreadTaskRunner> callback_task_runner =
       base::ThreadTaskRunnerHandle::Get();
   db_task_runner->PostTask(
-      FROM_HERE, base::Bind(&V4Database::CreateOnTaskRunner, db_task_runner,
-                            base_path, list_infos, callback_task_runner,
-                            new_db_callback, TimeTicks::Now()));
+      FROM_HERE, base::BindOnce(&V4Database::CreateOnTaskRunner, db_task_runner,
+                                base_path, list_infos, callback_task_runner,
+                                new_db_callback, TimeTicks::Now()));
 }
 
 // static
@@ -108,7 +110,7 @@ void V4Database::CreateOnTaskRunner(
   // Database is done loading, pass it to the new_db_callback on the caller's
   // thread. This would unblock resource loads.
   callback_task_runner->PostTask(
-      FROM_HERE, base::Bind(new_db_callback, base::Passed(&v4_database)));
+      FROM_HERE, base::BindOnce(new_db_callback, std::move(v4_database)));
 
   UMA_HISTOGRAM_TIMES("SafeBrowsing.V4DatabaseOpen.Time",
                       TimeTicks::Now() - create_start_time);
@@ -176,10 +178,10 @@ void V4Database::ApplyUpdate(
             base::Bind(&V4Database::UpdatedStoreReady,
                        weak_factory_on_io_.GetWeakPtr(), identifier);
         db_task_runner_->PostTask(
-            FROM_HERE,
-            base::Bind(&V4Store::ApplyUpdate, base::Unretained(old_store.get()),
-                       base::Passed(std::move(response)), current_task_runner,
-                       store_ready_callback));
+            FROM_HERE, base::BindOnce(&V4Store::ApplyUpdate,
+                                      base::Unretained(old_store.get()),
+                                      std::move(response), current_task_runner,
+                                      store_ready_callback));
       }
     } else {
       NOTREACHED() << "Got update for unexpected identifier: " << identifier;
@@ -278,9 +280,18 @@ void V4Database::VerifyChecksum(
     stores.push_back(std::make_pair(next_store.first, next_store.second.get()));
   }
 
-  base::PostTaskAndReplyWithResult(db_task_runner_.get(), FROM_HERE,
-                                   base::Bind(&VerifyChecksums, stores),
-                                   db_ready_for_updates_callback);
+  base::PostTaskAndReplyWithResult(
+      db_task_runner_.get(), FROM_HERE, base::Bind(&VerifyChecksums, stores),
+      base::Bind(&V4Database::OnChecksumVerified,
+                 weak_factory_on_io_.GetWeakPtr(),
+                 std::move(db_ready_for_updates_callback)));
+}
+
+void V4Database::OnChecksumVerified(
+    DatabaseReadyForUpdatesCallback db_ready_for_updates_callback,
+    const std::vector<ListIdentifier>& stores_to_reset) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  db_ready_for_updates_callback.Run(stores_to_reset);
 }
 
 bool V4Database::IsStoreAvailable(const ListIdentifier& identifier) const {

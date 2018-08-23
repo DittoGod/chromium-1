@@ -16,7 +16,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "components/metrics/daily_event.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -44,6 +44,11 @@ constexpr base::TimeDelta kTabUsageReportingIntervals[] = {
     base::TimeDelta::FromSeconds(30), base::TimeDelta::FromMinutes(1),
     base::TimeDelta::FromMinutes(10), base::TimeDelta::FromHours(1),
     base::TimeDelta::FromHours(5),    base::TimeDelta::FromHours(12)};
+
+#if defined(OS_WIN)
+const base::TimeDelta kNativeWindowOcclusionCalculationInterval =
+    base::TimeDelta::FromMinutes(10);
+#endif
 
 // The global TabStatsTracker instance.
 TabStatsTracker* g_tab_stats_tracker_instance = nullptr;
@@ -87,6 +92,7 @@ const TabStatsDataStore::TabsStats& TabStatsTracker::tab_stats() const {
 
 TabStatsTracker::TabStatsTracker(PrefService* pref_service)
     : reporting_delegate_(std::make_unique<UmaStatsReportingDelegate>()),
+      delegate_(std::make_unique<TabStatsTrackerDelegate>()),
       tab_stats_data_store_(std::make_unique<TabStatsDataStore>(pref_service)),
       daily_event_(
           std::make_unique<DailyEvent>(pref_service,
@@ -130,6 +136,14 @@ TabStatsTracker::TabStatsTracker(PrefService* pref_service)
                       interval, interval_map));
     usage_interval_timers_.push_back(std::move(timer));
   }
+
+// The native window occlusion calculation is specific to Windows.
+#if defined(OS_WIN)
+  native_window_occlusion_timer_.Start(
+      FROM_HERE, kNativeWindowOcclusionCalculationInterval,
+      Bind(&TabStatsTracker::CalculateAndRecordNativeWindowVisibilities,
+           base::Unretained(this)));
+#endif
 }
 
 TabStatsTracker::~TabStatsTracker() {
@@ -162,6 +176,11 @@ void TabStatsTracker::RegisterPrefs(PrefRegistrySimple* registry) {
   DailyEvent::RegisterPref(registry, ::prefs::kTabStatsDailySample);
 }
 
+void TabStatsTracker::SetDelegateForTesting(
+    std::unique_ptr<TabStatsTrackerDelegate> new_delegate) {
+  delegate_ = std::move(new_delegate);
+}
+
 void TabStatsTracker::TabStatsDailyObserver::OnDailyEvent(
     DailyEvent::IntervalType type) {
   reporting_delegate_->ReportDailyMetrics(data_store_->tab_stats());
@@ -177,6 +196,15 @@ class TabStatsTracker::WebContentsUsageObserver
         tab_stats_tracker_(tab_stats_tracker) {}
 
   // content::WebContentsObserver:
+  void DidStartNavigation(
+      content::NavigationHandle* navigation_handle) override {
+    // Treat browser-initiated navigations as user interactions.
+    if (!navigation_handle->IsRendererInitiated()) {
+      tab_stats_tracker_->tab_stats_data_store()->OnTabInteraction(
+          web_contents());
+    }
+  }
+
   void DidGetUserInteraction(const blink::WebInputEvent::Type type) override {
     tab_stats_tracker_->tab_stats_data_store()->OnTabInteraction(
         web_contents());
@@ -212,15 +240,32 @@ void TabStatsTracker::OnBrowserRemoved(Browser* browser) {
   browser->tab_strip_model()->RemoveObserver(this);
 }
 
-void TabStatsTracker::TabInsertedAt(TabStripModel* model,
-                                    content::WebContents* web_contents,
-                                    int index,
-                                    bool foreground) {
+void TabStatsTracker::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  OnInitialOrInsertedTab(web_contents);
+  if (change.type() == TabStripModelChange::kInserted) {
+    for (const auto& delta : change.deltas())
+      OnInitialOrInsertedTab(delta.insert.contents);
 
-  tab_stats_data_store_->UpdateMaxTabsPerWindowIfNeeded(
-      static_cast<size_t>(model->count()));
+    tab_stats_data_store_->UpdateMaxTabsPerWindowIfNeeded(
+        static_cast<size_t>(tab_strip_model->count()));
+
+    return;
+  }
+
+  if (change.type() == TabStripModelChange::kReplaced) {
+    for (const auto& delta : change.deltas()) {
+      content::WebContents* old_contents = delta.replace.old_contents;
+      content::WebContents* new_contents = delta.replace.new_contents;
+      tab_stats_data_store_->OnTabReplaced(old_contents, new_contents);
+      web_contents_usage_observers_.insert(std::make_pair(
+          new_contents,
+          std::make_unique<WebContentsUsageObserver>(new_contents, this)));
+      web_contents_usage_observers_.erase(old_contents);
+    }
+  }
 }
 
 void TabStatsTracker::TabChangedAt(content::WebContents* web_contents,
@@ -232,18 +277,6 @@ void TabStatsTracker::TabChangedAt(content::WebContents* web_contents,
     return;
   if (web_contents->IsCurrentlyAudible())
     tab_stats_data_store_->OnTabAudible(web_contents);
-}
-
-void TabStatsTracker::TabReplacedAt(TabStripModel* tab_strip_model,
-                                    content::WebContents* old_contents,
-                                    content::WebContents* new_contents,
-                                    int index) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  tab_stats_data_store_->OnTabReplaced(old_contents, new_contents);
-  web_contents_usage_observers_.insert(std::make_pair(
-      new_contents,
-      std::make_unique<WebContentsUsageObserver>(new_contents, this)));
-  web_contents_usage_observers_.erase(old_contents);
 }
 
 void TabStatsTracker::OnResume() {

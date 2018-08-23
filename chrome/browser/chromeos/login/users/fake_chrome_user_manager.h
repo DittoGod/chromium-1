@@ -43,8 +43,17 @@ class FakeChromeUserManager : public ChromeUserManager {
   void LoginUser(const AccountId& account_id);
 
   const user_manager::User* AddUser(const AccountId& account_id);
+  const user_manager::User* AddChildUser(const AccountId& account_id);
   const user_manager::User* AddUserWithAffiliation(const AccountId& account_id,
                                                    bool is_affiliated);
+
+  // Creates and adds user with specified |account_id| and |user_type|. Sets
+  // user affiliation. If |profile| is valid, maps it to the created user.
+  const user_manager::User* AddUserWithAffiliationAndTypeAndProfile(
+      const AccountId& account_id,
+      bool is_affiliated,
+      user_manager::UserType user_type,
+      TestingProfile* profile);
 
   // Creates the instance returned by |GetLocalState()| (which returns nullptr
   // by default).
@@ -57,7 +66,6 @@ class FakeChromeUserManager : public ChromeUserManager {
   const user_manager::UserList& GetLoggedInUsers() const override;
   const user_manager::UserList& GetLRULoggedInUsers() const override;
   user_manager::UserList GetUnlockUsers() const override;
-  const AccountId& GetOwnerAccountId() const override;
   void UserLoggedIn(const AccountId& account_id,
                     const std::string& user_id_hash,
                     bool browser_restart,
@@ -124,7 +132,7 @@ class FakeChromeUserManager : public ChromeUserManager {
   const gfx::ImageSkia& GetResourceImagekiaNamed(int id) const override;
   base::string16 GetResourceStringUTF16(int string_id) const override;
   void ScheduleResolveLocale(const std::string& locale,
-                             const base::Closure& on_resolved_callback,
+                             base::OnceClosure on_resolved_callback,
                              std::string* out_resolved_locale) const override;
   bool IsValidDefaultUserImageId(int image_index) const override;
   bool AreEphemeralUsersEnabled() const override;
@@ -153,6 +161,7 @@ class FakeChromeUserManager : public ChromeUserManager {
   void UpdateLoginState(const user_manager::User* active_user,
                         const user_manager::User* primary_user,
                         bool is_current_user_owner) const override;
+  void SetOwnerId(const AccountId& account_id) override;
 
   // UserManagerInterface override.
   MultiProfileUserController* GetMultiProfileUserController() override;
@@ -167,7 +176,7 @@ class FakeChromeUserManager : public ChromeUserManager {
 
   // ChromeUserManager override.
   void SetUserAffiliation(
-      const std::string& user_email,
+      const AccountId& account_id,
       const AffiliationIDSet& user_affiliation_ids) override;
   bool ShouldReportUser(const std::string& user_id) const override;
 
@@ -175,8 +184,9 @@ class FakeChromeUserManager : public ChromeUserManager {
     fake_ephemeral_users_enabled_ = ephemeral_users_enabled;
   }
 
+  // TODO(mukai): remove this.
   void set_owner_id(const AccountId& owner_account_id) {
-    owner_account_id_ = owner_account_id;
+    SetOwnerId(owner_account_id);
   }
 
   void set_multi_profile_user_controller(
@@ -201,7 +211,6 @@ class FakeChromeUserManager : public ChromeUserManager {
   user_manager::User* GetActiveUserInternal() const;
 
   std::unique_ptr<FakeSupervisedUserManager> supervised_user_manager_;
-  AccountId owner_account_id_ = EmptyAccountId();
   bool fake_ephemeral_users_enabled_ = false;
   bool current_user_new_ = false;
   bool current_user_ephemeral_ = false;

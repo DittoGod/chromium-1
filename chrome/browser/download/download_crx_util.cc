@@ -15,6 +15,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "components/download/public/common/download_item.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "extensions/browser/extension_system.h"
@@ -75,8 +76,8 @@ void SetMockInstallPromptForTesting(
 scoped_refptr<extensions::CrxInstaller> CreateCrxInstaller(
     Profile* profile,
     const download::DownloadItem& download_item) {
-  ExtensionService* service = extensions::ExtensionSystem::Get(profile)->
-      extension_service();
+  extensions::ExtensionService* service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
   CHECK(service);
 
   scoped_refptr<extensions::CrxInstaller> installer(
@@ -144,7 +145,7 @@ bool OffStoreInstallAllowedByPrefs(Profile* profile, const DownloadItem& item) {
 
 std::unique_ptr<base::AutoReset<bool>> OverrideOffstoreInstallAllowedForTesting(
     bool allowed) {
-  return base::MakeUnique<base::AutoReset<bool>>(
+  return std::make_unique<base::AutoReset<bool>>(
       &g_allow_offstore_install_for_testing, allowed);
 }
 

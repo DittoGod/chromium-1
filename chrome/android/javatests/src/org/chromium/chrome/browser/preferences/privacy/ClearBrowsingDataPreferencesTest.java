@@ -4,6 +4,12 @@
 
 package org.chromium.chrome.browser.preferences.privacy;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
+
 import android.content.Intent;
 import android.preference.CheckBoxPreference;
 import android.preference.Preference;
@@ -15,6 +21,7 @@ import android.support.v7.app.AlertDialog;
 import android.widget.Button;
 import android.widget.ListView;
 
+import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -31,23 +38,30 @@ import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ShortcutHelper;
+import org.chromium.chrome.browser.TabState;
 import org.chromium.chrome.browser.browsing_data.ClearBrowsingDataTab;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.Preferences;
 import org.chromium.chrome.browser.preferences.privacy.ClearBrowsingDataPreferences.DialogOption;
 import org.chromium.chrome.browser.preferences.website.ContentSetting;
-import org.chromium.chrome.browser.preferences.website.NotificationInfo;
+import org.chromium.chrome.browser.preferences.website.PermissionInfo;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.webapps.TestFetchStorageCallback;
 import org.chromium.chrome.browser.webapps.WebappDataStorage;
 import org.chromium.chrome.browser.webapps.WebappRegistry;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 import org.chromium.chrome.test.util.browser.signin.SigninTestUtil;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.NavigationController;
+import org.chromium.content_public.browser.NavigationEntry;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -74,8 +88,8 @@ public class ClearBrowsingDataPreferencesTest {
 
         // Disable notifications for the default search engine so that it doesn't interfere with
         // important sites tests.
-        NotificationInfo notificationSettings =
-                new NotificationInfo("https://www.google.com", null, false);
+        PermissionInfo notificationSettings = new PermissionInfo(
+                PermissionInfo.Type.NOTIFICATION, "https://www.google.com", null, false);
         // Due to Android notification channels we need to delete the existing content setting in
         // in order to change it to block.
         ThreadUtils.runOnUiThread(
@@ -172,7 +186,7 @@ public class ClearBrowsingDataPreferencesTest {
         WebappDataStorage storage = WebappRegistry.getInstance().getWebappDataStorage("first");
         Assert.assertEquals("", storage.getScope());
         Assert.assertEquals("", storage.getUrl());
-        Assert.assertEquals(0, storage.getLastUsedTime());
+        Assert.assertEquals(0, storage.getLastUsedTimeMs());
     }
 
     /**
@@ -373,13 +387,11 @@ public class ClearBrowsingDataPreferencesTest {
      * correctly clear everything.
      */
     @Test
-    @CommandLineFlags.Add({"enable-features=ImportantSitesInCBD", "enable-site-engagement"})
     @MediumTest
     @Feature({"SiteEngagement"})
     public void testImportantSitesDialogNoFiltering() throws Exception {
         // Sign in.
         SigninTestUtil.addAndSignInTestAccount();
-        Assert.assertTrue(ChromeFeatureList.isEnabled(ChromeFeatureList.IMPORTANT_SITES_IN_CBD));
 
         final String testUrl =
                 mTestServer.getURL("/chrome/test/data/android/storage_persistance.html");
@@ -425,14 +437,12 @@ public class ClearBrowsingDataPreferencesTest {
      * http://crbug.com/727310
      */
     @Test
-    @CommandLineFlags.Add({"enable-features=ImportantSitesInCBD", "enable-site-engagement"})
     @MediumTest
     @Feature({"SiteEngagement"})
     @DisabledTest(message = "crbug.com/727310")
     public void testImportantSitesDialogNoopOnCancel() throws Exception {
         // Sign in.
         SigninTestUtil.addAndSignInTestAccount();
-        Assert.assertTrue(ChromeFeatureList.isEnabled(ChromeFeatureList.IMPORTANT_SITES_IN_CBD));
 
         final String testUrl =
                 mTestServer.getURL("/chrome/test/data/android/storage_persistance.html");
@@ -469,13 +479,11 @@ public class ClearBrowsingDataPreferencesTest {
      * clicking clear doesn't clear the protected domain.
      */
     @Test
-    @CommandLineFlags.Add({"enable-features=ImportantSitesInCBD", "enable-site-engagement"})
     @MediumTest
     @Feature({"SiteEngagement"})
     public void testImportantSitesDialog() throws Exception {
         // Sign in.
         SigninTestUtil.addAndSignInTestAccount();
-        Assert.assertTrue(ChromeFeatureList.isEnabled(ChromeFeatureList.IMPORTANT_SITES_IN_CBD));
 
         final String testUrl =
                 mTestServer.getURL("/chrome/test/data/android/storage_persistance.html");
@@ -525,6 +533,93 @@ public class ClearBrowsingDataPreferencesTest {
         // And check we didn't clear our cookies.
         Assert.assertEquals(
                 "true", mActivityTestRule.runJavaScriptCodeInCurrentTab("hasAllStorage()"));
+    }
+
+    /**
+     * Tests navigation entries are removed by history deletions.
+     */
+    @Test
+    @EnableFeatures(ChromeFeatureList.REMOVE_NAVIGATION_HISTORY)
+    @MediumTest
+    public void testNavigationDeletion() throws Exception {
+        final String url1 = mTestServer.getURL("/chrome/test/data/browsing_data/a.html");
+        final String url2 = mTestServer.getURL("/chrome/test/data/browsing_data/b.html");
+
+        // Navigate to url1 and url2.
+        Tab tab = mActivityTestRule.loadUrlInNewTab(url1);
+        mActivityTestRule.loadUrl(url2);
+        NavigationController controller = tab.getWebContents().getNavigationController();
+        assertTrue(tab.canGoBack());
+        assertEquals(1, controller.getLastCommittedEntryIndex());
+        assertThat(getUrls(controller), Matchers.contains(url1, url2));
+
+        // Clear history.
+        setDataTypesToClear(Arrays.asList(DialogOption.CLEAR_HISTORY));
+        ClearBrowsingDataPreferences preferences =
+                (ClearBrowsingDataPreferences) startPreferences().getFragmentForTest();
+        ThreadUtils.runOnUiThreadBlocking(() -> clickClearButton(preferences));
+        waitForProgressToComplete(preferences);
+
+        // Check navigation entries.
+        assertFalse(tab.canGoBack());
+        assertEquals(0, controller.getLastCommittedEntryIndex());
+        assertThat(getUrls(controller), Matchers.contains(url2));
+    }
+
+    /**
+     * Tests navigation entries from frozen state are removed by history deletions.
+     */
+    @Test
+    @MediumTest
+    @EnableFeatures(ChromeFeatureList.REMOVE_NAVIGATION_HISTORY)
+    public void testFrozenNavigationDeletion() throws Exception {
+        final String url1 = mTestServer.getURL("/chrome/test/data/browsing_data/a.html");
+        final String url2 = mTestServer.getURL("/chrome/test/data/browsing_data/b.html");
+
+        // Navigate to url1 and url2, close and recreate as frozen tab.
+        Tab tab = mActivityTestRule.loadUrlInNewTab(url1);
+        mActivityTestRule.loadUrl(url2);
+        Tab[] frozen = new Tab[1];
+        WebContents[] restored = new WebContents[1];
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            TabState state = tab.getState();
+            mActivityTestRule.getActivity().getCurrentTabModel().closeTab(tab);
+            frozen[0] = mActivityTestRule.getActivity().getCurrentTabCreator().createFrozenTab(
+                    state, tab.getId(), 1);
+            restored[0] = frozen[0].getState().contentsState.restoreContentsFromByteBuffer(false);
+        });
+
+        // Check content of frozen state.
+        NavigationController controller = restored[0].getNavigationController();
+        assertEquals(1, controller.getLastCommittedEntryIndex());
+        assertThat(getUrls(controller), Matchers.contains(url1, url2));
+        assertNull(frozen[0].getWebContents());
+
+        // Delete history.
+        setDataTypesToClear(Arrays.asList(DialogOption.CLEAR_HISTORY));
+        ClearBrowsingDataPreferences preferences =
+                (ClearBrowsingDataPreferences) startPreferences().getFragmentForTest();
+        ThreadUtils.runOnUiThreadBlocking(() -> clickClearButton(preferences));
+        waitForProgressToComplete(preferences);
+
+        // Check that frozen state was cleaned up.
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            restored[0] = frozen[0].getState().contentsState.restoreContentsFromByteBuffer(false);
+        });
+        controller = restored[0].getNavigationController();
+        assertEquals(0, controller.getLastCommittedEntryIndex());
+        assertThat(getUrls(controller), Matchers.contains(url2));
+        assertNull(frozen[0].getWebContents());
+    }
+
+    private List<String> getUrls(NavigationController controller) {
+        List<String> urls = new ArrayList<>();
+        int i = 0;
+        while (true) {
+            NavigationEntry entry = controller.getEntryAtIndex(i++);
+            if (entry == null) return urls;
+            urls.add(entry.getUrl());
+        }
     }
 
     private void setDataTypesToClear(final List<DialogOption> typesToClear) {

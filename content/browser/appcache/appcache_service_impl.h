@@ -14,13 +14,14 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
+#include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "content/browser/url_loader_factory_getter.h"
 #include "content/common/appcache_interfaces.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/appcache_service.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 
@@ -104,13 +105,13 @@ class CONTENT_EXPORT AppCacheServiceImpl
   void GetAllAppCacheInfo(AppCacheInfoCollection* collection,
                           OnceCompletionCallback callback) override;
   void DeleteAppCacheGroup(const GURL& manifest_url,
-                           const net::CompletionCallback& callback) override;
+                           net::CompletionOnceCallback callback) override;
 
   // Deletes all appcaches for the origin, 'callback' is invoked upon
   // completion. This method always completes asynchronously.
   // (virtual for unit testing)
-  virtual void DeleteAppCachesForOrigin(
-      const GURL& origin, const net::CompletionCallback& callback);
+  virtual void DeleteAppCachesForOrigin(const url::Origin& origin,
+                                        net::CompletionOnceCallback callback);
 
   // Checks the integrity of 'response_id' by reading the headers and data.
   // If it cannot be read, the cache group for 'manifest_url' is deleted.
@@ -151,7 +152,7 @@ class CONTENT_EXPORT AppCacheServiceImpl
   // Each child process in chrome uses a distinct backend instance.
   // See chrome/browser/AppCacheDispatcherHost.
   void RegisterBackend(AppCacheBackendImpl* backend_impl);
-  void UnregisterBackend(AppCacheBackendImpl* backend_impl);
+  virtual void UnregisterBackend(AppCacheBackendImpl* backend_impl);
   AppCacheBackendImpl* GetBackend(int id) const {
     BackendMap::const_iterator it = backends_.find(id);
     return (it != backends_.end()) ? it->second : NULL;
@@ -213,7 +214,7 @@ class CONTENT_EXPORT AppCacheServiceImpl
   base::Time last_reinit_time_;
   base::TimeDelta next_reinit_delay_;
   base::OneShotTimer reinit_timer_;
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   // In the network service world contains the pointer to the
   // URLLoaderFactoryGetter instance which is used to get to the network

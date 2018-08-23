@@ -22,7 +22,6 @@
 #include "ui/gfx/image/image.h"
 
 class PrefService;
-class SigninClient;
 
 namespace base {
 class DictionaryValue;
@@ -40,9 +39,8 @@ class AccountTrackerService : public KeyedService {
   // tracked by this service.
   static const char kAccountInfoPref[];
 
-  // TODO(mlerman): Remove all references to Profile::kNoHostedDomainFound in
-  // favour of this.
-  // Value representing no hosted domain in the kProfileHostedDomain preference.
+  // Value representing no hosted domain in the kGoogleServicesHostedDomain
+  // preference.
   static const char kNoHostedDomainFound[];
 
   // Value representing no picture URL associated with an account.
@@ -90,13 +88,10 @@ class AccountTrackerService : public KeyedService {
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
-  // Take a SigninClient rather than a PrefService and a URLRequestContextGetter
-  // since RequestContext cannot be created at startup.
-  // (see http://crbug.com/171406)
-  // If |user_data_dir| is empty, images will not be saved to or loaded from
-  // disk.
-  void Initialize(SigninClient* signin_client,
-                  const base::FilePath& user_data_dir = base::FilePath());
+  // Initializes the list of accounts from |pref_service| and load images from
+  // |user_data_dir|. If |user_data_dir| is empty, images will not be saved to
+  // nor loaded from disk.
+  void Initialize(PrefService* pref_service, base::FilePath user_data_dir);
 
   // Returns the list of known accounts and for which gaia IDs
   // have been fetched.
@@ -131,6 +126,10 @@ class AccountTrackerService : public KeyedService {
   // Sets whether the account is a Unicorn account.
   void SetIsChildAccount(const std::string& account_id,
                          const bool& is_child_account);
+
+  // Sets whether the account is under advanced protection.
+  void SetIsAdvancedProtectionAccount(const std::string& account_id,
+                                      const bool& is_under_advanced_protection);
 
   void RemoveAccount(const std::string& account_id);
 
@@ -183,9 +182,9 @@ class AccountTrackerService : public KeyedService {
   void MigrateToGaiaId();
   void SetMigrationState(AccountIdMigrationState state);
 
-  SigninClient* signin_client_;  // Not owned.
+  PrefService* pref_service_ = nullptr;  // Not owned.
   std::map<std::string, AccountState> accounts_;
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   base::FilePath user_data_dir_;
 

@@ -10,20 +10,28 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/android/library_loader/anchor_functions.h"
+#include "base/android/orderfile/orderfile_buildflags.h"
 #include "base/bits.h"
 #include "base/files/file.h"
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+
+#if BUILDFLAG(ORDERFILE_INSTRUMENTATION)
+#include "base/android/orderfile/orderfile_instrumentation.h"
+#endif
 
 #if BUILDFLAG(SUPPORTS_CODE_ORDERING)
 
@@ -50,7 +58,7 @@ constexpr size_t kPageSize = 4096;
 // for the context.
 __attribute__((no_sanitize_address))
 #endif
-bool Prefetch(size_t start, size_t end) {
+void Prefetch(size_t start, size_t end) {
   unsigned char* start_ptr = reinterpret_cast<unsigned char*>(start);
   unsigned char* end_ptr = reinterpret_cast<unsigned char*>(end);
   unsigned char dummy = 0;
@@ -59,7 +67,6 @@ bool Prefetch(size_t start, size_t end) {
     // loop.
     dummy ^= *static_cast<volatile unsigned char*>(ptr);
   }
-  return true;
 }
 
 // Populates the per-page residency between |start| and |end| in |residency|. If
@@ -81,7 +88,7 @@ bool Mincore(size_t start, size_t end, std::vector<unsigned char>* residency) {
 // Returns the start and end of .text, aligned to the lower and upper page
 // boundaries, respectively.
 std::pair<size_t, size_t> GetTextRange() {
-  // |kStartOftext| may not be at the beginning of a page, since .plt can be
+  // |kStartOfText| may not be at the beginning of a page, since .plt can be
   // before it, yet in the same mapping for instance.
   size_t start_page = kStartOfText - kStartOfText % kPageSize;
   // Set the end to the page on which the beginning of the last symbol is. The
@@ -89,6 +96,29 @@ std::pair<size_t, size_t> GetTextRange() {
   // outside of the executable code range anyway.
   size_t end_page = base::bits::Align(kEndOfText, kPageSize);
   return {start_page, end_page};
+}
+
+// Returns the start and end pages of the unordered section of .text, aligned to
+// lower and upper page boundaries, respectively.
+std::pair<size_t, size_t> GetOrderedTextRange() {
+  size_t start_page = kStartOfOrderedText - kStartOfOrderedText % kPageSize;
+  // kEndOfUnorderedText is not considered ordered, but the byte immediately
+  // before is considered ordered and so can not be contained in the start page.
+  size_t end_page = base::bits::Align(kEndOfOrderedText, kPageSize);
+  return {start_page, end_page};
+}
+
+// Calls madvise(advice) on the specified range. Does nothing if the range is
+// empty.
+void MadviseOnRange(const std::pair<size_t, size_t>& range, int advice) {
+  if (range.first >= range.second) {
+    return;
+  }
+  size_t size = range.second - range.first;
+  int err = madvise(reinterpret_cast<void*>(range.first), size, advice);
+  if (err) {
+    PLOG(ERROR) << "madvise() failed";
+  }
 }
 
 // Timestamp in ns since Unix Epoch, and residency, as returned by mincore().
@@ -156,19 +186,23 @@ void DumpResidency(size_t start,
     file.WriteAtCurrentPos(&dump[0], dump.size());
   }
 }
-}  // namespace
 
-// static
-bool NativeLibraryPrefetcher::ForkAndPrefetchNativeLibrary() {
-  // Avoid forking with cygprofile instrumentation because the latter performs
-  // memory allocations.
-#if defined(CYGPROFILE_INSTRUMENTATION)
-  return false;
-#endif
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// Used for "LibraryLoader.PrefetchDetailedStatus".
+enum class PrefetchStatus {
+  kSuccess = 0,
+  kWrongOrdering = 1,
+  kForkFailed = 2,
+  kChildProcessCrashed = 3,
+  kChildProcessKilled = 4,
+  kMaxValue = kChildProcessKilled
+};
 
+PrefetchStatus ForkAndPrefetch(bool ordered_only) {
   if (!IsOrderingSane()) {
     LOG(WARNING) << "Incorrect code ordering";
-    return false;
+    return PrefetchStatus::kWrongOrdering;
   }
 
   // Looking for ranges is done before the fork, to avoid syscalls and/or memory
@@ -176,25 +210,69 @@ bool NativeLibraryPrefetcher::ForkAndPrefetchNativeLibrary() {
   // state of its parent thread. It cannot rely on being able to acquire any
   // lock (unless special care is taken in a pre-fork handler), including being
   // able to call malloc().
-  const auto& range = GetTextRange();
+  //
+  // Always prefetch the ordered section first, as it's reached early during
+  // startup, and not necessarily located at the beginning of .text.
+  std::vector<std::pair<size_t, size_t>> ranges = {GetOrderedTextRange()};
+  if (!ordered_only)
+    ranges.push_back(GetTextRange());
 
   pid_t pid = fork();
   if (pid == 0) {
     setpriority(PRIO_PROCESS, 0, kBackgroundPriority);
     // _exit() doesn't call the atexit() handlers.
-    _exit(Prefetch(range.first, range.second) ? 0 : 1);
+    for (const auto& range : ranges) {
+      Prefetch(range.first, range.second);
+    }
+    _exit(EXIT_SUCCESS);
   } else {
     if (pid < 0) {
-      return false;
+      return PrefetchStatus::kForkFailed;
     }
     int status;
     const pid_t result = HANDLE_EINTR(waitpid(pid, &status, 0));
     if (result == pid) {
-      if (WIFEXITED(status)) {
-        return WEXITSTATUS(status) == 0;
+      if (WIFEXITED(status))
+        return PrefetchStatus::kSuccess;
+      if (WIFSIGNALED(status)) {
+        int signal = WTERMSIG(status);
+        switch (signal) {
+          case SIGSEGV:
+          case SIGBUS:
+            return PrefetchStatus::kChildProcessCrashed;
+            break;
+          case SIGKILL:
+          case SIGTERM:
+          default:
+            return PrefetchStatus::kChildProcessKilled;
+        }
       }
     }
-    return false;
+    // Should not happen. Per man waitpid(2), errors are:
+    // - EINTR: handled.
+    // - ECHILD if the process doesn't have an unwaited-for child with this PID.
+    // - EINVAL.
+    return PrefetchStatus::kChildProcessKilled;
+  }
+}
+
+}  // namespace
+
+// static
+void NativeLibraryPrefetcher::ForkAndPrefetchNativeLibrary(bool ordered_only) {
+#if BUILDFLAG(ORDERFILE_INSTRUMENTATION)
+  // Avoid forking with orderfile instrumentation because the child process
+  // would create a dump as well.
+  return;
+#endif
+
+  PrefetchStatus status = ForkAndPrefetch(ordered_only);
+  UMA_HISTOGRAM_BOOLEAN("LibraryLoader.PrefetchStatus",
+                        status == PrefetchStatus::kSuccess);
+  UMA_HISTOGRAM_ENUMERATION("LibraryLoader.PrefetchDetailedStatus", status);
+  if (status != PrefetchStatus::kSuccess) {
+    LOG(WARNING) << "Cannot prefetch the library. status = "
+                 << static_cast<int>(status);
   }
 }
 
@@ -241,14 +319,13 @@ void NativeLibraryPrefetcher::PeriodicallyCollectResidency() {
 }
 
 // static
-void NativeLibraryPrefetcher::MadviseRandomText() {
+void NativeLibraryPrefetcher::MadviseForOrderfile() {
   CHECK(IsOrderingSane());
-  const auto& range = GetTextRange();
-  size_t size = range.second - range.first;
-  int err = madvise(reinterpret_cast<void*>(range.first), size, MADV_RANDOM);
-  if (err) {
-    PLOG(ERROR) << "madvise() failed";
-  }
+  LOG(WARNING) << "Performing experimental madvise from orderfile information";
+  // First MADV_RANDOM on all of text, then turn the ordered text range back to
+  // normal. The ordered range may be placed anywhere within .text.
+  MadviseOnRange(GetTextRange(), MADV_RANDOM);
+  MadviseOnRange(GetOrderedTextRange(), MADV_NORMAL);
 }
 
 }  // namespace android

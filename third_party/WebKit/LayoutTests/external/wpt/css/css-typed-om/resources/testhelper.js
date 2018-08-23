@@ -9,6 +9,9 @@ function assert_style_value_equals(a, b) {
   assert_equals(a.constructor.name, b.constructor.name);
   const className = a.constructor.name;
   switch (className) {
+    case 'CSSStyleValue':
+      assert_equals(a.toString(), b.toString());
+      break;
     case 'CSSKeywordValue':
       assert_equals(a.value, b.value);
       break;
@@ -65,12 +68,6 @@ function assert_style_value_equals(a, b) {
       break;
     case 'CSSMatrixComponent':
       assert_matrix_approx_equals(a.matrix, b.matrix, 1e-6);
-      break;
-    case 'CSSURLImageValue':
-      assert_equals(a.instrinsicWidth, b.instrinsicWidth);
-      assert_equals(a.instrinsicHeight, b.instrinsicHeight);
-      assert_equals(a.instrinsicRatio, b.instrinsicRatio);
-      assert_equals(a.url, b.url);
       break;
     default:
       assert_equals(a, b);

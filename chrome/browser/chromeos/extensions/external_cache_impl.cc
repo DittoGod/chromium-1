@@ -21,6 +21,7 @@
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
 #include "chrome/browser/extensions/updater/chrome_extension_downloader_factory.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -29,7 +30,8 @@
 #include "extensions/browser/updater/extension_downloader.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "extensions/common/manifest.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace chromeos {
 
@@ -65,13 +67,13 @@ void WrapOnceClosure(base::OnceClosure closure) {
 
 ExternalCacheImpl::ExternalCacheImpl(
     const base::FilePath& cache_dir,
-    net::URLRequestContextGetter* request_context,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const scoped_refptr<base::SequencedTaskRunner>& backend_task_runner,
     ExternalCacheDelegate* delegate,
     bool always_check_updates,
     bool wait_for_cache_initialization)
     : local_cache_(cache_dir, 0, base::TimeDelta(), backend_task_runner),
-      request_context_(request_context),
+      url_loader_factory_(std::move(url_loader_factory)),
       backend_task_runner_(backend_task_runner),
       delegate_(delegate),
       always_check_updates_(always_check_updates),
@@ -265,10 +267,10 @@ void ExternalCacheImpl::CheckCache() {
   if (local_cache_.is_shutdown())
     return;
 
-  // If request_context_ is missing we can't download anything.
-  if (request_context_.get()) {
-    downloader_ = ChromeExtensionDownloaderFactory::CreateForRequestContext(
-        request_context_.get(), this, GetConnector());
+  // If url_loader_factory_ is missing we can't download anything.
+  if (url_loader_factory_) {
+    downloader_ = ChromeExtensionDownloaderFactory::CreateForURLLoaderFactory(
+        url_loader_factory_, this, GetConnector());
   }
 
   cached_extensions_->Clear();
@@ -285,8 +287,8 @@ void ExternalCacheImpl::CheckCache() {
 
       if (update_url.is_valid()) {
         downloader_->AddPendingExtension(
-            entry.first, update_url, false, 0,
-            extensions::ManifestFetchData::FetchPriority::BACKGROUND);
+            entry.first, update_url, extensions::Manifest::EXTERNAL_POLICY,
+            false, 0, extensions::ManifestFetchData::FetchPriority::BACKGROUND);
       }
     }
 

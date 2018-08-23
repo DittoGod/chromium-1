@@ -4,7 +4,6 @@
 
 #include "ui/views/widget/desktop_aura/desktop_drop_target_win.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/win/win_util.h"
 #include "ui/aura/client/drag_drop_client.h"
@@ -150,8 +149,8 @@ void DesktopDropTargetWin::Translate(
   aura::Window::ConvertPointToTarget(root_window_, target_window_, &location);
   event->reset(new ui::DropTargetEvent(
       *(data->get()),
-      location,
-      root_location,
+      gfx::PointF(location),
+      gfx::PointF(root_location),
       ui::DragDropTypes::DropEffectToDragOperation(effect)));
   (*event)->set_flags(ConvertKeyStateToAuraEventFlags(key_state));
   if (target_window_changed)

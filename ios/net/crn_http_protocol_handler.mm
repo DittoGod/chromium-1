@@ -12,7 +12,6 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/mac/bind_objc_block.h"
 #include "base/mac/foundation_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -61,9 +60,6 @@ net::HTTPProtocolHandlerDelegate* g_protocol_handler_delegate = nullptr;
 
 // Global instance of the MetricsDelegate.
 net::MetricsDelegate* g_metrics_delegate = nullptr;
-
-// Empty callback.
-void DoNothing(bool flag) {}
 
 }  // namespace
 
@@ -480,7 +476,7 @@ void HttpProtocolHandlerCore::OnSSLCertificateError(URLRequest* request,
   if (fatal) {
     if (tracker_) {
       tracker_->OnSSLCertificateError(request, ssl_info, false,
-                                      base::Bind(&DoNothing));
+                                      base::DoNothing());
     }
     CancelAfterSSLError();  // High security host do not tolerate any issue.
   } else if (!tracker_) {

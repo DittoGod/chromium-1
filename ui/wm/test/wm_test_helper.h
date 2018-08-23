@@ -65,7 +65,8 @@ class WMTestHelper : public aura::client::WindowParentingClient,
   void InitLocalHost(const gfx::Size& default_window_size);
 
   // Used when aura is running in Mode::MUS.
-  void InitMusHost(service_manager::Connector* connector);
+  void InitMusHost(service_manager::Connector* connector,
+                   const gfx::Size& default_window_size);
 
   // aura::WindowTreeClientDelegate:
   void OnEmbed(
@@ -74,6 +75,7 @@ class WMTestHelper : public aura::client::WindowParentingClient,
   void OnEmbedRootDestroyed(aura::WindowTreeHostMus* window_tree_host) override;
   void OnLostConnection(aura::WindowTreeClient* client) override;
   void OnPointerEventObserved(const ui::PointerEvent& event,
+                              int64_t display_id,
                               aura::Window* target) override;
   aura::PropertyConverter* GetPropertyConverter() override;
 

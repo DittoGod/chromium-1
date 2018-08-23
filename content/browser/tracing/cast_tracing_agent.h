@@ -9,8 +9,8 @@
 #include <string>
 
 #include "chromecast/tracing/system_tracer.h"
-#include "services/resource_coordinator/public/cpp/tracing/base_agent.h"
-#include "services/resource_coordinator/public/mojom/tracing/tracing.mojom.h"
+#include "services/tracing/public/cpp/base_agent.h"
+#include "services/tracing/public/mojom/tracing.mojom.h"
 
 namespace service_manager {
 class Connector;
@@ -31,9 +31,9 @@ class CastTracingAgent : public tracing::BaseAgent {
   // tracing::mojom::Agent. Called by Mojo internals on the UI thread.
   void StartTracing(const std::string& config,
                     base::TimeTicks coordinator_time,
-                    const Agent::StartTracingCallback& callback) override;
+                    Agent::StartTracingCallback callback) override;
   void StopAndFlush(tracing::mojom::RecorderPtr recorder) override;
-  void GetCategories(const Agent::GetCategoriesCallback& callback) override;
+  void GetCategories(Agent::GetCategoriesCallback callback) override;
 
   void StartTracingOnIO(scoped_refptr<base::TaskRunner> reply_task_runner,
                         const std::string& categories);

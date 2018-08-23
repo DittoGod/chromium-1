@@ -21,8 +21,8 @@
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "gpu/ipc/client/gpu_memory_buffer_impl.h"
-#include "gpu/ipc/client/gpu_memory_buffer_impl_native_pixmap.h"
+#include "gpu/ipc/common/gpu_memory_buffer_impl.h"
+#include "gpu/ipc/common/gpu_memory_buffer_impl_native_pixmap.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "ui/aura/env.h"
@@ -32,6 +32,7 @@
 #include "ui/compositor/dip_util.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/linux/client_native_pixmap_factory_dmabuf.h"
 
 namespace {
 // Callback into Android to force screen updates if the queue gets this big.
@@ -77,12 +78,13 @@ mojom::ScreenCaptureSessionPtr ArcScreenCaptureSession::Create(
     mojom::ScreenCaptureSessionNotifierPtr notifier,
     const std::string& display_name,
     content::DesktopMediaID desktop_id,
-    const gfx::Size& size) {
+    const gfx::Size& size,
+    bool enable_notification) {
   // This will get cleaned up when the connection error handler is called.
   ArcScreenCaptureSession* session =
       new ArcScreenCaptureSession(std::move(notifier), size);
   mojo::InterfacePtr<mojom::ScreenCaptureSession> result =
-      session->Initialize(desktop_id, display_name);
+      session->Initialize(desktop_id, display_name, enable_notification);
   if (!result)
     delete session;
   return result;
@@ -95,11 +97,14 @@ ArcScreenCaptureSession::ArcScreenCaptureSession(
       notifier_(std::move(notifier)),
       size_(size),
       desktop_window_(nullptr),
+      client_native_pixmap_factory_(
+          gfx::CreateClientNativePixmapFactoryDmabuf()),
       weak_ptr_factory_(this) {}
 
 mojom::ScreenCaptureSessionPtr ArcScreenCaptureSession::Initialize(
     content::DesktopMediaID desktop_id,
-    const std::string& display_name) {
+    const std::string& display_name,
+    bool enable_notification) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   desktop_window_ = content::DesktopMediaID::GetAuraWindowById(desktop_id);
   if (!desktop_window_) {
@@ -126,14 +131,16 @@ mojom::ScreenCaptureSessionPtr ArcScreenCaptureSession::Initialize(
 
   desktop_window_->GetHost()->compositor()->AddAnimationObserver(this);
 
-  // Show the tray notification icon now.
-  base::string16 notification_text =
-      l10n_util::GetStringFUTF16(IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_TEXT,
-                                 base::UTF8ToUTF16(display_name));
-  notification_ui_ = ScreenCaptureNotificationUI::Create(notification_text);
-  notification_ui_->OnStarted(
-      base::BindRepeating(&ArcScreenCaptureSession::NotificationStop,
-                          weak_ptr_factory_.GetWeakPtr()));
+  if (enable_notification) {
+    // Show the tray notification icon now.
+    base::string16 notification_text =
+        l10n_util::GetStringFUTF16(IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_TEXT,
+                                   base::UTF8ToUTF16(display_name));
+    notification_ui_ = ScreenCaptureNotificationUI::Create(notification_text);
+    notification_ui_->OnStarted(
+        base::BindRepeating(&ArcScreenCaptureSession::NotificationStop,
+                            weak_ptr_factory_.GetWeakPtr()));
+  }
 
   ash::Shell::Get()->display_manager()->inc_screen_capture_active_counter();
   ash::Shell::Get()->UpdateCursorCompositingEnabled();
@@ -197,8 +204,8 @@ void ArcScreenCaptureSession::SetOutputBuffer(
       stride * kBytesPerPixel, 0, stride * kBytesPerPixel * size_.height(), 0);
   std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
       gpu::GpuMemoryBufferImplNativePixmap::CreateFromHandle(
-          handle, size_, gfx::BufferFormat::RGBX_8888,
-          gfx::BufferUsage::SCANOUT,
+          client_native_pixmap_factory_.get(), handle, size_,
+          gfx::BufferFormat::RGBX_8888, gfx::BufferUsage::SCANOUT,
           gpu::GpuMemoryBufferImpl::DestructionCallback());
   if (!gpu_memory_buffer) {
     LOG(ERROR) << "Failed creating GpuMemoryBuffer";
@@ -324,9 +331,9 @@ void ArcScreenCaptureSession::CopyDesktopTextureToGpuBuffer(
           query_id,
           base::BindOnce(&ArcScreenCaptureSession::QueryCompleted,
                          weak_ptr_factory_.GetWeakPtr(),
-                         base::Passed(&pending_buffer->gpu_buffer_), query_id,
+                         std::move(pending_buffer->gpu_buffer_), query_id,
                          pending_buffer->texture_, pending_buffer->image_id_,
-                         base::Passed(&pending_buffer->callback_)));
+                         std::move(pending_buffer->callback_)));
 }
 
 void ArcScreenCaptureSession::OnAnimationStep(base::TimeTicks timestamp) {

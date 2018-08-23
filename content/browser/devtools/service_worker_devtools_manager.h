@@ -16,7 +16,7 @@
 #include "base/observer_list.h"
 #include "base/unguessable_token.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/web/devtools_agent.mojom.h"
+#include "third_party/blink/public/web/devtools_agent.mojom.h"
 #include "url/gurl.h"
 
 namespace network {
@@ -109,7 +109,7 @@ class CONTENT_EXPORT ServiceWorkerDevToolsManager {
   ServiceWorkerDevToolsManager();
   ~ServiceWorkerDevToolsManager();
 
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
   bool debug_service_worker_on_start_;
 
   // We retatin agent hosts as long as the service worker is alive.

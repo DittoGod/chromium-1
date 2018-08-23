@@ -14,7 +14,6 @@
 
 #include "base/atomicops.h"
 #include "base/containers/circular_deque.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
@@ -150,6 +149,8 @@ QueryTracker::Query::Query(GLuint id,
       client_begin_time_us_(0),
       result_(0) {}
 
+QueryTracker::Query::~Query() {}
+
 void QueryTracker::Query::Begin(QueryTrackerClient* client) {
   // init memory, inc count
   MarkAsActive();
@@ -233,6 +234,9 @@ bool QueryTracker::Query::CheckResultsAvailable(
           result_ = info_.sync->result;
           break;
       }
+      if (on_completed_callback_) {
+        std::move(on_completed_callback_.value()).Run();
+      }
       state_ = kComplete;
     } else {
       if ((helper->flush_generation() - flush_count_ - 1) >= 0x80000000) {
@@ -249,6 +253,12 @@ bool QueryTracker::Query::CheckResultsAvailable(
 uint64_t QueryTracker::Query::GetResult() const {
   DCHECK(state_ == kComplete || state_ == kUninitialized);
   return result_;
+}
+
+void QueryTracker::Query::SetCompletedCallback(base::OnceClosure callback) {
+  DCHECK(!on_completed_callback_);
+  DCHECK(state_ == kPending);
+  on_completed_callback_ = std::move(callback);
 }
 
 QueryTracker::QueryTracker(MappedMemoryManager* manager)

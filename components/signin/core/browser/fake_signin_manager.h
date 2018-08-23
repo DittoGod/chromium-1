@@ -35,8 +35,20 @@ class FakeSigninManager : public SigninManager {
   FakeSigninManager(SigninClient* client,
                     ProfileOAuth2TokenService* token_service,
                     AccountTrackerService* account_tracker_service,
+                    GaiaCookieManagerService* cookie_manager_service);
+
+  FakeSigninManager(SigninClient* client,
+                    ProfileOAuth2TokenService* token_service,
+                    AccountTrackerService* account_tracker_service,
                     GaiaCookieManagerService* cookie_manager_service,
-                    SigninErrorController* signin_error_controller = nullptr);
+                    SigninErrorController* signin_error_controller);
+
+  FakeSigninManager(SigninClient* client,
+                    ProfileOAuth2TokenService* token_service,
+                    AccountTrackerService* account_tracker_service,
+                    GaiaCookieManagerService* cookie_manager_service,
+                    SigninErrorController* signin_error_controller,
+                    signin::AccountConsistencyMethod account_consistency);
 
   ~FakeSigninManager() override;
 
@@ -66,7 +78,7 @@ class FakeSigninManager : public SigninManager {
  protected:
   void DoSignOut(signin_metrics::ProfileSignout signout_source_metric,
                  signin_metrics::SignoutDelete signout_delete_metric,
-                 bool remove_all_accounts) override;
+                 RemoveAccountsOption remove_option) override;
 
   // Username specified in StartSignInWithRefreshToken() call.
   std::string username_;

@@ -18,24 +18,25 @@
 #include "ash/screen_util.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/overview/overview_utils.h"
 #include "ash/wm/overview/overview_window_drag_controller.h"
 #include "ash/wm/overview/rounded_rect_view.h"
 #include "ash/wm/overview/window_grid.h"
+#include "ash/wm/overview/window_selector_controller.h"
 #include "ash/wm/overview/window_selector_delegate.h"
 #include "ash/wm/overview/window_selector_item.h"
-#include "ash/wm/panels/panel_layout_manager.h"
-#include "ash/wm/splitview/split_view_overview_overlay.h"
+#include "ash/wm/splitview/split_view_drag_indicators.h"
 #include "ash/wm/switchable_windows.h"
-#include "ash/wm/tablet_mode/tablet_mode_window_state.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
 #include "base/auto_reset.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/vector_icons/vector_icons.h"
+#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/display/screen.h"
@@ -44,6 +45,7 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/skia_util.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/textfield/textfield.h"
@@ -90,13 +92,6 @@ constexpr int kTextFilterIconSize = 20;
 // The radius used for the rounded corners on the text filtering textbox.
 constexpr int kTextFilterCornerRadius = 16;
 
-// Values for the old overview ui.
-// TODO(crbug.com/782320): Delete these values when the old ui becomes obsolete.
-constexpr int kOldTextFilterHorizontalPadding = 6;
-constexpr int kOldTextFilterHeight = 40;
-constexpr SkColor kOldTextFilterTextColor = SkColorSetARGB(222, 0, 0, 0);
-constexpr int kOldTextFilterCornerRadius = 2;
-
 // A comparator for locating a selector item for a given root.
 struct WindowSelectorItemForRoot {
   explicit WindowSelectorItemForRoot(const aura::Window* root)
@@ -117,32 +112,77 @@ void UpdateShelfVisibility() {
 
 // Returns the bounds for the overview window grid according to the split view
 // state. If split view mode is active, the overview window should open on the
-// opposite side of the default snap window.
-gfx::Rect GetGridBoundsInScreen(aura::Window* root_window) {
+// opposite side of the default snap window. If |divider_changed| is true, maybe
+// clamp the bounds to a minimum size and shift the bounds offscreen.
+gfx::Rect GetGridBoundsInScreen(aura::Window* root_window,
+                                bool divider_changed) {
   SplitViewController* split_view_controller =
       Shell::Get()->split_view_controller();
-  if (split_view_controller->IsSplitViewModeActive()) {
-    SplitViewController::SnapPosition oppsite_position =
-        (split_view_controller->default_snap_position() ==
-         SplitViewController::LEFT)
-            ? SplitViewController::RIGHT
-            : SplitViewController::LEFT;
-    return split_view_controller->GetSnappedWindowBoundsInScreen(
-        root_window, oppsite_position);
-  } else {
-    return split_view_controller->GetDisplayWorkAreaBoundsInScreen(root_window);
-  }
+  const gfx::Rect work_area =
+      split_view_controller->GetDisplayWorkAreaBoundsInScreen(root_window);
+  if (!split_view_controller->IsSplitViewModeActive())
+    return work_area;
+
+  SplitViewController::SnapPosition opposite_position =
+      (split_view_controller->default_snap_position() ==
+       SplitViewController::LEFT)
+          ? SplitViewController::RIGHT
+          : SplitViewController::LEFT;
+  gfx::Rect bounds = split_view_controller->GetSnappedWindowBoundsInScreen(
+      root_window, opposite_position);
+  if (!divider_changed)
+    return bounds;
+
+  const bool landscape =
+      split_view_controller->IsCurrentScreenOrientationLandscape();
+  const int min_length =
+      (landscape ? work_area.width() : work_area.height()) / 3;
+  if ((landscape ? bounds.width() : bounds.height()) > min_length)
+    return bounds;
+
+  // Helper function which shifts and clamps |out_bounds|. Handles the
+  // orientation and whether |opposite_position| is physically on the left
+  // or top of the screen.
+  auto shift_bounds = [&min_length, &landscape](bool left_or_top,
+                                                gfx::Rect* out_bounds) {
+    // If we are shifting to the left or top we need to update the origin as
+    // well.
+    if (left_or_top) {
+      if (landscape) {
+        out_bounds->set_x(out_bounds->x() - (min_length - out_bounds->width()));
+      } else {
+        out_bounds->set_y(out_bounds->y() -
+                          (min_length - out_bounds->height()));
+      }
+    }
+
+    if (landscape)
+      out_bounds->set_width(min_length);
+    else
+      out_bounds->set_height(min_length);
+  };
+
+  // Shift the opposite direction when |primary| is false because the physical
+  // location will not be aligned with |opposite_position|.
+  const bool primary =
+      split_view_controller->IsCurrentScreenOrientationPrimary();
+  if (opposite_position == SplitViewController::LEFT)
+    shift_bounds(primary, &bounds);
+  else
+    shift_bounds(!primary, &bounds);
+
+  return bounds;
 }
 
 gfx::Rect GetTextFilterPosition(aura::Window* root_window) {
-  const gfx::Rect total_bounds = GetGridBoundsInScreen(root_window);
+  const gfx::Rect total_bounds =
+      GetGridBoundsInScreen(root_window, /*divider_changed=*/false);
   return gfx::Rect(
       total_bounds.x() +
           0.5 * (total_bounds.width() -
                  std::min(kTextFilterWidth, total_bounds.width())),
       total_bounds.y() + total_bounds.height() * kTextFilterTopScreenProportion,
-      std::min(kTextFilterWidth, total_bounds.width()),
-      IsNewOverviewUi() ? kTextFilterHeight : kOldTextFilterHeight);
+      std::min(kTextFilterWidth, total_bounds.width()), kTextFilterHeight);
 }
 
 // Initializes the text filter on the top of the main root window and requests
@@ -166,9 +206,8 @@ views::Widget* CreateTextFilter(views::TextfieldController* controller,
 
   // Use |container| to specify the padding surrounding the text and to give
   // the textfield rounded corners.
-  views::View* container = new RoundedRectView(
-      IsNewOverviewUi() ? kTextFilterCornerRadius : kOldTextFilterCornerRadius,
-      kTextFilterBackgroundColor);
+  views::View* container =
+      new RoundedRectView(kTextFilterCornerRadius, kTextFilterBackgroundColor);
   const gfx::FontList& font_list =
       views::Textfield::GetDefaultFontList().Derive(
           kTextFilterFontDelta, gfx::Font::FontStyle::NORMAL,
@@ -178,21 +217,18 @@ views::Widget* CreateTextFilter(views::TextfieldController* controller,
   const int vertical_padding = (params.bounds.height() - text_height) / 2;
   auto* layout = container->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::kHorizontal,
-      gfx::Insets(vertical_padding,
-                  IsNewOverviewUi() ? kTextFilterHorizontalPadding
-                                    : kOldTextFilterHorizontalPadding,
-                  vertical_padding,
-                  IsNewOverviewUi() ? kTextFilterCornerRadius
-                                    : kOldTextFilterHorizontalPadding),
+      gfx::Insets(vertical_padding, kTextFilterHorizontalPadding,
+                  vertical_padding, kTextFilterCornerRadius),
       kTextFilterHorizontalPadding));
 
   views::Textfield* textfield = new views::Textfield();
   textfield->set_controller(controller);
   textfield->SetBorder(views::NullBorder());
   textfield->SetBackgroundColor(kTextFilterBackgroundColor);
-  textfield->SetTextColor(IsNewOverviewUi() ? kTextFilterTextColor
-                                            : kOldTextFilterTextColor);
+  textfield->SetTextColor(kTextFilterTextColor);
   textfield->SetFontList(font_list);
+  textfield->SetAccessibleName(l10n_util::GetStringUTF16(
+      IDS_ASH_WINDOW_SELECTOR_INPUT_FILTER_ACCESSIBLE_NAME));
 
   views::ImageView* image_view = new views::ImageView();
   image_view->SetImage(image);
@@ -215,10 +251,24 @@ views::Widget* CreateTextFilter(views::TextfieldController* controller,
   return widget;
 }
 
+// Gets the window that's currently being dragged in |root_window|. Returns
+// nullptr if there is no such window.
+aura::Window* GetDraggedWindow(
+    const aura::Window* root_window,
+    const std::vector<aura::Window*>& mru_window_list) {
+  for (auto* window : mru_window_list) {
+    if (wm::GetWindowState(window)->is_dragged() &&
+        window->GetRootWindow() == root_window) {
+      return window;
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 // static
-bool WindowSelector::IsSelectable(aura::Window* window) {
+bool WindowSelector::IsSelectable(const aura::Window* window) {
   return wm::GetWindowState(window)->IsUserPositionable();
 }
 
@@ -241,8 +291,8 @@ WindowSelector::~WindowSelector() {
 }
 
 // NOTE: The work done in Init() is not done in the constructor because it may
-// cause other, unrelated classes, (ie PanelLayoutManager) to make indirect
-// calls to restoring_minimized_windows() on a partially constructed object.
+// cause other, unrelated classes, to make indirect method calls on a partially
+// constructed object.
 void WindowSelector::Init(const WindowList& windows,
                           const WindowList& hide_windows) {
   hide_overview_windows_ =
@@ -251,7 +301,7 @@ void WindowSelector::Init(const WindowList& windows,
     restore_focus_window_->AddObserver(this);
 
   if (SplitViewController::ShouldAllowSplitView())
-    split_view_overview_overlay_ = std::make_unique<SplitViewOverviewOverlay>();
+    split_view_drag_indicators_ = std::make_unique<SplitViewDragIndicators>();
 
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   std::sort(root_windows.begin(), root_windows.end(),
@@ -274,45 +324,50 @@ void WindowSelector::Init(const WindowList& windows,
       observed_windows_.insert(container);
     }
 
-    // Hide the callout widgets for panels. It is safe to call this for
-    // root windows that don't contain any panel windows.
-    PanelLayoutManager::Get(root)->SetShowCalloutWidgets(false);
-
     std::unique_ptr<WindowGrid> grid(
-        new WindowGrid(root, windows, this, GetGridBoundsInScreen(root)));
-    if (!IsNewOverviewUi() && grid->empty())
-      continue;
+        new WindowGrid(root, windows, this,
+                       GetGridBoundsInScreen(root, /*divider_changed=*/false)));
     num_items_ += grid->size();
     grid_list_.push_back(std::move(grid));
   }
 
   {
     // The calls to WindowGrid::PrepareForOverview() and CreateTextFilter(...)
-    // requires some LayoutManagers (ie PanelLayoutManager) to perform layouts
-    // so that windows are correctly visible and properly animated in overview
-    // mode. Otherwise these layouts should be suppressed during overview mode
-    // so they don't conflict with overview mode animations. The
-    // |restoring_minimized_windows_| flag enables the PanelLayoutManager to
-    // make this decision.
-    base::AutoReset<bool> auto_restoring_minimized_windows(
-        &restoring_minimized_windows_, true);
+    // requires some LayoutManagers to perform layouts so that windows are
+    // correctly visible and properly animated in overview mode. Otherwise
+    // these layouts should be suppressed during overview mode so they don't
+    // conflict with overview mode animations.
+
+    WindowList mru_window_list =
+        Shell::Get()->mru_window_tracker()->BuildMruWindowList();
 
     // Do not call PrepareForOverview until all items are added to window_list_
     // as we don't want to cause any window updates until all windows in
     // overview are observed. See http://crbug.com/384495.
     for (std::unique_ptr<WindowGrid>& window_grid : grid_list_) {
-      if (IsNewOverviewAnimationsEnabled()) {
-        window_grid->SetWindowListAnimationStates(/*selected_item=*/nullptr,
-                                                  OverviewTransition::kEnter);
-      }
       window_grid->PrepareForOverview();
-      window_grid->PositionWindows(/*animate=*/true);
+
+      // Check if there is any window that's being dragged in the grid. If so,
+      // do not do the animation when entering overview.
+      aura::Window* dragged_window =
+          GetDraggedWindow(window_grid->root_window(), mru_window_list);
+      if (dragged_window) {
+        window_grid->PositionWindows(/*animate=*/false);
+      } else if (use_slide_animation_) {
+        window_grid->PositionWindows(/*animate=*/false);
+        window_grid->SlideWindowsIn();
+        use_slide_animation_ = false;
+      } else {
+        window_grid->CalculateWindowListAnimationStates(
+            /*selected_item=*/nullptr, OverviewTransition::kEnter);
+        window_grid->PositionWindows(/*animate=*/true, /*ignore_item=*/nullptr,
+                                     OverviewTransition::kEnter);
+      }
     }
 
     // Image used for text filter textfield.
     gfx::ImageSkia search_image =
-        gfx::CreateVectorIcon(IsNewOverviewUi() ? kOverviewTextFilterSearchIcon
-                                                : vector_icons::kSearchIcon,
+        gfx::CreateVectorIcon(kOverviewTextFilterSearchIcon,
                               kTextFilterIconSize, kTextFilterIconColor);
 
     aura::Window* root_window = Shell::GetPrimaryRootWindow();
@@ -320,8 +375,6 @@ void WindowSelector::Init(const WindowList& windows,
                                                &text_filter_bottom_));
   }
 
-  if (!IsNewOverviewUi())
-    DCHECK(!grid_list_.empty());
   UMA_HISTOGRAM_COUNTS_100("Ash.WindowSelector.Items", num_items_);
 
   Shell::Get()->activation_client()->AddObserver(this);
@@ -337,10 +390,9 @@ void WindowSelector::Init(const WindowList& windows,
 }
 
 // NOTE: The work done in Shutdown() is not done in the destructor because it
-// may cause other, unrelated classes, (ie PanelLayoutManager) to make indirect
-// calls to restoring_minimized_windows() on a partially destructed object.
+// may cause other, unrelated classes, to make indirect calls to
+// restoring_minimized_windows() on a partially destructed object.
 void WindowSelector::Shutdown() {
-  is_shut_down_ = true;
   // Stop observing screen metrics changes first to avoid auto-positioning
   // windows in response to work area changes from window activation.
   display::Screen::GetScreen()->RemoveObserver(this);
@@ -348,28 +400,31 @@ void WindowSelector::Shutdown() {
   // Stop observing split view state changes before restoring window focus.
   // Otherwise the activation of the window triggers OnSplitViewStateChanged()
   // that will call into this function again.
-  Shell::Get()->split_view_controller()->RemoveObserver(this);
+  SplitViewController* split_view_controller =
+      Shell::Get()->split_view_controller();
+  split_view_controller->RemoveObserver(this);
 
   size_t remaining_items = 0;
   for (std::unique_ptr<WindowGrid>& window_grid : grid_list_) {
-    if (IsNewOverviewAnimationsEnabled()) {
-      window_grid->SetWindowListAnimationStates(selected_item_,
-                                                OverviewTransition::kExit);
+    // During shutdown, do not animate all windows in overview if we need to
+    // animate the snapped window.
+    if (window_grid->should_animate_when_exiting()) {
+      window_grid->CalculateWindowListAnimationStates(
+          selected_item_ && selected_item_->window_grid() == window_grid.get()
+              ? selected_item_
+              : nullptr,
+          OverviewTransition::kExit);
     }
     for (const auto& window_selector_item : window_grid->window_list())
-      window_selector_item->RestoreWindow();
+      window_selector_item->RestoreWindow(/*reset_transform=*/true);
     remaining_items += window_grid->size();
   }
 
   // Setting focus after restoring windows' state avoids unnecessary animations.
-  ResetFocusRestoreWindow(true);
+  // No need to restore if we are sliding to the home launcher screen, as all
+  // windows will be minimized.
+  ResetFocusRestoreWindow(!use_slide_animation_);
   RemoveAllObservers();
-
-  for (aura::Window* window : Shell::GetAllRootWindows()) {
-    // Un-hide the callout widgets for panels. It is safe to call this for
-    // root_windows that don't contain any panel windows.
-    PanelLayoutManager::Get(window)->SetShowCalloutWidgets(true);
-  }
 
   for (std::unique_ptr<WindowGrid>& window_grid : grid_list_)
     window_grid->Shutdown();
@@ -398,33 +453,37 @@ void WindowSelector::Shutdown() {
   UpdateShelfVisibility();
 }
 
-void WindowSelector::RemoveAllObservers() {
-  for (auto* window : observed_windows_)
-    window->RemoveObserver(this);
-  observed_windows_.clear();
-
-  Shell::Get()->activation_client()->RemoveObserver(this);
-  display::Screen::GetScreen()->RemoveObserver(this);
-  if (restore_focus_window_)
-    restore_focus_window_->RemoveObserver(this);
-}
-
 void WindowSelector::CancelSelection() {
   delegate_->OnSelectionEnded();
 }
 
 void WindowSelector::OnGridEmpty(WindowGrid* grid) {
   size_t index = 0;
-  for (auto iter = grid_list_.begin(); iter != grid_list_.end(); ++iter) {
-    if (grid == (*iter).get()) {
-      grid->Shutdown();
-      index = iter - grid_list_.begin();
-      grid_list_.erase(iter);
-      break;
+  // If there are no longer any items on any of the grids, shutdown,
+  // otherwise the empty grids will remain blurred but will have no items.
+  if (IsEmpty()) {
+    // Shutdown all grids if no grids have any items and split view mode is
+    // not active. Set |index| to -1 so that it does not attempt to select any
+    // items.
+    index = -1;
+    if (!Shell::Get()->IsSplitViewModeActive()) {
+      for (const auto& grid : grid_list_)
+        grid->Shutdown();
+      grid_list_.clear();
+    }
+  } else {
+    for (auto iter = grid_list_.begin(); iter != grid_list_.end(); ++iter) {
+      if (grid == (*iter).get()) {
+        index = iter - grid_list_.begin();
+        break;
+      }
     }
   }
   if (index > 0 && selected_grid_index_ >= index) {
-    selected_grid_index_--;
+    // If the grid closed is not the one with the selected item, we do not need
+    // to move the selected item.
+    if (selected_grid_index_ == index)
+      --selected_grid_index_;
     // If the grid which became empty was the one with the selected window, we
     // need to select a window on the newly selected grid.
     if (selected_grid_index_ == index - 1)
@@ -432,6 +491,8 @@ void WindowSelector::OnGridEmpty(WindowGrid* grid) {
   }
   if (grid_list_.empty())
     CancelSelection();
+  else
+    PositionWindows(/*animate=*/false);
 }
 
 void WindowSelector::IncrementSelection(int increment) {
@@ -473,15 +534,6 @@ void WindowSelector::SelectWindow(WindowSelectorItem* item) {
   wm::GetWindowState(window)->Activate();
 }
 
-void WindowSelector::WindowClosing(WindowSelectorItem* window) {
-  grid_list_[selected_grid_index_]->WindowClosing(window);
-}
-
-void WindowSelector::SetBoundsForWindowGridsInScreen(const gfx::Rect& bounds) {
-  for (std::unique_ptr<WindowGrid>& grid : grid_list_)
-    grid->SetBoundsAndUpdatePositions(bounds);
-}
-
 void WindowSelector::SetBoundsForWindowGridsInScreenIgnoringWindow(
     const gfx::Rect& bounds,
     WindowSelectorItem* ignored_item) {
@@ -489,12 +541,12 @@ void WindowSelector::SetBoundsForWindowGridsInScreenIgnoringWindow(
     grid->SetBoundsAndUpdatePositionsIgnoringWindow(bounds, ignored_item);
 }
 
-void WindowSelector::SetSplitViewOverviewOverlayIndicatorState(
+void WindowSelector::SetSplitViewDragIndicatorsIndicatorState(
     IndicatorState indicator_state,
     const gfx::Point& event_location) {
-  DCHECK(split_view_overview_overlay_);
-  split_view_overview_overlay_->SetIndicatorState(indicator_state,
-                                                  event_location);
+  DCHECK(split_view_drag_indicators_);
+  split_view_drag_indicators_->SetIndicatorState(indicator_state,
+                                                 event_location);
 }
 
 WindowGrid* WindowSelector::GetGridWithRootWindow(aura::Window* root_window) {
@@ -506,31 +558,24 @@ WindowGrid* WindowSelector::GetGridWithRootWindow(aura::Window* root_window) {
   return nullptr;
 }
 
-void WindowSelector::AddItem(aura::Window* window) {
+void WindowSelector::AddItem(aura::Window* window,
+                             bool reposition,
+                             bool animate) {
   // Early exit if a grid already contains |window|.
   WindowGrid* grid = GetGridWithRootWindow(window->GetRootWindow());
-  if (!grid || grid->Contains(window))
+  if (!grid || grid->GetWindowSelectorItemContaining(window))
     return;
 
-  // This is meant to be called when a item in split view mode was previously
-  // snapped but should now be returned to the window grid (ie. split view
-  // divider dragged to either edge).
-  DCHECK(SplitViewController::ShouldAllowSplitView());
-  DCHECK(Shell::Get()->split_view_controller()->CanSnap(window));
-
-  // The dimensions of |window| will be very slim because of dragging the
-  // divider to the edge. Change the window dimensions to its tablet mode
-  // dimensions. Note: if split view is no longer constrained to tablet mode
-  // this will be need to updated.
-  TabletModeWindowState::UpdateWindowPosition(wm::GetWindowState(window));
-  grid->AddItem(window);
+  grid->AddItem(window, reposition, animate);
+  ++num_items_;
 
   // Transfer focus from |window| to the text widget, to match the behavior of
   // entering overview mode in the beginning.
   wm::ActivateWindow(GetTextFilterWidgetWindow());
 }
 
-void WindowSelector::RemoveWindowSelectorItem(WindowSelectorItem* item) {
+void WindowSelector::RemoveWindowSelectorItem(WindowSelectorItem* item,
+                                              bool reposition) {
   if (item->GetWindow()->HasObserver(this)) {
     item->GetWindow()->RemoveObserver(this);
     observed_windows_.erase(item->GetWindow());
@@ -540,10 +585,9 @@ void WindowSelector::RemoveWindowSelectorItem(WindowSelectorItem* item) {
 
   // Remove |item| from the corresponding grid.
   for (std::unique_ptr<WindowGrid>& grid : grid_list_) {
-    if (grid->Contains(item->GetWindow())) {
-      grid->RemoveItem(item);
-      if (grid->empty())
-        OnGridEmpty(grid.get());
+    if (grid->GetWindowSelectorItemContaining(item->GetWindow())) {
+      grid->RemoveItem(item, reposition);
+      --num_items_;
       break;
     }
   }
@@ -554,56 +598,269 @@ void WindowSelector::InitiateDrag(WindowSelectorItem* item,
   window_drag_controller_.reset(new OverviewWindowDragController(this));
   window_drag_controller_->InitiateDrag(item, location_in_screen);
 
-  if (!IsNewOverviewUi())
-    return;
-
   for (std::unique_ptr<WindowGrid>& grid : grid_list_)
     grid->OnSelectorItemDragStarted(item);
 }
 
 void WindowSelector::Drag(WindowSelectorItem* item,
                           const gfx::Point& location_in_screen) {
-  DCHECK(window_drag_controller_.get());
+  DCHECK(window_drag_controller_);
   DCHECK_EQ(item, window_drag_controller_->item());
   window_drag_controller_->Drag(location_in_screen);
 }
 
 void WindowSelector::CompleteDrag(WindowSelectorItem* item,
                                   const gfx::Point& location_in_screen) {
-  DCHECK(window_drag_controller_.get());
+  DCHECK(window_drag_controller_);
   DCHECK_EQ(item, window_drag_controller_->item());
   window_drag_controller_->CompleteDrag(location_in_screen);
 
-  if (!IsNewOverviewUi())
+  for (std::unique_ptr<WindowGrid>& grid : grid_list_)
+    grid->OnSelectorItemDragEnded();
+}
+
+void WindowSelector::StartSplitViewDragMode(
+    const gfx::Point& location_in_screen) {
+  window_drag_controller_->StartSplitViewDragMode(location_in_screen);
+}
+
+void WindowSelector::Fling(WindowSelectorItem* item,
+                           const gfx::Point& location_in_screen,
+                           float velocity_x,
+                           float velocity_y) {
+  // Its possible a fling event is not paired with a tap down event. Ignore
+  // these flings.
+  if (!window_drag_controller_ || item != window_drag_controller_->item())
     return;
 
+  window_drag_controller_->Fling(location_in_screen, velocity_x, velocity_y);
   for (std::unique_ptr<WindowGrid>& grid : grid_list_)
-    grid->OnSelectorItemDragEnded(item);
+    grid->OnSelectorItemDragEnded();
 }
 
 void WindowSelector::ActivateDraggedWindow() {
-  DCHECK(window_drag_controller_.get());
   window_drag_controller_->ActivateDraggedWindow();
 }
 
 void WindowSelector::ResetDraggedWindowGesture() {
-  DCHECK(window_drag_controller_.get());
   window_drag_controller_->ResetGesture();
 }
 
-void WindowSelector::PositionWindows(bool animate) {
+void WindowSelector::OnWindowDragStarted(aura::Window* dragged_window,
+                                         bool animate) {
+  WindowGrid* target_grid =
+      GetGridWithRootWindow(dragged_window->GetRootWindow());
+  if (!target_grid)
+    return;
+  target_grid->OnWindowDragStarted(dragged_window, animate);
+}
+
+void WindowSelector::OnWindowDragContinued(aura::Window* dragged_window,
+                                           const gfx::Point& location_in_screen,
+                                           IndicatorState indicator_state) {
+  WindowGrid* target_grid =
+      GetGridWithRootWindow(dragged_window->GetRootWindow());
+  if (!target_grid)
+    return;
+  target_grid->OnWindowDragContinued(dragged_window, location_in_screen,
+                                     indicator_state);
+}
+void WindowSelector::OnWindowDragEnded(aura::Window* dragged_window,
+                                       const gfx::Point& location_in_screen) {
+  WindowGrid* target_grid =
+      GetGridWithRootWindow(dragged_window->GetRootWindow());
+  if (!target_grid)
+    return;
+  target_grid->OnWindowDragEnded(dragged_window, location_in_screen);
+}
+
+void WindowSelector::PositionWindows(bool animate,
+                                     WindowSelectorItem* ignored_item) {
   for (std::unique_ptr<WindowGrid>& grid : grid_list_)
-    grid->PositionWindows(animate);
+    grid->PositionWindows(animate, ignored_item);
+}
+
+bool WindowSelector::IsShuttingDown() const {
+  return Shell::Get()->window_selector_controller()->is_shutting_down();
+}
+
+bool WindowSelector::ShouldAnimateWallpaper(aura::Window* root_window) {
+  // Find the grid associated with |root_window|.
+  WindowGrid* grid = GetGridWithRootWindow(root_window);
+  if (!grid)
+    return false;
+
+  // If one of the windows covers the workspace, we do not need to animate.
+  for (const auto& selector_item : grid->window_list()) {
+    if (CanCoverAvailableWorkspace(selector_item->GetWindow()))
+      return false;
+  }
+
+  return true;
+}
+
+bool WindowSelector::IsWindowInOverview(const aura::Window* window) {
+  for (const std::unique_ptr<WindowGrid>& grid : grid_list_) {
+    if (grid->GetWindowSelectorItemContaining(window))
+      return true;
+  }
+  return false;
+}
+
+void WindowSelector::SetWindowListNotAnimatedWhenExiting(
+    aura::Window* root_window) {
+  // Find the grid accociated with |root_window|.
+  WindowGrid* grid = GetGridWithRootWindow(root_window);
+  if (grid)
+    grid->SetWindowListNotAnimatedWhenExiting();
+}
+
+void WindowSelector::OnDisplayRemoved(const display::Display& display) {
+  // TODO(flackr): Keep window selection active on remaining displays.
+  CancelSelection();
+}
+
+void WindowSelector::OnDisplayMetricsChanged(const display::Display& display,
+                                             uint32_t metrics) {
+  // For metrics changes that happen when the split view mode is active, the
+  // display bounds will be adjusted in OnSplitViewDividerPositionChanged().
+  if (Shell::Get()->IsSplitViewModeActive())
+    return;
+  OnDisplayBoundsChanged();
+}
+
+void WindowSelector::OnWindowHierarchyChanged(
+    const HierarchyChangeParams& params) {
+  // Only care about newly added children of |observed_windows_|.
+  if (!observed_windows_.count(params.receiver) ||
+      !observed_windows_.count(params.new_parent)) {
+    return;
+  }
+
+  aura::Window* new_window = params.target;
+  if (!IsSelectable(new_window))
+    return;
+
+  // If the new window is added when splitscreen is active, do nothing.
+  // SplitViewController will do the right thing to snap the window or end
+  // overview mode.
+  if (Shell::Get()->IsSplitViewModeActive() &&
+      new_window->GetRootWindow() == Shell::Get()
+                                         ->split_view_controller()
+                                         ->GetDefaultSnappedWindow()
+                                         ->GetRootWindow()) {
+    return;
+  }
+
+  for (size_t i = 0; i < wm::kSwitchableWindowContainerIdsLength; ++i) {
+    if (new_window->parent()->id() == wm::kSwitchableWindowContainerIds[i] &&
+        !::wm::GetTransientParent(new_window)) {
+      // The new window is in one of the switchable containers, abort overview.
+      CancelSelection();
+      return;
+    }
+  }
+}
+
+void WindowSelector::OnWindowDestroying(aura::Window* window) {
+  window->RemoveObserver(this);
+  observed_windows_.erase(window);
+  if (window == restore_focus_window_)
+    restore_focus_window_ = nullptr;
+}
+
+void WindowSelector::OnWindowActivated(ActivationReason reason,
+                                       aura::Window* gained_active,
+                                       aura::Window* lost_active) {
+  if (ignore_activations_ || !gained_active ||
+      gained_active == GetTextFilterWidgetWindow()) {
+    return;
+  }
+
+  auto* grid = GetGridWithRootWindow(gained_active->GetRootWindow());
+  if (!grid)
+    return;
+  const auto& windows = grid->window_list();
+
+  auto iter = std::find_if(
+      windows.begin(), windows.end(),
+      [gained_active](const std::unique_ptr<WindowSelectorItem>& window) {
+        return window->Contains(gained_active);
+      });
+
+  if (iter == windows.end() && showing_text_filter_ &&
+      lost_active == GetTextFilterWidgetWindow()) {
+    return;
+  }
+
+  // Do not cancel the overview mode if the window activation was caused by
+  // snapping window to one side of the screen.
+  if (Shell::Get()->IsSplitViewModeActive())
+    return;
+
+  // Don't restore focus on exit if a window was just activated.
+  ResetFocusRestoreWindow(false);
+  if (iter != windows.end())
+    selected_item_ = iter->get();
+  CancelSelection();
+}
+
+void WindowSelector::OnAttemptToReactivateWindow(aura::Window* request_active,
+                                                 aura::Window* actual_active) {
+  OnWindowActivated(ActivationReason::ACTIVATION_CLIENT, request_active,
+                    actual_active);
+}
+
+void WindowSelector::ContentsChanged(views::Textfield* sender,
+                                     const base::string16& new_contents) {
+  // If the user enters underline mode via CTRL+SHIFT+U, ContentsChanged
+  // will get called after shutdown has started. Prevent anything from
+  // happening if shutdown has started (grids have been cleared).
+  if (grid_list_.size() < 1)
+    return;
+
+  text_filter_string_length_ = new_contents.length();
+  if (!text_filter_string_length_)
+    num_times_textfield_cleared_++;
+
+  bool should_show_text_filter = !new_contents.empty();
+  if (showing_text_filter_ != should_show_text_filter) {
+    aura::Window* text_filter_widget_window = GetTextFilterWidgetWindow();
+    ui::ScopedLayerAnimationSettings animation_settings(
+        text_filter_widget_window->layer()->GetAnimator());
+    animation_settings.SetPreemptionStrategy(
+        ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
+    animation_settings.SetTweenType(showing_text_filter_
+                                        ? gfx::Tween::FAST_OUT_LINEAR_IN
+                                        : gfx::Tween::LINEAR_OUT_SLOW_IN);
+
+    gfx::Transform transform;
+    if (should_show_text_filter) {
+      transform.Translate(0, 0);
+      text_filter_widget_window->layer()->SetOpacity(1);
+    } else {
+      transform.Translate(0, -text_filter_bottom_);
+      text_filter_widget_window->layer()->SetOpacity(0);
+    }
+
+    text_filter_widget_window->SetTransform(transform);
+    showing_text_filter_ = should_show_text_filter;
+  }
+  for (std::unique_ptr<WindowGrid>& grid : grid_list_)
+    grid->FilterItems(new_contents);
+
+  // If the selection widget is not active, execute a Move() command so that it
+  // shows up on the first undimmed item.
+  if (grid_list_[selected_grid_index_]->is_selecting())
+    return;
+  Move(WindowSelector::RIGHT, false);
 }
 
 bool WindowSelector::HandleKeyEvent(views::Textfield* sender,
                                     const ui::KeyEvent& key_event) {
   // Do not do anything with the events if none of the window grids have windows
   // in them.
-  bool empty_grids = true;
-  for (std::unique_ptr<WindowGrid>& grid : grid_list_)
-    empty_grids &= grid->empty();
-  if (empty_grids)
+  if (IsEmpty())
     return true;
 
   if (key_event.type() != ui::ET_KEY_PRESSED)
@@ -611,6 +868,7 @@ bool WindowSelector::HandleKeyEvent(views::Textfield* sender,
 
   switch (key_event.key_code()) {
     case ui::VKEY_BROWSER_BACK:
+      FALLTHROUGH;
     case ui::VKEY_ESCAPE:
       CancelSelection();
       break;
@@ -665,136 +923,6 @@ bool WindowSelector::HandleKeyEvent(views::Textfield* sender,
   return true;
 }
 
-void WindowSelector::OnDisplayAdded(const display::Display& display) {}
-
-void WindowSelector::OnDisplayRemoved(const display::Display& display) {
-  // TODO(flackr): Keep window selection active on remaining displays.
-  CancelSelection();
-}
-
-void WindowSelector::OnDisplayMetricsChanged(const display::Display& display,
-                                             uint32_t metrics) {
-  // For metrics changes that happen when the split view mode is active, the
-  // display bounds will be adjusted in OnSplitViewDividerPositionChanged().
-  if (Shell::Get()->IsSplitViewModeActive())
-    return;
-  OnDisplayBoundsChanged();
-}
-
-void WindowSelector::OnWindowHierarchyChanged(
-    const HierarchyChangeParams& params) {
-  // Only care about newly added children of |observed_windows_|.
-  if (!observed_windows_.count(params.receiver) ||
-      !observed_windows_.count(params.new_parent)) {
-    return;
-  }
-
-  aura::Window* new_window = params.target;
-  if (!IsSelectable(new_window))
-    return;
-
-  for (size_t i = 0; i < wm::kSwitchableWindowContainerIdsLength; ++i) {
-    if (new_window->parent()->id() == wm::kSwitchableWindowContainerIds[i] &&
-        !::wm::GetTransientParent(new_window)) {
-      // The new window is in one of the switchable containers, abort overview.
-      CancelSelection();
-      return;
-    }
-  }
-}
-
-void WindowSelector::OnWindowDestroying(aura::Window* window) {
-  window->RemoveObserver(this);
-  observed_windows_.erase(window);
-  if (window == restore_focus_window_)
-    restore_focus_window_ = nullptr;
-}
-
-void WindowSelector::OnWindowActivated(ActivationReason reason,
-                                       aura::Window* gained_active,
-                                       aura::Window* lost_active) {
-  if (ignore_activations_ || !gained_active ||
-      gained_active == GetTextFilterWidgetWindow()) {
-    return;
-  }
-
-  aura::Window* root_window = gained_active->GetRootWindow();
-  auto grid =
-      std::find_if(grid_list_.begin(), grid_list_.end(),
-                   [root_window](const std::unique_ptr<WindowGrid>& grid) {
-                     return grid->root_window() == root_window;
-                   });
-  if (grid == grid_list_.end())
-    return;
-  const auto& windows = (*grid)->window_list();
-
-  auto iter = std::find_if(
-      windows.begin(), windows.end(),
-      [gained_active](const std::unique_ptr<WindowSelectorItem>& window) {
-        return window->Contains(gained_active);
-      });
-
-  if (iter == windows.end() && showing_text_filter_ &&
-      lost_active == GetTextFilterWidgetWindow()) {
-    return;
-  }
-
-  // Do not cancel the overview mode if the window activation was caused by
-  // snapping window to one side of the screen.
-  if (Shell::Get()->IsSplitViewModeActive())
-    return;
-
-  // Don't restore focus on exit if a window was just activated.
-  ResetFocusRestoreWindow(false);
-  selected_item_ = iter->get();
-  CancelSelection();
-}
-
-void WindowSelector::OnAttemptToReactivateWindow(aura::Window* request_active,
-                                                 aura::Window* actual_active) {
-  OnWindowActivated(ActivationReason::ACTIVATION_CLIENT, request_active,
-                    actual_active);
-}
-
-void WindowSelector::ContentsChanged(views::Textfield* sender,
-                                     const base::string16& new_contents) {
-  text_filter_string_length_ = new_contents.length();
-  if (!text_filter_string_length_)
-    num_times_textfield_cleared_++;
-
-  bool should_show_text_filter = !new_contents.empty();
-  if (showing_text_filter_ != should_show_text_filter) {
-    aura::Window* text_filter_widget_window = GetTextFilterWidgetWindow();
-    ui::ScopedLayerAnimationSettings animation_settings(
-        text_filter_widget_window->layer()->GetAnimator());
-    animation_settings.SetPreemptionStrategy(
-        ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
-    animation_settings.SetTweenType(showing_text_filter_
-                                        ? gfx::Tween::FAST_OUT_LINEAR_IN
-                                        : gfx::Tween::LINEAR_OUT_SLOW_IN);
-
-    gfx::Transform transform;
-    if (should_show_text_filter) {
-      transform.Translate(0, 0);
-      text_filter_widget_window->layer()->SetOpacity(1);
-    } else {
-      transform.Translate(0, -text_filter_bottom_);
-      text_filter_widget_window->layer()->SetOpacity(0);
-    }
-
-    text_filter_widget_window->SetTransform(transform);
-    showing_text_filter_ = should_show_text_filter;
-  }
-  for (std::unique_ptr<WindowGrid>& grid : grid_list_)
-    grid->FilterItems(new_contents);
-
-  // If the selection widget is not active, execute a Move() command so that it
-  // shows up on the first undimmed item.
-  if (grid_list_[selected_grid_index_]->is_selecting())
-    return;
-  Move(WindowSelector::RIGHT, false);
-}
-
 void WindowSelector::OnSplitViewStateChanged(
     SplitViewController::State previous_state,
     SplitViewController::State state) {
@@ -818,7 +946,14 @@ void WindowSelector::OnSplitViewStateChanged(
 
 void WindowSelector::OnSplitViewDividerPositionChanged() {
   DCHECK(Shell::Get()->IsSplitViewModeActive());
-  OnDisplayBoundsChanged();
+  // Re-calculate the bounds for the window grids and position all the windows.
+  for (std::unique_ptr<WindowGrid>& grid : grid_list_) {
+    grid->SetBoundsAndUpdatePositions(
+        GetGridBoundsInScreen(const_cast<aura::Window*>(grid->root_window()),
+                              /*divider_changed=*/true));
+  }
+  PositionWindows(/*animate=*/false);
+  RepositionTextFilterOnDisplayMetricsChange();
 }
 
 aura::Window* WindowSelector::GetTextFilterWidgetWindow() {
@@ -877,16 +1012,36 @@ void WindowSelector::Move(Direction direction, bool animate) {
   }
 }
 
+void WindowSelector::RemoveAllObservers() {
+  for (auto* window : observed_windows_)
+    window->RemoveObserver(this);
+  observed_windows_.clear();
+
+  Shell::Get()->activation_client()->RemoveObserver(this);
+  display::Screen::GetScreen()->RemoveObserver(this);
+  if (restore_focus_window_)
+    restore_focus_window_->RemoveObserver(this);
+}
+
 void WindowSelector::OnDisplayBoundsChanged() {
   // Re-calculate the bounds for the window grids and position all the windows.
   for (std::unique_ptr<WindowGrid>& grid : grid_list_) {
-    SetBoundsForWindowGridsInScreen(
-        GetGridBoundsInScreen(const_cast<aura::Window*>(grid->root_window())));
+    grid->SetBoundsAndUpdatePositions(
+        GetGridBoundsInScreen(const_cast<aura::Window*>(grid->root_window()),
+                              /*divider_changed=*/false));
   }
   PositionWindows(/*animate=*/false);
   RepositionTextFilterOnDisplayMetricsChange();
-  if (split_view_overview_overlay_)
-    split_view_overview_overlay_->OnDisplayBoundsChanged();
+  if (split_view_drag_indicators_)
+    split_view_drag_indicators_->OnDisplayBoundsChanged();
+}
+
+bool WindowSelector::IsEmpty() {
+  for (const auto& grid : grid_list_) {
+    if (!grid->empty())
+      return false;
+  }
+  return true;
 }
 
 }  // namespace ash

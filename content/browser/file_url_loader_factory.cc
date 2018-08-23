@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/files/file.h"
@@ -18,7 +19,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/public/browser/content_browser_client.h"
@@ -89,21 +90,27 @@ class FileURLDirectoryLoader
     : public network::mojom::URLLoader,
       public net::DirectoryLister::DirectoryListerDelegate {
  public:
-  static void CreateAndStart(const base::FilePath& profile_path,
-                             const network::ResourceRequest& request,
-                             network::mojom::URLLoaderRequest loader,
-                             network::mojom::URLLoaderClientPtrInfo client_info,
-                             std::unique_ptr<FileURLLoaderObserver> observer) {
+  static void CreateAndStart(
+      const base::FilePath& profile_path,
+      const network::ResourceRequest& request,
+      network::mojom::URLLoaderRequest loader,
+      network::mojom::URLLoaderClientPtrInfo client_info,
+      std::unique_ptr<FileURLLoaderObserver> observer,
+      scoped_refptr<net::HttpResponseHeaders> response_headers) {
     // Owns itself. Will live as long as its URLLoader and URLLoaderClientPtr
     // bindings are alive - essentially until either the client gives up or all
     // file data has been sent to it.
     auto* file_url_loader = new FileURLDirectoryLoader;
     file_url_loader->Start(profile_path, request, std::move(loader),
-                           std::move(client_info), std::move(observer));
+                           std::move(client_info), std::move(observer),
+                           std::move(response_headers));
   }
 
   // network::mojom::URLLoader:
-  void FollowRedirect() override {}
+  void FollowRedirect(const base::Optional<std::vector<std::string>>&
+                          to_be_removed_request_headers,
+                      const base::Optional<net::HttpRequestHeaders>&
+                          modified_request_headers) override {}
   void ProceedWithResponse() override { NOTREACHED(); }
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
@@ -118,7 +125,8 @@ class FileURLDirectoryLoader
              const network::ResourceRequest& request,
              network::mojom::URLLoaderRequest loader,
              network::mojom::URLLoaderClientPtrInfo client_info,
-             std::unique_ptr<content::FileURLLoaderObserver> observer) {
+             std::unique_ptr<content::FileURLLoaderObserver> observer,
+             scoped_refptr<net::HttpResponseHeaders> response_headers) {
     binding_.Bind(std::move(loader));
     binding_.set_connection_error_handler(base::BindOnce(
         &FileURLDirectoryLoader::OnConnectionError, base::Unretained(this)));
@@ -154,7 +162,7 @@ class FileURLDirectoryLoader
     network::ResourceResponseHead head;
     head.mime_type = "text/html";
     head.charset = "utf-8";
-    client->OnReceiveResponse(head, base::nullopt, nullptr);
+    client->OnReceiveResponse(head);
     client->OnStartLoadingResponseBody(std::move(pipe.consumer_handle));
     client_ = std::move(client);
 
@@ -183,7 +191,7 @@ class FileURLDirectoryLoader
 
 #if defined(OS_WIN)
       const base::string16& title = path_.value();
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
       const base::string16& title =
           base::WideToUTF16(base::SysNativeMBToWide(path_.value()));
 #endif
@@ -205,7 +213,7 @@ class FileURLDirectoryLoader
         filename.value() != base::FilePath::kParentDirectory) {
 #if defined(OS_WIN)
       std::string raw_bytes;  // Empty on Windows means UTF-8 encoded name.
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
       const std::string& raw_bytes = filename.value();
 #endif
       pending_data_.append(net::GetDirectoryListingEntry(
@@ -310,7 +318,10 @@ class FileURLLoader : public network::mojom::URLLoader {
   }
 
   // network::mojom::URLLoader:
-  void FollowRedirect() override {}
+  void FollowRedirect(const base::Optional<std::vector<std::string>>&
+                          to_be_removed_request_headers,
+                      const base::Optional<net::HttpRequestHeaders>&
+                          modified_request_headers) override {}
   void ProceedWithResponse() override {}
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
@@ -392,7 +403,7 @@ class FileURLLoader : public network::mojom::URLLoader {
       new_request.url = directory_url;
       FileURLDirectoryLoader::CreateAndStart(
           profile_path, new_request, binding_.Unbind(), client.PassInterface(),
-          std::move(observer));
+          std::move(observer), std::move(extra_response_headers));
       MaybeDeleteSelf();
       return;
     }
@@ -449,8 +460,16 @@ class FileURLLoader : public network::mojom::URLLoader {
       observer->OnStart();
 
     base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
-    if (observer)
-      observer->OnOpenComplete(net::FileErrorToNetError(file.error_details()));
+    if (!file.IsValid()) {
+      if (observer) {
+        observer->OnBytesRead(nullptr, 0u, file.error_details());
+        observer->OnDoneReading();
+      }
+      net::Error net_error = net::FileErrorToNetError(file.error_details());
+      client->OnComplete(network::URLLoaderCompletionStatus(net_error));
+      MaybeDeleteSelf();
+      return;
+    }
     char initial_read_buffer[net::kMaxBytesToSniff];
     int initial_read_result =
         file.ReadAtCurrentPos(initial_read_buffer, net::kMaxBytesToSniff);
@@ -458,6 +477,9 @@ class FileURLLoader : public network::mojom::URLLoader {
       base::File::Error read_error = base::File::GetLastFileError();
       DCHECK_NE(base::File::FILE_OK, read_error);
       if (observer) {
+        // This can happen when the file is unreadable (which can happen during
+        // corruption). We need to be sure to inform
+        // the observer that we've finished reading so that it can proceed.
         observer->OnBytesRead(nullptr, 0u, read_error);
         observer->OnDoneReading();
       }
@@ -497,6 +519,9 @@ class FileURLLoader : public network::mojom::URLLoader {
 
     size_t first_byte_to_send = 0;
     size_t total_bytes_to_send = static_cast<size_t>(info.size);
+
+    total_bytes_written_ = static_cast<size_t>(info.size);
+
     if (byte_range.IsValid()) {
       first_byte_to_send =
           static_cast<size_t>(byte_range.first_byte_position());
@@ -535,8 +560,14 @@ class FileURLLoader : public network::mojom::URLLoader {
               ? net::ForceSniffFileUrlsForHtml::kEnabled
               : net::ForceSniffFileUrlsForHtml::kDisabled,
           &head.mime_type);
+      head.did_mime_sniff = true;
     }
-    client->OnReceiveResponse(head, base::nullopt, nullptr);
+    if (head.headers) {
+      head.headers->AddHeader(
+          base::StringPrintf("%s: %s", net::HttpRequestHeaders::kContentType,
+                             head.mime_type.c_str()));
+    }
+    client->OnReceiveResponse(head);
     client->OnStartLoadingResponseBody(std::move(pipe.consumer_handle));
     client_ = std::move(client);
 
@@ -580,10 +611,15 @@ class FileURLLoader : public network::mojom::URLLoader {
     if (observer)
       observer->OnDoneReading();
 
-    if (result == MOJO_RESULT_OK)
-      client_->OnComplete(network::URLLoaderCompletionStatus(net::OK));
-    else
+    if (result == MOJO_RESULT_OK) {
+      network::URLLoaderCompletionStatus status(net::OK);
+      status.encoded_data_length = total_bytes_written_;
+      status.encoded_body_length = total_bytes_written_;
+      status.decoded_body_length = total_bytes_written_;
+      client_->OnComplete(status);
+    } else {
       client_->OnComplete(network::URLLoaderCompletionStatus(net::ERR_FAILED));
+    }
     client_.reset();
     MaybeDeleteSelf();
   }
@@ -591,6 +627,11 @@ class FileURLLoader : public network::mojom::URLLoader {
   std::unique_ptr<mojo::FileDataPipeProducer> data_producer_;
   mojo::Binding<network::mojom::URLLoader> binding_;
   network::mojom::URLLoaderClientPtr client_;
+
+  // In case of successful loads, this holds the total of bytes written.
+  // It is used to set some of the URLLoaderCompletionStatus data passed back
+  // to the URLLoaderClients (eg SimpleURLLoader).
+  size_t total_bytes_written_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(FileURLLoader);
 };
@@ -619,7 +660,7 @@ void FileURLLoaderFactory::CreateLoaderAndStart(
         FROM_HERE,
         base::BindOnce(&FileURLDirectoryLoader::CreateAndStart, profile_path_,
                        request, std::move(loader), client.PassInterface(),
-                       std::unique_ptr<FileURLLoaderObserver>()));
+                       std::unique_ptr<FileURLLoaderObserver>(), nullptr));
   } else {
     task_runner_->PostTask(
         FROM_HERE,
@@ -645,7 +686,7 @@ void CreateFileURLLoader(
     std::unique_ptr<FileURLLoaderObserver> observer,
     scoped_refptr<net::HttpResponseHeaders> extra_response_headers) {
   auto task_runner = base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   task_runner->PostTask(
       FROM_HERE,
@@ -655,6 +696,14 @@ void CreateFileURLLoader(
                      FileAccessPolicy::kUnrestricted,
                      LinkFollowingPolicy::kDoNotFollow, std::move(observer),
                      std::move(extra_response_headers)));
+}
+
+std::unique_ptr<network::mojom::URLLoaderFactory> CreateFileURLLoaderFactory(
+    const base::FilePath& profile_path) {
+  return std::make_unique<content::FileURLLoaderFactory>(
+      profile_path, base::CreateSequencedTaskRunnerWithTraits(
+                        {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+                         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
 }
 
 }  // namespace content

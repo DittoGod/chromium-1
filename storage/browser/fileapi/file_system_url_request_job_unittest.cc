@@ -63,11 +63,10 @@ const char kValidExternalMountPoint[] = "mnt_name";
 // An auto mounter that will try to mount anything for |storage_domain| =
 // "automount", but will only succeed for the mount point "mnt_name".
 bool TestAutoMountForURLRequest(
-    const net::URLRequest* /*url_request*/,
+    const storage::FileSystemRequestInfo& request_info,
     const storage::FileSystemURL& filesystem_url,
-    const std::string& storage_domain,
     base::OnceCallback<void(base::File::Error result)> callback) {
-  if (storage_domain != "automount")
+  if (request_info.storage_domain != "automount")
     return false;
   std::vector<base::FilePath::StringType> components;
   filesystem_url.path().GetComponents(&components);
@@ -140,14 +139,13 @@ class FileSystemURLRequestJobTest : public testing::Test {
     // We use the main thread so that we can get the root path synchronously.
     // TODO(adamk): Run this on the FILE thread we've created as well.
     file_system_context_ =
-        CreateFileSystemContextForTesting(NULL, temp_dir_.GetPath());
+        CreateFileSystemContextForTesting(nullptr, temp_dir_.GetPath());
 
     file_system_context_->OpenFileSystem(
-        GURL("http://remote/"),
-        storage::kFileSystemTypeTemporary,
+        GURL("http://remote/"), storage::kFileSystemTypeTemporary,
         storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
-        base::Bind(&FileSystemURLRequestJobTest::OnOpenFileSystem,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&FileSystemURLRequestJobTest::OnOpenFileSystem,
+                       weak_factory_.GetWeakPtr()));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -170,7 +168,8 @@ class FileSystemURLRequestJobTest : public testing::Test {
     handlers.push_back(base::BindRepeating(&TestAutoMountForURLRequest));
 
     file_system_context_ = CreateFileSystemContextWithAutoMountersForTesting(
-        NULL, std::move(additional_providers), handlers, temp_dir_.GetPath());
+        nullptr, std::move(additional_providers), handlers,
+        temp_dir_.GetPath());
 
     ASSERT_EQ(static_cast<int>(sizeof(kTestFileData)) - 1,
               base::WriteFile(mnt_point.AppendASCII("foo"), kTestFileData,
@@ -188,9 +187,6 @@ class FileSystemURLRequestJobTest : public testing::Test {
                          bool run_to_completion,
                          FileSystemContext* file_system_context) {
     delegate_.reset(new net::TestDelegate());
-    // Make delegate_ exit the MessageLoop when the request is done.
-    delegate_->set_quit_on_complete(true);
-    delegate_->set_quit_on_redirect(true);
 
     job_factory_.reset(new FileSystemURLRequestJobFactory(
         url.GetOrigin().host(), file_system_context));
@@ -205,16 +201,16 @@ class FileSystemURLRequestJobTest : public testing::Test {
     request_->Start();
     ASSERT_TRUE(request_->is_pending());  // verify that we're starting async
     if (run_to_completion)
-      base::RunLoop().Run();
+      delegate_->RunUntilComplete();
   }
 
   void TestRequest(const GURL& url) {
-    TestRequestHelper(url, NULL, true, file_system_context_.get());
+    TestRequestHelper(url, nullptr, true, file_system_context_.get());
   }
 
   void TestRequestWithContext(const GURL& url,
                               FileSystemContext* file_system_context) {
-    TestRequestHelper(url, NULL, true, file_system_context);
+    TestRequestHelper(url, nullptr, true, file_system_context);
   }
 
   void TestRequestWithHeaders(const GURL& url,
@@ -223,7 +219,7 @@ class FileSystemURLRequestJobTest : public testing::Test {
   }
 
   void TestRequestNoRun(const GURL& url) {
-    TestRequestHelper(url, NULL, false, file_system_context_.get());
+    TestRequestHelper(url, nullptr, false, file_system_context_.get());
   }
 
   void CreateDirectory(const base::StringPiece& dir_name) {
@@ -358,14 +354,15 @@ TEST_F(FileSystemURLRequestJobTest, RangeOutOfBounds) {
 
 TEST_F(FileSystemURLRequestJobTest, FileDirRedirect) {
   CreateDirectory("dir");
-  TestRequest(CreateFileSystemURL("dir"));
+  TestRequestNoRun(CreateFileSystemURL("dir"));
+  delegate_->RunUntilRedirect();
 
   EXPECT_EQ(1, delegate_->received_redirect_count());
   EXPECT_FALSE(delegate_->request_failed());
 
   // We've deferred the redirect; now cancel the request to avoid following it.
   request_->Cancel();
-  base::RunLoop().Run();
+  delegate_->RunUntilComplete();
 }
 
 TEST_F(FileSystemURLRequestJobTest, InvalidURL) {
@@ -423,7 +420,7 @@ TEST_F(FileSystemURLRequestJobTest, Incognito) {
 
   // Creates a new filesystem context for incognito mode.
   scoped_refptr<FileSystemContext> file_system_context =
-      CreateIncognitoFileSystemContextForTesting(NULL, temp_dir_.GetPath());
+      CreateIncognitoFileSystemContextForTesting(nullptr, temp_dir_.GetPath());
 
   // The request should return NOT_FOUND error if it's in incognito mode.
   TestRequestWithContext(CreateFileSystemURL("file"),

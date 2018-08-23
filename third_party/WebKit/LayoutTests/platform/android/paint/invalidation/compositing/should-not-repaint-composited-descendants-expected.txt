@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "contentsOpaque": true,
       "drawsContent": true
     },
@@ -39,16 +40,6 @@
       "drawsContent": true,
       "backfaceVisibility": "hidden",
       "backgroundColor": "#008000"
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='composited-box'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow DIV class='child'",
-      "reason": "subtree"
     }
   ]
 }

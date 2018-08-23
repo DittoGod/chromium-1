@@ -5,9 +5,13 @@
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
 #include "components/update_client/protocol_builder.h"
+#include "components/update_client/test_configurator.h"
 #include "components/update_client/updater_state.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -24,7 +28,8 @@ TEST(BuildProtocolRequest, SessionIdProdIdVersion) {
       string::npos,
       request.find(" sessionid=\"{15160585-8ADE-4D3C-839B-1281A6035D1F}\" "));
   EXPECT_NE(string::npos,
-            request.find(" version=\"some_prod_id-1.0\" prodversion=\"1.0\" "));
+            request.find(" updater=\"some_prod_id\" updaterversion=\"1.0\" "
+                         "prodversion=\"1.0\" "));
 }
 
 TEST(BuildProtocolRequest, DownloadPreference) {
@@ -43,8 +48,7 @@ TEST(BuildProtocolRequest, UpdaterStateAttributes) {
   // When no updater state is provided, then check that the elements and
   // attributes related to the updater state are not serialized.
   std::string request =
-      BuildProtocolRequest("1", "", "", "", "", "", "", "", "", nullptr)
-          .c_str();
+      BuildProtocolRequest("1", "", "", "", "", "", "", "", "", nullptr);
   EXPECT_EQ(std::string::npos, request.find(" domainjoined"));
   EXPECT_EQ(std::string::npos, request.find("<updater"));
 
@@ -70,6 +74,47 @@ TEST(BuildProtocolRequest, UpdaterStateAttributes) {
 #else
   EXPECT_EQ(std::string::npos, request.find(updater_element));
 #endif  // GOOGLE_CHROME_BUILD
+}
+
+TEST(BuildProtocolRequest, BuildUpdateCheckExtraRequestHeaders) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+  auto config = base::MakeRefCounted<TestConfigurator>();
+
+  auto headers = BuildUpdateCheckExtraRequestHeaders(config, {}, true);
+  EXPECT_STREQ("fake_prodid-30.0", headers["X-Goog-Update-Updater"].c_str());
+  EXPECT_STREQ("fg", headers["X-Goog-Update-Interactivity"].c_str());
+  EXPECT_EQ("", headers["X-Goog-Update-AppId"]);
+
+  headers = BuildUpdateCheckExtraRequestHeaders(config, {}, false);
+  EXPECT_STREQ("fake_prodid-30.0", headers["X-Goog-Update-Updater"].c_str());
+  EXPECT_STREQ("bg", headers["X-Goog-Update-Interactivity"].c_str());
+  EXPECT_EQ("", headers["X-Goog-Update-AppId"]);
+
+  headers = BuildUpdateCheckExtraRequestHeaders(
+      config, {"jebgalgnebhfojomionfpkfelancnnkf"}, true);
+  EXPECT_STREQ("fake_prodid-30.0", headers["X-Goog-Update-Updater"].c_str());
+  EXPECT_STREQ("fg", headers["X-Goog-Update-Interactivity"].c_str());
+  EXPECT_STREQ("jebgalgnebhfojomionfpkfelancnnkf",
+               headers["X-Goog-Update-AppId"].c_str());
+
+  headers = BuildUpdateCheckExtraRequestHeaders(
+      config,
+      {"jebgalgnebhfojomionfpkfelancnnkf", "ihfokbkgjpifbbojhneepfflplebdkc"},
+      true);
+  EXPECT_STREQ("fake_prodid-30.0", headers["X-Goog-Update-Updater"].c_str());
+  EXPECT_STREQ("fg", headers["X-Goog-Update-Interactivity"].c_str());
+  EXPECT_STREQ(
+      "jebgalgnebhfojomionfpkfelancnnkf,ihfokbkgjpifbbojhneepfflplebdkc",
+      headers["X-Goog-Update-AppId"].c_str());
+
+  headers = BuildUpdateCheckExtraRequestHeaders(
+      config, std::vector<std::string>(40, "jebgalgnebhfojomionfpkfelancnnkf"),
+      true);
+  EXPECT_STREQ(
+      base::JoinString(
+          std::vector<std::string>(30, "jebgalgnebhfojomionfpkfelancnnkf"), ",")
+          .c_str(),
+      headers["X-Goog-Update-AppId"].c_str());
 }
 
 }  // namespace update_client

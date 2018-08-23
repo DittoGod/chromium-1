@@ -36,6 +36,7 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   // gin::Wrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) final;
+  const char* GetTypeName() final;
 
   // Fires the event to any listeners.
   // Warning: This can run arbitrary JS code, so the |context| may be
@@ -44,6 +45,15 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
             std::vector<v8::Local<v8::Value>>* args,
             const EventFilteringInfo* filter,
             JSRunner::ResultCallback callback);
+
+  // Fires the event to any listeners synchronously, and returns the result.
+  // This should only be used if the caller is certain that JS is already
+  // running (i.e., is not blocked).
+  // Warning: This can run arbitrary JS code, so the |context| may be
+  // invalidated after this!
+  v8::Local<v8::Value> FireSync(v8::Local<v8::Context> context,
+                                std::vector<v8::Local<v8::Value>>* args,
+                                const EventFilteringInfo* filter);
 
   // Removes all listeners and marks this object as invalid so that no more
   // are added.

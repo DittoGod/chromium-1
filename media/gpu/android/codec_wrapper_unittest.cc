@@ -8,7 +8,6 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_task_environment.h"
 #include "media/base/android/media_codec_bridge.h"
@@ -64,7 +63,8 @@ class CodecWrapperTest : public testing::Test {
   NiceMock<MockMediaCodecBridge>* codec_;
   std::unique_ptr<CodecWrapper> wrapper_;
   scoped_refptr<AVDASurfaceBundle> surface_bundle_;
-  NiceMock<base::MockCallback<base::Closure>> output_buffer_release_cb_;
+  NiceMock<base::MockCallback<CodecWrapper::OutputReleasedCB>>
+      output_buffer_release_cb_;
   scoped_refptr<DecoderBuffer> fake_decoder_buffer_;
 };
 
@@ -212,13 +212,22 @@ TEST_F(CodecWrapperTest, CodecOutputBuffersHaveTheCorrectSize) {
 
 TEST_F(CodecWrapperTest, OutputBufferReleaseCbIsCalledWhenRendering) {
   auto codec_buffer = DequeueCodecOutputBuffer();
-  EXPECT_CALL(output_buffer_release_cb_, Run()).Times(1);
+  EXPECT_CALL(output_buffer_release_cb_, Run(false)).Times(1);
   codec_buffer->ReleaseToSurface();
 }
 
 TEST_F(CodecWrapperTest, OutputBufferReleaseCbIsCalledWhenDestructing) {
   auto codec_buffer = DequeueCodecOutputBuffer();
-  EXPECT_CALL(output_buffer_release_cb_, Run()).Times(1);
+  EXPECT_CALL(output_buffer_release_cb_, Run(false)).Times(1);
+}
+
+TEST_F(CodecWrapperTest, OutputBufferReflectsDrainingOrDrainedStatus) {
+  wrapper_->QueueInputBuffer(*fake_decoder_buffer_, EncryptionScheme());
+  auto eos = DecoderBuffer::CreateEOSBuffer();
+  wrapper_->QueueInputBuffer(*eos, EncryptionScheme());
+  ASSERT_TRUE(wrapper_->IsDraining());
+  auto codec_buffer = DequeueCodecOutputBuffer();
+  EXPECT_CALL(output_buffer_release_cb_, Run(true)).Times(1);
 }
 
 TEST_F(CodecWrapperTest, CodecStartsInFlushedState) {
@@ -285,6 +294,28 @@ TEST_F(CodecWrapperTest, SurfaceBundleIsUpdatedBySetSurface) {
 TEST_F(CodecWrapperTest, SurfaceBundleIsTaken) {
   ASSERT_EQ(wrapper_->TakeCodecSurfacePair().second, surface_bundle_);
   ASSERT_EQ(wrapper_->SurfaceBundle(), nullptr);
+}
+
+TEST_F(CodecWrapperTest, EOSWhileFlushedOrDrainedIsElided) {
+  // Nothing should call QueueEOS.
+  EXPECT_CALL(*codec_, QueueEOS(_)).Times(0);
+
+  // Codec starts in the flushed state.
+  auto eos = DecoderBuffer::CreateEOSBuffer();
+  wrapper_->QueueInputBuffer(*eos, EncryptionScheme());
+  std::unique_ptr<CodecOutputBuffer> codec_buffer;
+  bool is_eos = false;
+  wrapper_->DequeueOutputBuffer(nullptr, &is_eos, &codec_buffer);
+  ASSERT_TRUE(is_eos);
+
+  // Since we also just got the codec into the drained state, make sure that
+  // it is elided here too.
+  ASSERT_TRUE(wrapper_->IsDrained());
+  eos = DecoderBuffer::CreateEOSBuffer();
+  wrapper_->QueueInputBuffer(*eos, EncryptionScheme());
+  is_eos = false;
+  wrapper_->DequeueOutputBuffer(nullptr, &is_eos, &codec_buffer);
+  ASSERT_TRUE(is_eos);
 }
 
 }  // namespace media

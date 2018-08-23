@@ -13,6 +13,7 @@
 #include "base/i18n/rtl.h"
 #include "base/metrics/user_metrics.h"
 #include "ui/aura/window.h"
+#include "ui/base/hit_test.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/coordinate_conversion.h"
@@ -48,7 +49,9 @@ bool HitTestButton(const FrameCaptionButton* button,
 FrameSizeButton::FrameSizeButton(views::ButtonListener* listener,
                                  views::Widget* frame,
                                  FrameSizeButtonDelegate* delegate)
-    : FrameCaptionButton(listener, CAPTION_BUTTON_ICON_MAXIMIZE_RESTORE),
+    : FrameCaptionButton(listener,
+                         CAPTION_BUTTON_ICON_MAXIMIZE_RESTORE,
+                         HTMAXBUTTON),
       frame_(frame),
       delegate_(delegate),
       set_buttons_to_snap_mode_delay_ms_(kSetButtonsToSnapModeDelayMs),
@@ -62,7 +65,8 @@ bool FrameSizeButton::OnMousePressed(const ui::MouseEvent& event) {
   // is enabled. Do not enable snapping if the minimize button is not visible.
   // The close button is always visible.
   if (IsTriggerableEvent(event) && !in_snap_mode_ &&
-      delegate_->IsMinimizeButtonVisible()) {
+      delegate_->IsMinimizeButtonVisible() &&
+      wm::GetWindowState(frame_->GetNativeWindow())->CanSnap()) {
     StartSetButtonsToSnapModeTimer(event);
   }
   FrameCaptionButton::OnMousePressed(event);
@@ -100,8 +104,8 @@ void FrameSizeButton::OnGestureEvent(ui::GestureEvent* event) {
     SetButtonsToNormalMode(FrameSizeButtonDelegate::ANIMATE_YES);
     return;
   }
-
-  if (event->type() == ui::ET_GESTURE_TAP_DOWN) {
+  if (event->type() == ui::ET_GESTURE_TAP_DOWN &&
+      wm::GetWindowState(frame_->GetNativeWindow())->CanSnap()) {
     StartSetButtonsToSnapModeTimer(*event);
     // Go through FrameCaptionButton's handling so that the button gets pressed.
     FrameCaptionButton::OnGestureEvent(event);
@@ -206,6 +210,8 @@ void FrameSizeButton::UpdateSnapType(const ui::LocatedEvent& event) {
       case CAPTION_BUTTON_ICON_CLOSE:
       case CAPTION_BUTTON_ICON_BACK:
       case CAPTION_BUTTON_ICON_LOCATION:
+      case CAPTION_BUTTON_ICON_MENU:
+      case CAPTION_BUTTON_ICON_ZOOM:
       case CAPTION_BUTTON_ICON_COUNT:
         NOTREACHED();
         break;

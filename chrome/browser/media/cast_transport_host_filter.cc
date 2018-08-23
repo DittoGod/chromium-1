@@ -16,8 +16,8 @@
 #include "media/cast/net/udp_transport_impl.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "net/url_request/url_request_context.h"
-#include "services/device/public/interfaces/constants.mojom.h"
-#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace {
@@ -225,7 +225,7 @@ void CastTransportHostFilter::OnInitializeStream(
         config.rtp_payload_type == media::cast::RtpPayloadType::REMOTE_VIDEO) {
       // Create CastRemotingSender for this RTP stream.
       remoting_sender_map_.AddWithID(
-          std::make_unique<CastRemotingSender>(
+          std::make_unique<mirroring::CastRemotingSender>(
               transport, config, kSendEventsInterval,
               base::BindRepeating(
                   &CastTransportHostFilter::OnCastRemotingSenderEvents,

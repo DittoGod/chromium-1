@@ -17,6 +17,10 @@
 #include "net/base/net_errors.h"
 #include "url/gurl.h"
 
+#if defined(OS_ANDROID)
+#include "chrome/renderer/net/available_offline_content_helper.h"
+#endif
+
 namespace error_page {
 struct ErrorPageParams;
 }
@@ -111,6 +115,10 @@ class NetErrorHelperCore {
     // Inform that download button is being shown in the error page.
     virtual void SetIsShowingDownloadButton(bool show) = 0;
 
+    // Signals that offline content is available.
+    virtual void OfflineContentAvailable(
+        const std::string& offline_content_json) = 0;
+
    protected:
     virtual ~Delegate() {}
   };
@@ -132,8 +140,7 @@ class NetErrorHelperCore {
   NetErrorHelperCore(Delegate* delegate,
                      bool auto_reload_enabled,
                      bool auto_reload_visible_only,
-                     bool is_visible,
-                     bool online);
+                     bool is_visible);
   ~NetErrorHelperCore();
 
   // Sets values in |pending_error_page_info_|. If |error_html| is not null, it
@@ -193,7 +200,7 @@ class NetErrorHelperCore {
 
   bool ShouldSuppressErrorPage(FrameType frame_type, const GURL& url);
 
-  void set_timer_for_testing(std::unique_ptr<base::Timer> timer) {
+  void set_timer_for_testing(std::unique_ptr<base::OneShotTimer> timer) {
     auto_reload_timer_ = std::move(timer);
   }
 
@@ -258,7 +265,7 @@ class NetErrorHelperCore {
   const bool auto_reload_visible_only_;
 
   // Timer used to wait for auto-reload attempts.
-  std::unique_ptr<base::Timer> auto_reload_timer_;
+  std::unique_ptr<base::OneShotTimer> auto_reload_timer_;
 
   // True if the auto-reload timer would be running but is waiting for an
   // offline->online network transition.
@@ -288,6 +295,10 @@ class NetErrorHelperCore {
   // the error page.  It is used to detect when such navigations result
   // in errors.
   Button navigation_from_button_;
+
+#if defined(OS_ANDROID)
+  AvailableOfflineContentHelper available_content_helper_;
+#endif
 };
 
 #endif  // CHROME_RENDERER_NET_NET_ERROR_HELPER_CORE_H_

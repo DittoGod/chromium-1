@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -57,48 +58,6 @@
           "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "Caret",
-      "reason": "caret"
-    },
-    {
-      "object": "LayoutInline SPAN id='test'",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'Lorem ipsum'",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox ' '",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'dolor\u00A0'",
-      "reason": "full"
     }
   ]
 }

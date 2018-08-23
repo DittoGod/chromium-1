@@ -4,8 +4,8 @@
 
 module network.mojom;
 
-import "mutable_network_traffic_annotation_tag.mojom";
-import "mojo/common/read_only_buffer.mojom";
+import "services/network/public/mojom/mutable_network_traffic_annotation_tag.mojom";
+import "mojo/public/mojom/base/read_only_buffer.mojom";
 import "net/interfaces/address_family.mojom";
 import "net/interfaces/ip_address.mojom";
 import "net/interfaces/ip_endpoint.mojom";
@@ -87,6 +87,16 @@ interface UDPSocket {
   // addresses. Returns a net error code. Should only be called after Bind().
   SetBroadcast(bool broadcast) => (int32 result);
 
+  // Sets the OS send buffer size (in bytes) for the socket. Overwrites any
+  // previously set value. Returns a net error code.
+  // See |UDPSocketOptions::send_buffer_size| for more information.
+  SetSendBufferSize(int32 send_buffer_size) => (int32 result);
+
+  // Sets the OS receive buffer size (in bytes) for the socket. Overwrites any
+  // previously set value. Returns a net error code.
+  // See |UDPSocketOptions::receive_buffer_size| for more information.
+  SetReceiveBufferSize(int32 receive_buffer_size) => (int32 result);
+
   // Joins a multicast group. |group_address| is the group address to join,
   // could be either an IPv4 or IPv6 address. Returns a net error code.
   // See RFC 1112 for details on multicast.
@@ -160,14 +170,14 @@ interface UDPSocket {
   //   requests will be failed quickly (which might happen before the completion
   //   of requests that were sent earlier).
   SendTo(net.interfaces.IPEndPoint dest_addr,
-         mojo.common.mojom.ReadOnlyBuffer data,
+         mojo_base.mojom.ReadOnlyBuffer data,
          MutableNetworkTrafficAnnotationTag traffic_annotation)
       => (int32 result);
 
   // Same as SendTo(), except this method sends data to the destination
   // specified in an earlier Connect(). This method should only be called after
   // a successful Connect().
-  Send(mojo.common.mojom.ReadOnlyBuffer data,
+  Send(mojo_base.mojom.ReadOnlyBuffer data,
        MutableNetworkTrafficAnnotationTag traffic_annotation)
       => (int32 result);
 
@@ -194,5 +204,5 @@ interface UDPSocketReceiver {
   // net::OK, which indicates a zero-byte payload.
   OnReceived(int32 result,
              net.interfaces.IPEndPoint? src_addr,
-             mojo.common.mojom.ReadOnlyBuffer? data);
+             mojo_base.mojom.ReadOnlyBuffer? data);
 };

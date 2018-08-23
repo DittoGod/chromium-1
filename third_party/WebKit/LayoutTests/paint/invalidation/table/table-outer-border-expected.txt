@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -57,32 +58,6 @@
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTable TABLE id='table' class='green'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutTableSection TBODY",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutTableRow TR",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutTableCell TD",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutTableRow TR",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutTableCell TD",
-      "reason": "appeared"
     }
   ]
 }

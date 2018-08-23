@@ -10,6 +10,7 @@
 #include "base/files/file_path.h"
 #include "base/optional.h"
 #include "base/time/time.h"
+#include "components/offline_items_collection/core/fail_state.h"
 #include "components/offline_items_collection/core/offline_item_filter.h"
 #include "components/offline_items_collection/core/offline_item_state.h"
 #include "components/offline_items_collection/core/pending_state.h"
@@ -85,6 +86,9 @@ struct OfflineItem {
 
   bool operator==(const OfflineItem& offline_item) const;
 
+  // Note: please update test_support/offline_item_test_support.cc
+  // when adding members here.
+
   // The id of this OfflineItem.  Used to identify this item across all relevant
   // systems.
   ContentId id;
@@ -108,6 +112,12 @@ struct OfflineItem {
 
   // Whether this item should show up as a suggested item for the user.
   bool is_suggested;
+
+  // Whether this item is going through accelerated download.
+  bool is_accelerated;
+
+  // Whether there are new visuals available.
+  bool refresh_visuals;
 
   // TODO(dtrainor): Build out custom per-item icon support.
 
@@ -150,8 +160,11 @@ struct OfflineItem {
   // The current state of the OfflineItem.
   OfflineItemState state;
 
+  // Reason OfflineItem failed to download.
+  FailState fail_state;
+
   // Reason OfflineItem is pending.
-  PendingState pendingState;
+  PendingState pending_state;
 
   // Whether or not the offlining of this content can be resumed if it was
   // paused or interrupted.
@@ -173,7 +186,14 @@ struct OfflineItem {
   // represents an unknown time remaining.  This field is not used if |state| is
   // COMPLETE.
   int64_t time_remaining_ms;
+
+  // Whether the download might be dangerous and will require additional
+  // validation from user.
+  bool is_dangerous;
 };
+
+// Implemented for test-only. See test_support/offline_item_test_support.cc.
+std::ostream& operator<<(std::ostream& os, const OfflineItem& item);
 
 // This struct holds any potentially expensive visuals for an OfflineItem.  If
 // the front end requires the visuals it will ask for them through the
@@ -194,6 +214,24 @@ struct OfflineItemVisuals {
   // TODO(dtrainor): Suggest icon size based on the icon size supported by the
   // current OS.
   gfx::Image icon;
+};
+
+// This struct holds additional information related to sharing a particular
+// OfflineItem.  This information doesn't necessarily exist within OfflineItem
+// because it may be expensive/unnecessary to compute until the user attempts to
+// share the item.
+struct OfflineItemShareInfo {
+  OfflineItemShareInfo();
+  OfflineItemShareInfo(const OfflineItemShareInfo& other);
+
+  ~OfflineItemShareInfo();
+
+  // The local URI where the file can be accessed on disk.  This may be
+  // different from |OfflineItem::file_path| depending on whether or not the
+  // file can be accessed directly.
+  // If this path is invalid the request data from OfflineItem will be used
+  // to share the information instead (e.g. |OfflineItem::page_url|).
+  base::FilePath uri;
 };
 
 }  // namespace offline_items_collection

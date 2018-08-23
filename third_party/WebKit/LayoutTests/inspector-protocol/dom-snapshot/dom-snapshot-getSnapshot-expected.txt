@@ -585,7 +585,8 @@ Tests DOMSnapshot.getSnapshot method.
       "nodeType": 3,
       "nodeName": "#text",
       "nodeValue": "\n    ",
-      "backendNodeId": "<number>"
+      "backendNodeId": "<number>",
+      "shadowRootType": "open"
     },
     {
       "nodeType": 1,
@@ -594,19 +595,22 @@ Tests DOMSnapshot.getSnapshot method.
       "backendNodeId": "<number>",
       "childNodeIndexes": [
         53
-      ]
+      ],
+      "shadowRootType": "open"
     },
     {
       "nodeType": 3,
       "nodeName": "#text",
       "nodeValue": "\n      :host {\n        color: red;\n      }\n    ",
-      "backendNodeId": "<number>"
+      "backendNodeId": "<number>",
+      "shadowRootType": "open"
     },
     {
       "nodeType": 3,
       "nodeName": "#text",
       "nodeValue": "\n    ",
-      "backendNodeId": "<number>"
+      "backendNodeId": "<number>",
+      "shadowRootType": "open"
     },
     {
       "nodeType": 1,
@@ -622,7 +626,8 @@ Tests DOMSnapshot.getSnapshot method.
           "value": "font-family: ahem;"
         }
       ],
-      "layoutNodeIndex": 28
+      "layoutNodeIndex": 28,
+      "shadowRootType": "open"
     },
     {
       "nodeType": 1,
@@ -632,20 +637,23 @@ Tests DOMSnapshot.getSnapshot method.
       "childNodeIndexes": [
         57
       ],
-      "layoutNodeIndex": 29
+      "layoutNodeIndex": 29,
+      "shadowRootType": "open"
     },
     {
       "nodeType": 3,
       "nodeName": "#text",
       "nodeValue": "Hi!",
       "backendNodeId": "<number>",
-      "layoutNodeIndex": 30
+      "layoutNodeIndex": 30,
+      "shadowRootType": "open"
     },
     {
       "nodeType": 3,
       "nodeName": "#text",
       "nodeValue": "\n  ",
-      "backendNodeId": "<number>"
+      "backendNodeId": "<number>",
+      "shadowRootType": "open"
     },
     {
       "nodeType": 3,
@@ -740,9 +748,10 @@ Tests DOMSnapshot.getSnapshot method.
       "boundingBox": {
         "x": 0,
         "y": 0,
-        "width": 785,
+        "width": 800,
         "height": 600
-      }
+      },
+      "isStackingContext": true
     },
     {
       "domNodeIndex": 1,
@@ -752,7 +761,8 @@ Tests DOMSnapshot.getSnapshot method.
         "width": 785,
         "height": 1135
       },
-      "styleIndex": 0
+      "styleIndex": 0,
+      "isStackingContext": true
     },
     {
       "domNodeIndex": 9,
@@ -1287,7 +1297,8 @@ Tests DOMSnapshot.getSnapshot method.
         "width": 32,
         "height": 200
       },
-      "styleIndex": 11
+      "styleIndex": 11,
+      "isStackingContext": true
     },
     {
       "domNodeIndex": 33,
@@ -1320,7 +1331,8 @@ Tests DOMSnapshot.getSnapshot method.
           "numCharacters": 5
         }
       ],
-      "styleIndex": 12
+      "styleIndex": 12,
+      "isStackingContext": true
     },
     {
       "domNodeIndex": 35,
@@ -1339,7 +1351,8 @@ Tests DOMSnapshot.getSnapshot method.
         "y": 0,
         "width": 400,
         "height": 200
-      }
+      },
+      "isStackingContext": true
     },
     {
       "domNodeIndex": 37,
@@ -1349,7 +1362,8 @@ Tests DOMSnapshot.getSnapshot method.
         "width": 400,
         "height": 200
       },
-      "styleIndex": 14
+      "styleIndex": 14,
+      "isStackingContext": true
     },
     {
       "domNodeIndex": 44,

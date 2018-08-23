@@ -163,7 +163,7 @@ TranslateLanguageList::TranslateLanguageList()
   if (update_is_disabled)
     return;
 
-  language_list_fetcher_.reset(new TranslateURLFetcher(kFetcherId));
+  language_list_fetcher_.reset(new TranslateURLFetcher);
   language_list_fetcher_->set_max_retry_on_5xx(kMaxRetryOn5xx);
 }
 
@@ -227,9 +227,8 @@ void TranslateLanguageList::RequestLanguageList() {
     NotifyEvent(__LINE__, message);
 
     bool result = language_list_fetcher_->Request(
-        url,
-        base::Bind(&TranslateLanguageList::OnLanguageListFetchComplete,
-                   base::Unretained(this)));
+        url, base::BindOnce(&TranslateLanguageList::OnLanguageListFetchComplete,
+                            base::Unretained(this)));
     if (!result)
       NotifyEvent(__LINE__, "Request is omitted due to retry limit");
   }
@@ -248,13 +247,20 @@ TranslateLanguageList::RegisterEventCallback(const EventCallback& callback) {
   return callback_list_.Add(callback);
 }
 
+bool TranslateLanguageList::HasOngoingLanguageListLoadingForTesting() {
+  return language_list_fetcher_->state() == TranslateURLFetcher::REQUESTING;
+}
+
+GURL TranslateLanguageList::LanguageFetchURLForTesting() {
+  return AddApiKeyToUrl(AddHostLocaleToUrl(TranslateLanguageUrl()));
+}
+
 // static
 void TranslateLanguageList::DisableUpdate() {
   update_is_disabled = true;
 }
 
 void TranslateLanguageList::OnLanguageListFetchComplete(
-    int id,
     bool success,
     const std::string& data) {
   if (!success) {
@@ -269,8 +275,6 @@ void TranslateLanguageList::OnLanguageListFetchComplete(
   }
 
   NotifyEvent(__LINE__, "Language list is updated");
-
-  DCHECK_EQ(kFetcherId, id);
 
   bool parsed_correctly = SetSupportedLanguages(data);
   language_list_fetcher_.reset();

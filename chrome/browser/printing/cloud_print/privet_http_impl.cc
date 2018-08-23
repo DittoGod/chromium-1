@@ -14,6 +14,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -24,7 +25,7 @@
 #include "chrome/common/cloud_print/cloud_print_constants.h"
 #include "net/base/url_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
@@ -123,6 +124,21 @@ void PrivetInfoOperationImpl::OnParsedJson(int response_code,
   callback_.Run(&value);
 }
 
+// static
+bool PrivetRegisterOperationImpl::run_tasks_immediately_for_testing_ = false;
+
+PrivetRegisterOperationImpl::RunTasksImmediatelyForTesting::
+    RunTasksImmediatelyForTesting() {
+  DCHECK(!run_tasks_immediately_for_testing_);
+  run_tasks_immediately_for_testing_ = true;
+}
+
+PrivetRegisterOperationImpl::RunTasksImmediatelyForTesting::
+    ~RunTasksImmediatelyForTesting() {
+  DCHECK(run_tasks_immediately_for_testing_);
+  run_tasks_immediately_for_testing_ = false;
+}
+
 PrivetRegisterOperationImpl::PrivetRegisterOperationImpl(
     PrivetHTTPClient* privet_client,
     const std::string& user,
@@ -145,11 +161,14 @@ void PrivetRegisterOperationImpl::Cancel() {
   if (!ongoing_)
     return;
 
+  int delay_seconds =
+      run_tasks_immediately_for_testing_ ? 0 : kPrivetCancelationTimeoutSeconds;
+
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&PrivetRegisterOperationImpl::Cancelation::Cleanup,
                      base::Owned(new Cancelation(privet_client_, user_))),
-      base::TimeDelta::FromSeconds(kPrivetCancelationTimeoutSeconds));
+      base::TimeDelta::FromSeconds(delay_seconds));
   ongoing_ = false;
 }
 
@@ -226,12 +245,12 @@ void PrivetRegisterOperationImpl::StartResponse(
 
 void PrivetRegisterOperationImpl::GetClaimTokenResponse(
     const base::DictionaryValue& value) {
-  std::string claimUrl;
-  std::string claimToken;
-  bool got_url = value.GetString(kPrivetKeyClaimURL, &claimUrl);
-  bool got_token = value.GetString(kPrivetKeyClaimToken, &claimToken);
+  std::string claim_url;
+  std::string claim_token;
+  bool got_url = value.GetString(kPrivetKeyClaimURL, &claim_url);
+  bool got_token = value.GetString(kPrivetKeyClaimToken, &claim_token);
   if (got_url || got_token) {
-    delegate_->OnPrivetRegisterClaimToken(this, claimToken, GURL(claimUrl));
+    delegate_->OnPrivetRegisterClaimToken(this, claim_token, GURL(claim_url));
   } else {
     delegate_->OnPrivetRegisterError(this, current_action_,
                                      FAILURE_MALFORMED_RESPONSE, -1, nullptr);
@@ -358,6 +377,21 @@ void PrivetJSONOperationImpl::OnNeedPrivetToken(
 }
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+// static
+bool PrivetLocalPrintOperationImpl::run_tasks_immediately_for_testing_ = false;
+
+PrivetLocalPrintOperationImpl::RunTasksImmediatelyForTesting::
+    RunTasksImmediatelyForTesting() {
+  DCHECK(!run_tasks_immediately_for_testing_);
+  run_tasks_immediately_for_testing_ = true;
+}
+
+PrivetLocalPrintOperationImpl::RunTasksImmediatelyForTesting::
+    ~RunTasksImmediatelyForTesting() {
+  DCHECK(run_tasks_immediately_for_testing_);
+  run_tasks_immediately_for_testing_ = false;
+}
+
 PrivetLocalPrintOperationImpl::PrivetLocalPrintOperationImpl(
     PrivetHTTPClient* privet_client,
     PrivetLocalPrintOperation::Delegate* delegate)
@@ -480,16 +514,10 @@ void PrivetLocalPrintOperationImpl::DoSubmitdoc() {
   url_fetcher_ =
       privet_client_->CreateURLFetcher(url, net::URLFetcher::POST, this);
 
-  if (use_pdf_) {
-    // TODO(noamsml): Move to file-based upload data?
-    std::string data_str(reinterpret_cast<const char*>(data_->front()),
-                         data_->size());
-    url_fetcher_->SetUploadData(kPrivetContentTypePDF, data_str);
-  } else {
-    url_fetcher_->SetUploadFilePath(kPrivetContentTypePWGRaster,
-                                    pwg_file_path_);
-  }
-
+  std::string data_str(reinterpret_cast<const char*>(data_->front()),
+                       data_->size());
+  url_fetcher_->SetUploadData(
+      use_pdf_ ? kPrivetContentTypePDF : kPrivetContentTypePWGRaster, data_str);
   url_fetcher_->Start();
 }
 
@@ -506,10 +534,13 @@ void PrivetLocalPrintOperationImpl::StartConvertToPWG() {
   if (!pwg_raster_converter_)
     pwg_raster_converter_ = PwgRasterConverter::CreateDefault();
 
+  printing::PwgRasterSettings bitmap_settings =
+      PwgRasterConverter::GetBitmapSettings(capabilities_, ticket_);
   pwg_raster_converter_->Start(
       data_.get(),
-      PwgRasterConverter::GetConversionSettings(capabilities_, page_size_),
-      PwgRasterConverter::GetBitmapSettings(capabilities_, ticket_),
+      PwgRasterConverter::GetConversionSettings(capabilities_, page_size_,
+                                                bitmap_settings.use_color),
+      bitmap_settings,
       base::BindOnce(&PrivetLocalPrintOperationImpl::OnPWGRasterConverted,
                      weak_factory_.GetWeakPtr()));
 }
@@ -533,7 +564,10 @@ void PrivetLocalPrintOperationImpl::OnSubmitdocResponse(
       double random_scaling_factor =
           1 + base::RandDouble() * kPrivetMaximumTimeRandomAddition;
 
-      timeout = std::max(static_cast<int>(timeout * random_scaling_factor),
+      timeout =
+          run_tasks_immediately_for_testing_
+              ? 0
+              : std::max(static_cast<int>(timeout * random_scaling_factor),
                          kPrivetMinimumTimeout);
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,
@@ -570,15 +604,15 @@ void PrivetLocalPrintOperationImpl::OnCreatejobResponse(
 }
 
 void PrivetLocalPrintOperationImpl::OnPWGRasterConverted(
-    bool success,
-    const base::FilePath& pwg_file_path) {
-  if (!success) {
+    base::ReadOnlySharedMemoryRegion pwg_region) {
+  auto data =
+      base::RefCountedSharedMemoryMapping::CreateFromWholeRegion(pwg_region);
+  if (!data) {
     delegate_->OnPrivetPrintingError(this, -1);
     return;
   }
 
-  DCHECK(!pwg_file_path.empty());
-  pwg_file_path_ = pwg_file_path;
+  data_ = data;
   StartPrinting();
 }
 
@@ -605,7 +639,7 @@ void PrivetLocalPrintOperationImpl::OnNeedPrivetToken(
 }
 
 void PrivetLocalPrintOperationImpl::SetData(
-    const scoped_refptr<base::RefCountedBytes>& data) {
+    const scoped_refptr<base::RefCountedMemory>& data) {
   DCHECK(!started_);
   data_ = data;
 }

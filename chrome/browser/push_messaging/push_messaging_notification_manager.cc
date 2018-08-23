@@ -13,8 +13,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/budget_service/budget_manager.h"
-#include "chrome/browser/budget_service/budget_manager_factory.h"
 #include "chrome/browser/engagement/site_engagement_service.h"
 #include "chrome/browser/notifications/platform_notification_service_impl.h"
 #include "chrome/browser/profiles/profile.h"
@@ -34,8 +32,7 @@
 #include "content/public/common/push_messaging_status.mojom.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
-#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
-#include "third_party/WebKit/public/platform/modules/budget_service/budget_service.mojom.h"
+#include "third_party/blink/public/mojom/page/page_visibility_state.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -59,9 +56,7 @@ using content::WebContents;
 
 namespace {
 void RecordUserVisibleStatus(content::mojom::PushUserVisibleStatus status) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "PushMessaging.UserVisibleStatus", status,
-      static_cast<int>(content::mojom::PushUserVisibleStatus::LAST) + 1);
+  UMA_HISTOGRAM_ENUMERATION("PushMessaging.UserVisibleStatus", status);
 }
 
 content::StoragePartition* GetStoragePartition(Profile* profile,
@@ -95,7 +90,7 @@ NotificationDatabaseData CreateDatabaseData(
 
 PushMessagingNotificationManager::PushMessagingNotificationManager(
     Profile* profile)
-    : profile_(profile), weak_factory_(this) {}
+    : profile_(profile), budget_database_(profile), weak_factory_(this) {}
 
 PushMessagingNotificationManager::~PushMessagingNotificationManager() {}
 
@@ -177,19 +172,9 @@ void PushMessagingNotificationManager::DidGetNotificationsFromDatabase(
           kPushMessagingForcedNotificationTag)
         continue;
 
-      PlatformNotificationServiceImpl* platform_notification_service =
-          PlatformNotificationServiceImpl::GetInstance();
-
-      // First close the notification for the user's point of view, and then
-      // manually tell the service that the notification has been closed in
-      // order to avoid duplicating the thread-jump logic.
-      platform_notification_service->ClosePersistentNotification(
-          profile_, notification_database_data.notification_id);
-      platform_notification_service->OnPersistentNotificationClose(
-          profile_, notification_database_data.notification_id,
-          notification_database_data.origin, false /* by_user */,
-          base::BindOnce(&base::DoNothing));
-
+      PlatformNotificationServiceImpl::GetInstance()
+          ->ClosePersistentNotification(
+              profile_, notification_database_data.notification_id);
       break;
     }
   }
@@ -197,13 +182,12 @@ void PushMessagingNotificationManager::DidGetNotificationsFromDatabase(
   if (notification_needed && !notification_shown) {
     // If the worker needed to show a notification and didn't, see if a silent
     // push was allowed.
-    BudgetManager* manager = BudgetManagerFactory::GetForProfile(profile_);
-    manager->Consume(
+    budget_database_.SpendBudget(
         url::Origin::Create(origin),
-        blink::mojom::BudgetOperationType::SILENT_PUSH,
-        base::Bind(&PushMessagingNotificationManager::ProcessSilentPush,
-                   weak_factory_.GetWeakPtr(), origin,
-                   service_worker_registration_id, message_handled_closure));
+        base::BindOnce(&PushMessagingNotificationManager::ProcessSilentPush,
+                       weak_factory_.GetWeakPtr(), origin,
+                       service_worker_registration_id,
+                       message_handled_closure));
     return;
   }
 
@@ -282,10 +266,14 @@ void PushMessagingNotificationManager::ProcessSilentPush(
       CreateDatabaseData(origin, service_worker_registration_id);
   scoped_refptr<PlatformNotificationContext> notification_context =
       GetStoragePartition(profile_, origin)->GetPlatformNotificationContext();
+  int64_t next_persistent_notification_id =
+      PlatformNotificationServiceImpl::GetInstance()
+          ->ReadNextPersistentNotificationId(profile_);
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::BindOnce(&PlatformNotificationContext::WriteNotificationData,
-                     notification_context, origin, database_data,
+                     notification_context, next_persistent_notification_id,
+                     service_worker_registration_id, origin, database_data,
                      base::Bind(&PushMessagingNotificationManager::
                                     DidWriteNotificationDataIOProxy,
                                 weak_factory_.GetWeakPtr(), origin,

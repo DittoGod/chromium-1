@@ -16,6 +16,7 @@
 class GURL;
 
 namespace blink {
+class WebElement;
 class WebFrame;
 class WebLocalFrame;
 struct WebPluginParams;
@@ -25,6 +26,7 @@ class WebURL;
 namespace content {
 class BrowserPluginDelegate;
 class RenderFrame;
+struct WebPluginInfo;
 }
 
 namespace extensions {
@@ -32,6 +34,10 @@ class Dispatcher;
 class ExtensionsGuestViewContainerDispatcher;
 class RendererPermissionsPolicyDelegate;
 class ResourceRequestPolicy;
+}
+
+namespace url {
+class Origin;
 }
 
 class ChromeExtensionsRendererClient
@@ -58,10 +64,12 @@ class ChromeExtensionsRendererClient
   bool OverrideCreatePlugin(content::RenderFrame* render_frame,
                             const blink::WebPluginParams& params);
   bool AllowPopup();
-  bool WillSendRequest(blink::WebLocalFrame* frame,
+  void WillSendRequest(blink::WebLocalFrame* frame,
                        ui::PageTransition transition_type,
                        const blink::WebURL& url,
-                       GURL* new_url);
+                       const url::Origin* initiator_origin,
+                       GURL* new_url,
+                       bool* attach_same_site_cookies);
   void SetExtensionDispatcherForTest(
       std::unique_ptr<extensions::Dispatcher> extension_dispatcher);
   extensions::Dispatcher* GetExtensionDispatcherForTest();
@@ -69,12 +77,18 @@ class ChromeExtensionsRendererClient
   static bool ShouldFork(blink::WebLocalFrame* frame,
                          const GURL& url,
                          bool is_initial_navigation,
-                         bool is_server_redirect,
-                         bool* send_referrer);
+                         bool is_server_redirect);
   static content::BrowserPluginDelegate* CreateBrowserPluginDelegate(
       content::RenderFrame* render_frame,
+      const content::WebPluginInfo& info,
       const std::string& mime_type,
       const GURL& original_url);
+  static bool IsPluginHandledByMimeHandlerView(
+      const blink::WebElement& plugin_element,
+      const GURL& resource_url,
+      const std::string& mime_type,
+      const content::WebPluginInfo& plugin_info,
+      int32_t element_instance_id);
   static blink::WebFrame* FindFrame(blink::WebLocalFrame* relative_to_frame,
                                     const std::string& name);
 

@@ -7,22 +7,22 @@
 #include <memory>
 #include <utility>
 
+#include "ash/content/content_gpu_interface_provider.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
 #include "ash/shell_init_params.h"
-#include "ash/shell_port_classic.h"
 #include "ash/test/ash_test_helper.h"
 #include "ash/test_shell_delegate.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power_policy_controller.h"
 #include "chromeos/network/network_handler.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/display/display_switches.h"
-#include "ui/message_center/message_center.h"
 #include "ui/wm/core/wm_state.h"
 
 namespace {
@@ -50,10 +50,12 @@ class ViewEventTestPlatformPartChromeOS : public ViewEventTestPlatformPart {
 ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
     ui::ContextFactory* context_factory,
     ui::ContextFactoryPrivate* context_factory_private) {
-  // Ash Shell can't just live on its own without a browser process, we need to
-  // also create the message center.
-  message_center::MessageCenter::Initialize();
   chromeos::DBusThreadManager::Initialize();
+  // ash::Shell::CreateInstance needs chromeos::PowerPolicyController
+  // initialized. In classic ash, it is initialized in chrome process. In mash,
+  // it is initialized by window manager service.
+  chromeos::PowerPolicyController::Initialize(
+      chromeos::DBusThreadManager::Get()->GetPowerManagerClient());
   bluez::BluezDBusManager::Initialize(
       chromeos::DBusThreadManager::Get()->GetSystemBus(),
       chromeos::DBusThreadManager::Get()->IsUsingFakes());
@@ -62,10 +64,11 @@ ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
 
   env_ = aura::Env::CreateInstance();
   ash::ShellInitParams init_params;
-  init_params.shell_port = std::make_unique<ash::ShellPortClassic>();
   init_params.delegate = std::make_unique<ash::TestShellDelegate>();
   init_params.context_factory = context_factory;
   init_params.context_factory_private = context_factory_private;
+  init_params.gpu_interface_provider =
+      std::make_unique<ash::ContentGpuInterfaceProvider>();
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
       switches::kHostWindowBounds, "0+0-1280x800");
   ash::Shell::CreateInstance(std::move(init_params));
@@ -82,10 +85,8 @@ ViewEventTestPlatformPartChromeOS::~ViewEventTestPlatformPartChromeOS() {
   chromeos::NetworkHandler::Shutdown();
   chromeos::CrasAudioHandler::Shutdown();
   bluez::BluezDBusManager::Shutdown();
+  chromeos::PowerPolicyController::Shutdown();
   chromeos::DBusThreadManager::Shutdown();
-  // Ash Shell can't just live on its own without a browser process, we need to
-  // also shut down the message center.
-  message_center::MessageCenter::Shutdown();
 }
 
 }  // namespace

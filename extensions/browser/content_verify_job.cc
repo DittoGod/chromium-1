@@ -8,11 +8,14 @@
 
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/timer/elapsed_timer.h"
+#include "content/public/browser/browser_thread.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
 #include "extensions/browser/content_hash_reader.h"
+#include "extensions/browser/content_verifier.h"
+#include "extensions/browser/content_verifier/content_hash.h"
 
 namespace extensions {
 
@@ -40,14 +43,20 @@ class ScopedElapsedTimer {
 
 }  // namespace
 
-ContentVerifyJob::ContentVerifyJob(ContentHashReader* hash_reader,
+ContentVerifyJob::ContentVerifyJob(const ExtensionId& extension_id,
+                                   const base::Version& extension_version,
+                                   const base::FilePath& extension_root,
+                                   const base::FilePath& relative_path,
                                    FailureCallback failure_callback)
     : done_reading_(false),
       hashes_ready_(false),
       total_bytes_read_(0),
       current_block_(0),
       current_hash_byte_count_(0),
-      hash_reader_(hash_reader),
+      extension_id_(extension_id),
+      extension_version_(extension_version),
+      extension_root_(extension_root),
+      relative_path_(relative_path),
       failure_callback_(std::move(failure_callback)),
       failed_(false) {}
 
@@ -56,20 +65,56 @@ ContentVerifyJob::~ContentVerifyJob() {
                        time_spent_.InMicroseconds());
 }
 
-void ContentVerifyJob::Start() {
+void ContentVerifyJob::Start(ContentVerifier* verifier) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+  base::AutoLock auto_lock(lock_);
+  verifier->GetContentHash(
+      extension_id_, extension_root_, extension_version_,
+      true /* force_missing_computed_hashes_creation */,
+      base::BindOnce(&ContentVerifyJob::DidGetContentHashOnIO, this));
+}
+
+void ContentVerifyJob::DidGetContentHashOnIO(
+    const scoped_refptr<const ContentHash>& content_hash) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   base::AutoLock auto_lock(lock_);
   if (g_content_verify_job_test_observer)
-    g_content_verify_job_test_observer->JobStarted(
-        hash_reader_->extension_id(), hash_reader_->relative_path());
+    g_content_verify_job_test_observer->JobStarted(extension_id_,
+                                                   relative_path_);
+  // Build |hash_reader_|.
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-      base::Bind(&ContentHashReader::Init, hash_reader_),
-      base::Bind(&ContentVerifyJob::OnHashesReady, this));
+      base::BindOnce(&ContentHashReader::Create, relative_path_, content_hash),
+      base::BindOnce(&ContentVerifyJob::OnHashesReady, this));
 }
 
 void ContentVerifyJob::BytesRead(int count, const char* data) {
-  ScopedElapsedTimer timer(&time_spent_);
   base::AutoLock auto_lock(lock_);
+  DCHECK(!done_reading_);
+  BytesReadImpl(count, data);
+}
+
+void ContentVerifyJob::DoneReading() {
+  base::AutoLock auto_lock(lock_);
+  ScopedElapsedTimer timer(&time_spent_);
+  if (failed_)
+    return;
+  if (g_ignore_verification_for_tests)
+    return;
+  DCHECK(!done_reading_);
+  done_reading_ = true;
+  if (hashes_ready_) {
+    if (!FinishBlock()) {
+      DispatchFailureCallback(HASH_MISMATCH);
+    } else if (g_content_verify_job_test_observer) {
+      g_content_verify_job_test_observer->JobFinished(extension_id_,
+                                                      relative_path_, NONE);
+    }
+  }
+}
+
+void ContentVerifyJob::BytesReadImpl(int count, const char* data) {
+  ScopedElapsedTimer timer(&time_spent_);
   if (failed_)
     return;
   if (g_ignore_verification_for_tests)
@@ -109,24 +154,6 @@ void ContentVerifyJob::BytesRead(int count, const char* data) {
   }
 }
 
-void ContentVerifyJob::DoneReading() {
-  ScopedElapsedTimer timer(&time_spent_);
-  base::AutoLock auto_lock(lock_);
-  if (failed_)
-    return;
-  if (g_ignore_verification_for_tests)
-    return;
-  done_reading_ = true;
-  if (hashes_ready_) {
-    if (!FinishBlock()) {
-      DispatchFailureCallback(HASH_MISMATCH);
-    } else if (g_content_verify_job_test_observer) {
-      g_content_verify_job_test_observer->JobFinished(
-          hash_reader_->extension_id(), hash_reader_->relative_path(), NONE);
-    }
-  }
-}
-
 bool ContentVerifyJob::FinishBlock() {
   DCHECK(!failed_);
   if (current_hash_byte_count_ == 0) {
@@ -142,7 +169,7 @@ bool ContentVerifyJob::FinishBlock() {
     current_hash_ = crypto::SecureHash::Create(crypto::SecureHash::SHA256);
   }
   std::string final(crypto::kSHA256Length, 0);
-  current_hash_->Finish(base::string_as_array(& final), final.size());
+  current_hash_->Finish(base::data(final), final.size());
   current_hash_.reset();
   current_hash_byte_count_ = 0;
 
@@ -157,17 +184,19 @@ bool ContentVerifyJob::FinishBlock() {
   return true;
 }
 
-void ContentVerifyJob::OnHashesReady(bool success) {
+void ContentVerifyJob::OnHashesReady(
+    std::unique_ptr<const ContentHashReader> hash_reader) {
+  base::AutoLock auto_lock(lock_);
+  const bool success = hash_reader->succeeded();
+  hash_reader_ = std::move(hash_reader);
+
   if (g_ignore_verification_for_tests)
     return;
   if (g_content_verify_job_test_observer) {
-    g_content_verify_job_test_observer->OnHashesReady(
-        hash_reader_->extension_id(), hash_reader_->relative_path(), success);
+    g_content_verify_job_test_observer->OnHashesReady(extension_id_,
+                                                      relative_path_, success);
   }
   if (!success) {
-    // TODO(lazyboy): Make ContentHashReader::Init return an enum instead of
-    // bool. This should make the following checks on |hash_reader_| easier
-    // to digest and will avoid future bugs from creeping up.
     if (!hash_reader_->has_content_hashes()) {
       DispatchFailureCallback(MISSING_ALL_HASHES);
       return;
@@ -176,8 +205,8 @@ void ContentVerifyJob::OnHashesReady(bool success) {
     if (hash_reader_->file_missing_from_verified_contents()) {
       // Ignore verification of non-existent resources.
       if (g_content_verify_job_test_observer) {
-        g_content_verify_job_test_observer->JobFinished(
-            hash_reader_->extension_id(), hash_reader_->relative_path(), NONE);
+        g_content_verify_job_test_observer->JobFinished(extension_id_,
+                                                        relative_path_, NONE);
       }
       return;
     }
@@ -191,7 +220,7 @@ void ContentVerifyJob::OnHashesReady(bool success) {
   if (!queue_.empty()) {
     std::string tmp;
     queue_.swap(tmp);
-    BytesRead(tmp.size(), base::string_as_array(&tmp));
+    BytesReadImpl(tmp.size(), base::data(tmp));
     if (failed_)
       return;
   }
@@ -200,8 +229,8 @@ void ContentVerifyJob::OnHashesReady(bool success) {
     if (!FinishBlock()) {
       DispatchFailureCallback(HASH_MISMATCH);
     } else if (g_content_verify_job_test_observer) {
-      g_content_verify_job_test_observer->JobFinished(
-          hash_reader_->extension_id(), hash_reader_->relative_path(), NONE);
+      g_content_verify_job_test_observer->JobFinished(extension_id_,
+                                                      relative_path_, NONE);
     }
   }
 }
@@ -224,14 +253,13 @@ void ContentVerifyJob::DispatchFailureCallback(FailureReason reason) {
   DCHECK(!failed_);
   failed_ = true;
   if (!failure_callback_.is_null()) {
-    VLOG(1) << "job failed for " << hash_reader_->extension_id() << " "
-            << hash_reader_->relative_path().MaybeAsASCII()
-            << " reason:" << reason;
+    VLOG(1) << "job failed for " << extension_id_ << " "
+            << relative_path_.MaybeAsASCII() << " reason:" << reason;
     std::move(failure_callback_).Run(reason);
   }
   if (g_content_verify_job_test_observer) {
-    g_content_verify_job_test_observer->JobFinished(
-        hash_reader_->extension_id(), hash_reader_->relative_path(), reason);
+    g_content_verify_job_test_observer->JobFinished(extension_id_,
+                                                    relative_path_, reason);
   }
 }
 

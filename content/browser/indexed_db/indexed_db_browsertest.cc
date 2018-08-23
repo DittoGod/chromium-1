@@ -420,7 +420,7 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, LevelDBLogFileTest) {
   base::FilePath log_file_path =
       GetContext()->data_path().Append(leveldb_dir).Append(log_file);
   {
-    base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_verification;
+    base::ScopedAllowBlockingForTesting allow_blocking;
     int64_t size;
     EXPECT_TRUE(base::GetFileSize(log_file_path, &size));
     EXPECT_GT(size, 0);
@@ -828,7 +828,7 @@ IN_PROC_BROWSER_TEST_F(
   base::string16 expected_title16(ASCIIToUTF16("setVersion(3) complete"));
   TitleWatcher title_watcher(new_shell->web_contents(), expected_title16);
 
-  shell()->web_contents()->GetMainFrame()->GetProcess()->Shutdown(0, true);
+  shell()->web_contents()->GetMainFrame()->GetProcess()->Shutdown(0);
   shell()->Close();
 
   EXPECT_EQ(expected_title16, title_watcher.WaitAndGetTitle());

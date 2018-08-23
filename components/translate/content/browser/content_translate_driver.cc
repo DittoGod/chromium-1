@@ -46,11 +46,6 @@ ContentTranslateDriver::ContentTranslateDriver(
 
 ContentTranslateDriver::~ContentTranslateDriver() {}
 
-void ContentTranslateDriver::BindRequest(
-    mojom::ContentTranslateDriverRequest request) {
-  bindings_.AddBinding(this, std::move(request));
-}
-
 void ContentTranslateDriver::AddObserver(Observer* observer) {
   observer_list_.AddObserver(observer);
 }
@@ -72,8 +67,9 @@ void ContentTranslateDriver::InitiateTranslation(const std::string& page_lang,
     int backoff = attempt * kMaxTranslateLoadCheckAttempts;
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&ContentTranslateDriver::InitiateTranslation,
-                   weak_pointer_factory_.GetWeakPtr(), page_lang, attempt + 1),
+        base::BindOnce(&ContentTranslateDriver::InitiateTranslation,
+                       weak_pointer_factory_.GetWeakPtr(), page_lang,
+                       attempt + 1),
         base::TimeDelta::FromMilliseconds(backoff));
     return;
   }
@@ -113,9 +109,10 @@ void ContentTranslateDriver::TranslatePage(int page_seq_no,
   if (it == pages_.end())
     return;  // This page has navigated away.
 
-  it->second->Translate(translate_script, source_lang, target_lang,
-                        base::Bind(&ContentTranslateDriver::OnPageTranslated,
-                                   base::Unretained(this)));
+  it->second->Translate(
+      translate_script, source_lang, target_lang,
+      base::BindOnce(&ContentTranslateDriver::OnPageTranslated,
+                     base::Unretained(this)));
 }
 
 void ContentTranslateDriver::RevertTranslation(int page_seq_no) {
@@ -206,10 +203,10 @@ void ContentTranslateDriver::NavigationEntryCommitted(
   // an infobar, it must be done after that.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&ContentTranslateDriver::InitiateTranslation,
-                 weak_pointer_factory_.GetWeakPtr(),
-                 translate_manager_->GetLanguageState().original_language(),
-                 0));
+      base::BindOnce(&ContentTranslateDriver::InitiateTranslation,
+                     weak_pointer_factory_.GetWeakPtr(),
+                     translate_manager_->GetLanguageState().original_language(),
+                     0));
 }
 
 void ContentTranslateDriver::DidFinishNavigation(
@@ -230,15 +227,14 @@ void ContentTranslateDriver::OnPageAway(int page_seq_no) {
   pages_.erase(page_seq_no);
 }
 
-// mojom::ContentTranslateDriver implementation.
-void ContentTranslateDriver::RegisterPage(
+void ContentTranslateDriver::OnPageReady(
     mojom::PagePtr page,
     const LanguageDetectionDetails& details,
     bool page_needs_translation) {
   pages_[++next_page_seq_no_] = std::move(page);
   pages_[next_page_seq_no_].set_connection_error_handler(
-      base::Bind(&ContentTranslateDriver::OnPageAway, base::Unretained(this),
-                 next_page_seq_no_));
+      base::BindOnce(&ContentTranslateDriver::OnPageAway,
+                     base::Unretained(this), next_page_seq_no_));
   translate_manager_->set_current_seq_no(next_page_seq_no_);
 
   translate_manager_->GetLanguageState().LanguageDetermined(

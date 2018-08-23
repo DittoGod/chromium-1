@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/url_util.h"
@@ -82,17 +82,18 @@ class UsageMockQuotaManager : public QuotaManager {
   }
 
   void InvokeCallback() {
-    delayed_callback_.Run(callback_status_, callback_usage_, callback_quota_);
+    std::move(delayed_callback_)
+        .Run(callback_status_, callback_usage_, callback_quota_);
   }
 
-  void GetUsageAndQuotaForWebApps(
-      const GURL& origin,
-      StorageType type,
-      const UsageAndQuotaCallback& callback) override {
+  void GetUsageAndQuotaForWebApps(const GURL& origin,
+                                  StorageType type,
+                                  UsageAndQuotaCallback callback) override {
     if (initialized_)
-      callback.Run(callback_status_, callback_usage_, callback_quota_);
+      std::move(callback).Run(callback_status_, callback_usage_,
+                              callback_quota_);
     else
-      delayed_callback_ = callback;
+      delayed_callback_ = std::move(callback);
   }
 
  protected:
@@ -117,7 +118,8 @@ class StorageMonitorTestBase : public testing::Test {
   const StorageObserver::Event* GetPendingEvent(
       const StorageObserverList& observer_list) {
     return observer_list.notification_timer_.IsRunning()
-                ? &observer_list.pending_event_ : NULL;
+               ? &observer_list.pending_event_
+               : nullptr;
   }
 
   const StorageObserver::Event* GetPendingEvent(
@@ -127,10 +129,8 @@ class StorageMonitorTestBase : public testing::Test {
 
   int GetRequiredUpdatesCount(const StorageObserverList& observer_list) {
     int count = 0;
-    for (StorageObserverList::StorageObserverStateMap::const_iterator it =
-            observer_list.observers_.begin();
-         it != observer_list.observers_.end(); ++it) {
-      if (it->second.requires_update)
+    for (const auto& observer_state_pair : observer_list.observer_state_map_) {
+      if (observer_state_pair.second.requires_update)
         ++count;
     }
 
@@ -143,11 +143,9 @@ class StorageMonitorTestBase : public testing::Test {
 
   void SetLastNotificationTime(StorageObserverList& observer_list,
                                StorageObserver* observer) {
-    ASSERT_TRUE(observer_list.observers_.find(observer) !=
-                observer_list.observers_.end());
-
+    ASSERT_TRUE(base::ContainsKey(observer_list.observer_state_map_, observer));
     StorageObserverList::ObserverState& state =
-        observer_list.observers_[observer];
+        observer_list.observer_state_map_[observer];
     state.last_notification_time = base::TimeTicks::Now() - state.rate;
   }
 
@@ -172,7 +170,7 @@ class StorageTestWithManagerBase : public StorageMonitorTestBase {
 
   void TearDown() override {
     // This ensures the quota manager is destroyed correctly.
-    quota_manager_ = NULL;
+    quota_manager_ = nullptr;
     scoped_task_environment_.RunUntilIdle();
   }
 
@@ -183,7 +181,7 @@ class StorageTestWithManagerBase : public StorageMonitorTestBase {
 
 // Tests for StorageObserverList:
 
-typedef StorageMonitorTestBase StorageObserverListTest;
+using StorageObserverListTest = StorageMonitorTestBase;
 
 // Test dispatching events to one observer.
 TEST_F(StorageObserverListTest, DispatchEventToSingleObserver) {
@@ -203,7 +201,7 @@ TEST_F(StorageObserverListTest, DispatchEventToSingleObserver) {
   observer_list.OnStorageChange(event);
   EXPECT_EQ(1, mock_observer.EventCount());
   EXPECT_EQ(event, mock_observer.LastEvent());
-  EXPECT_EQ(NULL, GetPendingEvent(observer_list));
+  EXPECT_EQ(nullptr, GetPendingEvent(observer_list));
   EXPECT_EQ(0, GetRequiredUpdatesCount(observer_list));
 
   // Verify that the next event is pending.
@@ -222,7 +220,7 @@ TEST_F(StorageObserverListTest, DispatchEventToSingleObserver) {
   observer_list.OnStorageChange(event);
   EXPECT_EQ(2, mock_observer.EventCount());
   EXPECT_EQ(event, mock_observer.LastEvent());
-  EXPECT_EQ(NULL, GetPendingEvent(observer_list));
+  EXPECT_EQ(nullptr, GetPendingEvent(observer_list));
   EXPECT_EQ(0, GetRequiredUpdatesCount(observer_list));
 
   // Remove the observer.
@@ -231,7 +229,7 @@ TEST_F(StorageObserverListTest, DispatchEventToSingleObserver) {
   observer_list.RemoveObserver(&mock_observer);
   observer_list.OnStorageChange(event);
   EXPECT_EQ(2, mock_observer.EventCount());
-  EXPECT_EQ(NULL, GetPendingEvent(observer_list));
+  EXPECT_EQ(nullptr, GetPendingEvent(observer_list));
 }
 
 // Test dispatching events to multiple observers.
@@ -261,7 +259,7 @@ TEST_F(StorageObserverListTest, DispatchEventToMultipleObservers) {
   EXPECT_EQ(1, mock_observer2.EventCount());
   EXPECT_EQ(event, mock_observer1.LastEvent());
   EXPECT_EQ(event, mock_observer2.LastEvent());
-  EXPECT_EQ(NULL, GetPendingEvent(observer_list));
+  EXPECT_EQ(nullptr, GetPendingEvent(observer_list));
   EXPECT_EQ(0, GetRequiredUpdatesCount(observer_list));
 
   // Fake the last notification time so that observer1 will receive the next
@@ -284,7 +282,7 @@ TEST_F(StorageObserverListTest, DispatchEventToMultipleObservers) {
   EXPECT_EQ(2, mock_observer2.EventCount());
   EXPECT_EQ(event, mock_observer1.LastEvent());
   EXPECT_EQ(event, mock_observer2.LastEvent());
-  EXPECT_EQ(NULL, GetPendingEvent(observer_list));
+  EXPECT_EQ(nullptr, GetPendingEvent(observer_list));
   EXPECT_EQ(0, GetRequiredUpdatesCount(observer_list));
 }
 
@@ -308,7 +306,7 @@ TEST_F(StorageObserverListTest, ReplaceEventOrigin) {
 
 // Tests for HostStorageObservers:
 
-typedef StorageTestWithManagerBase HostStorageObserversTest;
+using HostStorageObserversTest = StorageTestWithManagerBase;
 
 // Verify that HostStorageObservers is initialized after the first usage change.
 TEST_F(HostStorageObserversTest, InitializeOnUsageChange) {
@@ -368,7 +366,7 @@ TEST_F(HostStorageObserversTest, InitializeOnObserver) {
   EXPECT_EQ(1, mock_observer2.EventCount());
   EXPECT_EQ(expected_event, mock_observer2.LastEvent());
   EXPECT_TRUE(host_observers.is_initialized());
-  EXPECT_EQ(NULL, GetPendingEvent(host_observers));
+  EXPECT_EQ(nullptr, GetPendingEvent(host_observers));
   EXPECT_EQ(0, GetRequiredUpdatesCount(host_observers));
 
   // Verify that both observers will receive events after a usage change.
@@ -380,7 +378,7 @@ TEST_F(HostStorageObserversTest, InitializeOnObserver) {
   EXPECT_EQ(2, mock_observer2.EventCount());
   EXPECT_EQ(expected_event, mock_observer1.LastEvent());
   EXPECT_EQ(expected_event, mock_observer2.LastEvent());
-  EXPECT_EQ(NULL, GetPendingEvent(host_observers));
+  EXPECT_EQ(nullptr, GetPendingEvent(host_observers));
   EXPECT_EQ(0, GetRequiredUpdatesCount(host_observers));
 
   // Verify that the addition of a third observer only causes an event to be
@@ -432,7 +430,7 @@ TEST_F(HostStorageObserversTest, RecoverFromBadUsageInit) {
   host_observers.NotifyUsageChange(params.filter, 9438);
   EXPECT_EQ(0, mock_observer.EventCount());
   EXPECT_FALSE(host_observers.is_initialized());
-  EXPECT_EQ(NULL, GetPendingEvent(host_observers));
+  EXPECT_EQ(nullptr, GetPendingEvent(host_observers));
   EXPECT_EQ(0, GetRequiredUpdatesCount(host_observers));
 
   // Now ensure that quota manager returns a good status.
@@ -459,7 +457,7 @@ TEST_F(HostStorageObserversTest, AsyncInitialization) {
   host_observers.NotifyUsageChange(params.filter, 7645);
   EXPECT_EQ(0, mock_observer.EventCount());
   EXPECT_FALSE(host_observers.is_initialized());
-  EXPECT_EQ(NULL, GetPendingEvent(host_observers));
+  EXPECT_EQ(nullptr, GetPendingEvent(host_observers));
   EXPECT_EQ(0, GetRequiredUpdatesCount(host_observers));
 
   // Simulate notifying |host_observers| of a usage change before initialization
@@ -470,7 +468,7 @@ TEST_F(HostStorageObserversTest, AsyncInitialization) {
   host_observers.NotifyUsageChange(params.filter, kDelta);
   EXPECT_EQ(0, mock_observer.EventCount());
   EXPECT_FALSE(host_observers.is_initialized());
-  EXPECT_EQ(NULL, GetPendingEvent(host_observers));
+  EXPECT_EQ(nullptr, GetPendingEvent(host_observers));
   EXPECT_EQ(0, GetRequiredUpdatesCount(host_observers));
 
   // Simulate an asynchronous callback from QuotaManager.
@@ -480,13 +478,13 @@ TEST_F(HostStorageObserversTest, AsyncInitialization) {
   EXPECT_EQ(1, mock_observer.EventCount());
   EXPECT_EQ(expected_event, mock_observer.LastEvent());
   EXPECT_TRUE(host_observers.is_initialized());
-  EXPECT_EQ(NULL, GetPendingEvent(host_observers));
+  EXPECT_EQ(nullptr, GetPendingEvent(host_observers));
   EXPECT_EQ(0, GetRequiredUpdatesCount(host_observers));
 }
 
 // Tests for StorageTypeObservers:
 
-typedef StorageTestWithManagerBase StorageTypeObserversTest;
+using StorageTypeObserversTest = StorageTestWithManagerBase;
 
 // Test adding and removing observers.
 TEST_F(StorageTypeObserversTest, AddRemoveObservers) {
@@ -537,7 +535,7 @@ TEST_F(StorageTypeObserversTest, AddRemoveObservers) {
 class StorageMonitorTest : public StorageTestWithManagerBase {
  public:
   StorageMonitorTest()
-      : storage_monitor_(NULL),
+      : storage_monitor_(nullptr),
         params1_(StorageType::kTemporary,
                  GURL(kDefaultOrigin),
                  base::TimeDelta::FromHours(1),
@@ -633,17 +631,15 @@ class StorageMonitorIntegrationTest : public testing::Test {
         false, data_dir_.GetPath(), base::ThreadTaskRunnerHandle::Get().get(),
         storage_policy_.get(), storage::GetQuotaSettingsFunc());
 
-    client_ = new MockStorageClient(quota_manager_->proxy(),
-                                    NULL,
-                                    QuotaClient::kFileSystem,
-                                    0);
+    client_ = new MockStorageClient(quota_manager_->proxy(), nullptr,
+                                    QuotaClient::kFileSystem, 0);
 
     quota_manager_->proxy()->RegisterClient(client_);
   }
 
   void TearDown() override {
     // This ensures the quota manager is destroyed correctly.
-    quota_manager_ = NULL;
+    quota_manager_ = nullptr;
     scoped_task_environment_.RunUntilIdle();
   }
 

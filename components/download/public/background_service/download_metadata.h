@@ -7,13 +7,19 @@
 
 #include "base/files/file_path.h"
 #include "base/optional.h"
+#include "storage/browser/blob/blob_data_handle.h"
 
 namespace download {
 
 // Struct that contains information about successfully completed downloads.
 struct CompletionInfo {
-  // The file path for the download file.
+  // The file path for the download file. In incognito mode, use |blob_handle_|
+  // to retrieve data.
   base::FilePath path;
+
+  // The blob data handle that contains download data.
+  // Will be available after the download is completed in incognito mode.
+  base::Optional<storage::BlobDataHandle> blob_handle;
 
   // Download file size in bytes.
   uint64_t bytes_downloaded;
@@ -28,6 +34,10 @@ struct CompletionInfo {
 struct DownloadMetaData {
   // The GUID of the download.
   std::string guid;
+
+  // Data that has been fetched. Can be used to get the current size of
+  // uncompleted download.
+  uint64_t current_size;
 
   // Info about successfully completed download, or null for in-progress
   // download. Failed download will not be persisted and exposed as meta data.

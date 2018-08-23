@@ -4,7 +4,6 @@
 
 #include "chrome/browser/installable/installable_metrics.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "content/public/browser/web_contents.h"
@@ -265,7 +264,7 @@ WebappInstallSource InstallableMetrics::GetInstallSource(
 }
 
 InstallableMetrics::InstallableMetrics()
-    : recorder_(base::MakeUnique<AccumulatingRecorder>()) {}
+    : recorder_(std::make_unique<AccumulatingRecorder>()) {}
 
 InstallableMetrics::~InstallableMetrics() {}
 
@@ -291,7 +290,7 @@ void InstallableMetrics::RecordAddToHomescreenInstallabilityTimeout() {
 
 void InstallableMetrics::Resolve(bool check_passed) {
   recorder_->Resolve(check_passed);
-  recorder_ = base::MakeUnique<DirectRecorder>(check_passed);
+  recorder_ = std::make_unique<DirectRecorder>(check_passed);
 }
 
 void InstallableMetrics::Start() {
@@ -300,5 +299,5 @@ void InstallableMetrics::Start() {
 
 void InstallableMetrics::Flush(bool waiting_for_service_worker) {
   recorder_->Flush(waiting_for_service_worker);
-  recorder_ = base::MakeUnique<AccumulatingRecorder>();
+  recorder_ = std::make_unique<AccumulatingRecorder>();
 }

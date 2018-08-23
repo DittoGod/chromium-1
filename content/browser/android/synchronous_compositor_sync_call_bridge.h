@@ -14,7 +14,6 @@
 
 namespace content {
 
-class SynchronousCompositorBrowserFilter;
 class SynchronousCompositorHost;
 
 // For the synchronous compositor feature of webview it is necessary
@@ -71,11 +70,8 @@ class SynchronousCompositorSyncCallBridge
  public:
   explicit SynchronousCompositorSyncCallBridge(SynchronousCompositorHost* host);
 
-  // Attach a filter.
-  void BindFilterOnUIThread();
-
   // Indicatation that the remote is now ready to process requests. Called
-  // on either thread.
+  // on either UI or IO thread.
   void RemoteReady();
 
   // Remote channel is closed signal all waiters.
@@ -83,9 +79,10 @@ class SynchronousCompositorSyncCallBridge
 
   // Receive a frame. Return false if the corresponding frame wasn't found.
   bool ReceiveFrameOnIOThread(int frame_sink_id,
+                              uint32_t metadata_version,
                               base::Optional<viz::CompositorFrame>);
 
-  // Receive a BeginFrameResponse. Return if handling the response was
+  // Receive a BeginFrameResponse. Returns true if handling the response was
   // successful or not.
   bool BeginFrameResponseOnIOThread(
       const SyncCompositorCommonRendererParams& render_params);
@@ -94,12 +91,16 @@ class SynchronousCompositorSyncCallBridge
   // BeginFrameResponse callback.
   bool WaitAfterVSyncOnUIThread(ui::WindowAndroid* window_android);
 
-  // Store a FrameFuture for a later ReceiveFrame callback.
-  void SetFrameFutureOnUIThread(
+  // Store a FrameFuture for a later ReceiveFrame callback. Return if the
+  // future was stored for further handling.
+  bool SetFrameFutureOnUIThread(
       scoped_refptr<SynchronousCompositor::FrameFuture> frame_future);
 
   // Indicate the host is destroyed.
   void HostDestroyedOnUIThread();
+
+  // Return whether the remote side is ready.
+  bool IsRemoteReadyOnUIThread();
 
  private:
   friend class base::RefCountedThreadSafe<SynchronousCompositorSyncCallBridge>;
@@ -109,27 +110,22 @@ class SynchronousCompositorSyncCallBridge
   void VSyncCompleteOnUIThread();
 
   // Process metadata.
-  void ProcessFrameMetadataOnUIThread(viz::CompositorFrameMetadata metadata);
-
-  void UnregisterSyncCallBridgeOnIOThread(
-      scoped_refptr<SynchronousCompositorBrowserFilter> filter);
+  void ProcessFrameMetadataOnUIThread(uint32_t metadata_version,
+                                      viz::CompositorFrameMetadata metadata);
 
   // Signal all waiters for closure. Callee must host a lock to |lock_|.
   void SignalRemoteClosedToAllWaitersOnIOThread();
 
-  // Post a task to unregister the bridge with the filter if necessary. Can
-  // be called on either thread but must hold a lock to |lock_|.
-  void UnregisterSyncCallBridgeIfNecessary();
-
   using FrameFutureQueue =
       base::circular_deque<scoped_refptr<SynchronousCompositor::FrameFuture>>;
+
+  enum class RemoteState { INIT, READY, CLOSED };
 
   const int routing_id_;
 
   // UI thread only.
   ui::WindowAndroid* window_android_in_vsync_ = nullptr;
   SynchronousCompositorHost* host_;
-  bool bound_to_filter_ = false;
 
   // Shared variables between the IO thread and UI thread.
   base::Lock lock_;
@@ -137,12 +133,7 @@ class SynchronousCompositorSyncCallBridge
   bool begin_frame_response_valid_ = false;
   SyncCompositorCommonRendererParams last_render_params_;
   base::ConditionVariable begin_frame_condition_;
-  bool remote_closed_ = true;
-
-  // IO thread based callback that will unbind this object from
-  // the SynchronousCompositorBrowserFilter. Only called once
-  // all pending frames are acknowledged.
-  base::OnceClosure unregister_callback_;
+  RemoteState remote_state_ = RemoteState::INIT;
 
   DISALLOW_COPY_AND_ASSIGN(SynchronousCompositorSyncCallBridge);
 };

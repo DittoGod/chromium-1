@@ -66,10 +66,11 @@ Status ParseInterval(int* to_set,
 Status ParseTimeDelta(base::TimeDelta* to_set,
                       const base::Value& option,
                       Capabilities* capabilities) {
-  int milliseconds;
-  Status status = ParseInterval(&milliseconds, option, capabilities);
-  if (status.IsError())
-    return status;
+  int milliseconds = 0;
+  if (!option.GetAsInteger(&milliseconds))
+    return Status(kUnknownError, "must be an integer");
+  if (milliseconds < 0)
+    return Status(kUnknownError, "must be positive or zero");
   *to_set = base::TimeDelta::FromMilliseconds(milliseconds);
   return Status(kOk);
 }
@@ -474,6 +475,10 @@ Status ParseChromeOptions(
         base::Bind(&ParseString, &capabilities->android_package);
     parser_map["androidProcess"] =
         base::Bind(&ParseString, &capabilities->android_process);
+    parser_map["androidExecName"] =
+        base::BindRepeating(&ParseString, &capabilities->android_exec_name);
+    parser_map["androidDeviceSocket"] =
+        base::BindRepeating(&ParseString, &capabilities->android_device_socket);
     parser_map["androidUseRunningApp"] =
         base::Bind(&ParseBoolean, &capabilities->android_use_running_app);
     parser_map["args"] = base::Bind(&ParseSwitches);

@@ -45,7 +45,6 @@ ExtensionInstalledNotification::ExtensionInstalledNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE, extension_id_,
           base::UTF8ToUTF16(extension->name()),
           l10n_util::GetStringUTF16(IDS_EXTENSION_NOTIFICATION_INSTALLED),
-          gfx::Image(),
           l10n_util::GetStringUTF16(IDS_EXTENSION_NOTIFICATION_DISPLAY_SOURCE),
           GURL(extension_urls::kChromeWebstoreBaseURL) /* origin_url */,
           message_center::NotifierId(
@@ -59,7 +58,9 @@ ExtensionInstalledNotification::ExtensionInstalledNotification(
 
 ExtensionInstalledNotification::~ExtensionInstalledNotification() {}
 
-void ExtensionInstalledNotification::Click() {
+void ExtensionInstalledNotification::Click(
+    const base::Optional<int>& button_index,
+    const base::Optional<base::string16>& reply) {
   if (!extensions::util::IsAppLaunchable(extension_id_, profile_))
     return;
 

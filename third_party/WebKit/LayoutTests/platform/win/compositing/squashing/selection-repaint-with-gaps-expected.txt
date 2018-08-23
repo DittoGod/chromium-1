@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -54,20 +55,6 @@
         [8, 8, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'lorem'",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'ipsum'",
-      "reason": "geometry"
     }
   ]
 }
@@ -76,6 +63,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -137,32 +125,6 @@
         [8, 8, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'lorem'",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'ipsum'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'lorem'",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'ipsum'",
-      "reason": "geometry"
     }
   ]
 }

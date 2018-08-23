@@ -30,6 +30,7 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.download.DownloadInfo;
 import org.chromium.chrome.browser.download.DownloadNotifier;
 import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.FailState;
 import org.chromium.components.offline_items_collection.OfflineContentProvider;
 import org.chromium.components.offline_items_collection.OfflineItem;
 import org.chromium.components.offline_items_collection.OfflineItemState;
@@ -104,6 +105,8 @@ public class OfflineContentAggregatorNotificationBridgeUiTest {
         InOrder order = inOrder(mProvider);
         order.verify(mProvider, times(1))
                 .getVisualsForItem(items.get(0).id /* OfflineItemState.IN_PROGRESS */, bridge);
+        order.verify(mProvider, times(1))
+                .getVisualsForItem(items.get(1).id /* OfflineItemState.PENDING*/, bridge);
         order.verify(mProvider, never())
                 .getVisualsForItem(ArgumentMatchers.any(), ArgumentMatchers.any());
 
@@ -162,7 +165,8 @@ public class OfflineContentAggregatorNotificationBridgeUiTest {
                 .notifyDownloadInterrupted(argThat(new DownloadInfoIdMatcher(items.get(4).id)),
                         ArgumentMatchers.anyBoolean(), eq(PendingState.NOT_PENDING));
         verify(mNotifier, times(1))
-                .notifyDownloadFailed(argThat(new DownloadInfoIdMatcher(items.get(5).id)));
+                .notifyDownloadFailed(argThat(new DownloadInfoIdMatcher(items.get(5).id)),
+                        eq(FailState.NO_FAILURE));
         verify(mNotifier, times(1))
                 .notifyDownloadPaused(argThat(new DownloadInfoIdMatcher(items.get(6).id)));
 
@@ -268,6 +272,7 @@ public class OfflineContentAggregatorNotificationBridgeUiTest {
             {
                 add(buildOfflineItem(new ContentId("1", "A"), OfflineItemState.IN_PROGRESS));
                 add(buildOfflineItem(new ContentId("2", "B"), OfflineItemState.PENDING));
+                add(buildOfflineItem(new ContentId("3", "C"), OfflineItemState.COMPLETE));
                 add(buildOfflineItem(new ContentId("5", "E"), OfflineItemState.INTERRUPTED));
                 add(buildOfflineItem(new ContentId("7", "G"), OfflineItemState.PAUSED));
             }
@@ -275,7 +280,6 @@ public class OfflineContentAggregatorNotificationBridgeUiTest {
 
         ArrayList<OfflineItem> uninterestingItems = new ArrayList<OfflineItem>() {
             {
-                add(buildOfflineItem(new ContentId("3", "C"), OfflineItemState.COMPLETE));
                 add(buildOfflineItem(new ContentId("6", "F"), OfflineItemState.FAILED));
             }
         };

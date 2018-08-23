@@ -26,8 +26,8 @@
 #include "extensions/renderer/source_map.h"
 #include "extensions/renderer/v8_helpers.h"
 #include "gin/converter.h"
-#include "third_party/WebKit/public/web/WebContextFeatures.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
+#include "third_party/blink/public/web/web_context_features.h"
+#include "third_party/blink/public/web/web_frame.h"
 
 namespace extensions {
 
@@ -109,9 +109,9 @@ void SetExportsProperty(
   v8::Local<v8::Object> obj = args.This();
   CHECK_EQ(2, args.Length());
   CHECK(args[0]->IsString());
-  v8::Maybe<bool> result =
-      obj->DefineOwnProperty(args.GetIsolate()->GetCurrentContext(),
-                             args[0]->ToString(), args[1], v8::ReadOnly);
+  v8::Maybe<bool> result = obj->DefineOwnProperty(
+      args.GetIsolate()->GetCurrentContext(),
+      args[0]->ToString(args.GetIsolate()), args[1], v8::ReadOnly);
   if (!result.FromMaybe(false))
     LOG(ERROR) << "Failed to set private property on the export.";
 }
@@ -656,8 +656,8 @@ v8::Local<v8::String> ModuleSystem::WrapSource(v8::Local<v8::String> source) {
       "$JSON, $Object, $RegExp, $String, $Error) {"
       "'use strict';");
   v8::Local<v8::String> right = ToV8StringUnsafe(GetIsolate(), "\n})");
-  return handle_scope.Escape(v8::Local<v8::String>(
-      v8::String::Concat(left, v8::String::Concat(source, right))));
+  return handle_scope.Escape(v8::Local<v8::String>(v8::String::Concat(
+      GetIsolate(), left, v8::String::Concat(GetIsolate(), source, right))));
 }
 
 void ModuleSystem::Private(const v8::FunctionCallbackInfo<v8::Value>& args) {

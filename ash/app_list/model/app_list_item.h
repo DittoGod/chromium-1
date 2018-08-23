@@ -18,7 +18,10 @@
 #include "ui/gfx/image/image_skia.h"
 
 class FastShowPickler;
-class ChromeAppListModelUpdater;
+
+namespace ash {
+class AppListControllerImpl;
+}  // namespace ash
 
 namespace app_list {
 
@@ -35,7 +38,7 @@ class APP_LIST_MODEL_EXPORT AppListItem {
   virtual ~AppListItem();
 
   void SetIcon(const gfx::ImageSkia& icon);
-  const gfx::ImageSkia& icon() const { return icon_; }
+  const gfx::ImageSkia& icon() const { return metadata_->icon; }
 
   const std::string& GetDisplayName() const {
     return short_name_.empty() ? name() : short_name_;
@@ -90,11 +93,14 @@ class APP_LIST_MODEL_EXPORT AppListItem {
 
   bool is_folder() const { return metadata_->is_folder; }
 
- protected:
-  // TODO(hejq): remove this when we have mojo interfaces.
-  friend class ::ChromeAppListModelUpdater;
+  void set_is_page_break(bool is_page_break) {
+    metadata_->is_page_break = is_page_break;
+  }
+  bool is_page_break() const { return metadata_->is_page_break; }
 
+ protected:
   friend class ::FastShowPickler;
+  friend class ash::AppListControllerImpl;
   friend class AppListItemList;
   friend class AppListItemListTest;
   friend class AppListModel;
@@ -126,8 +132,6 @@ class APP_LIST_MODEL_EXPORT AppListItem {
 
   ash::mojom::AppListItemMetadataPtr metadata_;
 
-  gfx::ImageSkia icon_;
-
   // A shortened name for the item, used for display.
   std::string short_name_;
 
@@ -135,7 +139,7 @@ class APP_LIST_MODEL_EXPORT AppListItem {
   bool is_installing_;
   int percent_downloaded_;
 
-  base::ObserverList<AppListItemObserver> observers_;
+  base::ObserverList<AppListItemObserver>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListItem);
 };

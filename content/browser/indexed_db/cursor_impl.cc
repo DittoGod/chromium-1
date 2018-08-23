@@ -4,11 +4,12 @@
 
 #include "content/browser/indexed_db/cursor_impl.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "content/browser/indexed_db/indexed_db_callbacks.h"
 #include "content/browser/indexed_db/indexed_db_cursor.h"
 #include "content/browser/indexed_db/indexed_db_dispatcher_host.h"
+
+using blink::IndexedDBKey;
 
 namespace content {
 
@@ -50,10 +51,9 @@ void CursorImpl::Advance(
   scoped_refptr<IndexedDBCallbacks> callbacks(
       new IndexedDBCallbacks(dispatcher_host_->AsWeakPtr(), origin_,
                              std::move(callbacks_info), idb_runner_));
-  idb_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&IDBSequenceHelper::Advance, base::Unretained(helper_),
-                     count, base::Passed(&callbacks)));
+  idb_runner_->PostTask(FROM_HERE, base::BindOnce(&IDBSequenceHelper::Advance,
+                                                  base::Unretained(helper_),
+                                                  count, std::move(callbacks)));
 }
 
 void CursorImpl::Continue(
@@ -66,7 +66,7 @@ void CursorImpl::Continue(
   idb_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&IDBSequenceHelper::Continue, base::Unretained(helper_),
-                     key, primary_key, base::Passed(&callbacks)));
+                     key, primary_key, std::move(callbacks)));
 }
 
 void CursorImpl::Prefetch(
@@ -75,10 +75,9 @@ void CursorImpl::Prefetch(
   scoped_refptr<IndexedDBCallbacks> callbacks(
       new IndexedDBCallbacks(dispatcher_host_->AsWeakPtr(), origin_,
                              std::move(callbacks_info), idb_runner_));
-  idb_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&IDBSequenceHelper::Prefetch, base::Unretained(helper_),
-                     count, base::Passed(&callbacks)));
+  idb_runner_->PostTask(FROM_HERE, base::BindOnce(&IDBSequenceHelper::Prefetch,
+                                                  base::Unretained(helper_),
+                                                  count, std::move(callbacks)));
 }
 
 void CursorImpl::PrefetchReset(int32_t used_prefetches,

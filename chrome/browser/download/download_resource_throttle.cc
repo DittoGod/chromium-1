@@ -92,10 +92,9 @@ DownloadResourceThrottle::DownloadResourceThrottle(
       BrowserThread::UI, FROM_HERE,
       base::BindOnce(
           &CanDownloadOnUIThread,
-          base::Passed(
-              std::unique_ptr<DownloadRequestInfo>(new DownloadRequestInfo(
-                  limiter, web_contents_getter, url, request_method,
-                  base::Bind(&OnCanDownloadDecided, AsWeakPtr()))))));
+          std::unique_ptr<DownloadRequestInfo>(new DownloadRequestInfo(
+              limiter, web_contents_getter, url, request_method,
+              base::Bind(&OnCanDownloadDecided, AsWeakPtr())))));
 }
 
 DownloadResourceThrottle::~DownloadResourceThrottle() {
@@ -129,8 +128,10 @@ void DownloadResourceThrottle::WillDownload(bool* defer) {
     return;
   }
 
-  if (!request_allowed_)
+  if (!request_allowed_) {
+    RecordDownloadCount(CHROME_DOWNLOAD_COUNT_BLOCKED_BY_THROTTLING);
     Cancel();
+  }
 }
 
 void DownloadResourceThrottle::ContinueDownload(

@@ -10,6 +10,7 @@
 #include "base/command_line.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -19,6 +20,7 @@
 #include "chrome/test/remoting/remote_test_helper.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/payments/content/payment_manifest_web_data_service.h"
+#include "components/payments/core/features.h"
 #include "components/payments/core/test_payment_manifest_downloader.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_features.h"
@@ -42,9 +44,12 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
       : alicepay_(net::EmbeddedTestServer::TYPE_HTTPS),
         bobpay_(net::EmbeddedTestServer::TYPE_HTTPS),
         frankpay_(net::EmbeddedTestServer::TYPE_HTTPS),
-        georgepay_(net::EmbeddedTestServer::TYPE_HTTPS) {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kServiceWorkerPaymentApps);
+        georgepay_(net::EmbeddedTestServer::TYPE_HTTPS),
+        kylepay_(net::EmbeddedTestServer::TYPE_HTTPS) {
+    scoped_feature_list_.InitWithFeatures(
+        {::features::kServiceWorkerPaymentApps,
+         features::kWebPaymentsJustInTimePaymentApp},
+        {});
   }
 
   ~ServiceWorkerPaymentAppFactoryBrowserTest() override {}
@@ -56,12 +61,21 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
     command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
   }
 
+  PermissionRequestManager* GetPermissionRequestManager() {
+    return PermissionRequestManager::FromWebContents(
+        browser()->tab_strip_model()->GetActiveWebContents());
+  }
+
   // Starts the test severs and opens a test page on alicepay.com.
   void SetUpOnMainThread() override {
     ASSERT_TRUE(StartTestServer("alicepay.com", &alicepay_));
     ASSERT_TRUE(StartTestServer("bobpay.com", &bobpay_));
     ASSERT_TRUE(StartTestServer("frankpay.com", &frankpay_));
     ASSERT_TRUE(StartTestServer("georgepay.com", &georgepay_));
+    ASSERT_TRUE(StartTestServer("kylepay.com", &kylepay_));
+
+    GetPermissionRequestManager()->set_auto_response_for_test(
+        PermissionRequestManager::ACCEPT_ALL);
   }
 
   // Invokes the JavaScript function install(|method_name|) in
@@ -101,7 +115,7 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
     content::BrowserContext* context = web_contents->GetBrowserContext();
     auto downloader = std::make_unique<TestDownloader>(
         content::BrowserContext::GetDefaultStoragePartition(context)
-            ->GetURLRequestContext());
+            ->GetURLLoaderFactoryForBrowserProcess());
     downloader->AddTestServerURL("https://alicepay.com/",
                                  alicepay_.GetURL("alicepay.com", "/"));
     downloader->AddTestServerURL("https://bobpay.com/",
@@ -110,12 +124,16 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
                                  frankpay_.GetURL("frankpay.com", "/"));
     downloader->AddTestServerURL("https://georgepay.com/",
                                  georgepay_.GetURL("georgepay.com", "/"));
+    downloader->AddTestServerURL("https://kylepay.com/",
+                                 kylepay_.GetURL("kylepay.com", "/"));
     ServiceWorkerPaymentAppFactory::GetInstance()
         ->SetDownloaderAndIgnorePortInAppScopeForTesting(std::move(downloader));
 
     std::vector<mojom::PaymentMethodDataPtr> method_data;
-    method_data.emplace_back(mojom::PaymentMethodData::New());
-    method_data.back()->supported_methods = payment_method_identifiers;
+    for (const auto& identifier : payment_method_identifiers) {
+      method_data.emplace_back(mojom::PaymentMethodData::New());
+      method_data.back()->supported_method = identifier;
+    }
 
     base::RunLoop run_loop;
     ServiceWorkerPaymentAppFactory::GetInstance()->GetAllPaymentApps(
@@ -124,6 +142,7 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
             Profile::FromBrowserContext(context),
             ServiceAccessType::EXPLICIT_ACCESS),
         method_data,
+        /*may_crawl_for_installable_payment_apps=*/true,
         base::BindOnce(
             &ServiceWorkerPaymentAppFactoryBrowserTest::OnGotAllPaymentApps,
             base::Unretained(this)),
@@ -131,8 +150,16 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
     run_loop.Run();
   }
 
-  // Returns the apps that have been found in GetAllPaymentAppsForMethods().
+  // Returns the installed apps that have been found in
+  // GetAllPaymentAppsForMethods().
   const content::PaymentAppProvider::PaymentApps& apps() const { return apps_; }
+
+  // Returns the installable apps that have been found in
+  // GetAllPaymentAppsForMethods().
+  const ServiceWorkerPaymentAppFactory::InstallablePaymentApps&
+  installable_apps() const {
+    return installable_apps_;
+  }
 
   // Expects that the first app has the |expected_method|.
   void ExpectPaymentAppWithMethod(const std::string& expected_method) {
@@ -151,12 +178,24 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
       }
     }
     ASSERT_NE(nullptr, app) << "No app found in scope " << scope;
-    EXPECT_NE(app->enabled_methods.end(),
-              std::find(app->enabled_methods.begin(),
-                        app->enabled_methods.end(), expected_method))
+    EXPECT_TRUE(base::ContainsValue(app->enabled_methods, expected_method))
         << "Unable to find payment method " << expected_method
         << " in the list of enabled methods for the app installed from "
         << app->scope;
+  }
+
+  // Expects an installable payment app in |scope|. The |scope| is also the
+  // payment method.
+  void ExpectInstallablePaymentAppInScope(const std::string& scope) {
+    ASSERT_FALSE(installable_apps().empty());
+    WebAppInstallationInfo* app = nullptr;
+    for (const auto& it : installable_apps()) {
+      if (it.second->sw_scope == scope) {
+        app = it.second.get();
+        break;
+      }
+    }
+    ASSERT_NE(nullptr, app) << "No installable app found in scope " << scope;
   }
 
  private:
@@ -166,6 +205,7 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
       content::PaymentAppProvider::PaymentApps apps,
       ServiceWorkerPaymentAppFactory::InstallablePaymentApps installable_apps) {
     apps_ = std::move(apps);
+    installable_apps_ = std::move(installable_apps);
   }
 
   // Starts the |test_server| for |hostname|. Returns true on success.
@@ -194,9 +234,17 @@ class ServiceWorkerPaymentAppFactoryBrowserTest : public InProcessBrowserTest {
   // https://alicepay.com.
   net::EmbeddedTestServer georgepay_;
 
-  // The apps that have been found by the factory in
+  // https://kylepay.com hosts a payment handler that can be installed "just in
+  // time."
+  net::EmbeddedTestServer kylepay_;
+
+  // The installed apps that have been found by the factory in
   // GetAllPaymentAppsForMethods() method.
   content::PaymentAppProvider::PaymentApps apps_;
+
+  // The installable apps that have been found by the factory in
+  // GetAllPaymentAppsForMethods() method.
+  ServiceWorkerPaymentAppFactory::InstallablePaymentApps installable_apps_;
 
   base::test::ScopedFeatureList scoped_feature_list_;
 
@@ -209,6 +257,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest, NoApps) {
     GetAllPaymentAppsForMethods({"basic-card", "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     EXPECT_TRUE(apps().empty());
   }
 
@@ -217,6 +266,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest, NoApps) {
     GetAllPaymentAppsForMethods({"basic-card", "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     EXPECT_TRUE(apps().empty());
   }
 }
@@ -231,6 +281,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
                                  "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     EXPECT_TRUE(apps().empty());
   }
 
@@ -240,6 +291,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
                                  "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     EXPECT_TRUE(apps().empty());
   }
 }
@@ -252,6 +304,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest, BasicCard) {
     GetAllPaymentAppsForMethods({"basic-card", "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(1U, apps().size());
     ExpectPaymentAppWithMethod("basic-card");
   }
@@ -261,6 +314,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest, BasicCard) {
     GetAllPaymentAppsForMethods({"basic-card", "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(1U, apps().size());
     ExpectPaymentAppWithMethod("basic-card");
   }
@@ -274,6 +328,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest, OwnOrigin) {
     GetAllPaymentAppsForMethods({"basic-card", "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(1U, apps().size());
     ExpectPaymentAppWithMethod("https://alicepay.com/webpay");
   }
@@ -283,6 +338,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest, OwnOrigin) {
     GetAllPaymentAppsForMethods({"basic-card", "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(1U, apps().size());
     ExpectPaymentAppWithMethod("https://alicepay.com/webpay");
   }
@@ -299,6 +355,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
     GetAllPaymentAppsForMethods({"basic-card", "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     EXPECT_TRUE(apps().empty());
   }
 
@@ -307,6 +364,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
     GetAllPaymentAppsForMethods({"basic-card", "https://alicepay.com/webpay",
                                  "https://bobpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     EXPECT_TRUE(apps().empty());
   }
 }
@@ -321,6 +379,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
   {
     GetAllPaymentAppsForMethods({"https://frankpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(1U, apps().size());
     ExpectPaymentAppWithMethod("https://frankpay.com/webpay");
   }
@@ -329,6 +388,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
   {
     GetAllPaymentAppsForMethods({"https://frankpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(1U, apps().size());
     ExpectPaymentAppWithMethod("https://frankpay.com/webpay");
   }
@@ -345,6 +405,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
   {
     GetAllPaymentAppsForMethods({"https://georgepay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(1U, apps().size());
     ExpectPaymentAppWithMethod("https://georgepay.com/webpay");
   }
@@ -353,6 +414,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
   {
     GetAllPaymentAppsForMethods({"https://georgepay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(1U, apps().size());
     ExpectPaymentAppWithMethod("https://georgepay.com/webpay");
   }
@@ -370,6 +432,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
   {
     GetAllPaymentAppsForMethods({"https://georgepay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(2U, apps().size());
     ExpectPaymentAppFromScopeWithMethod("/app1/",
                                         "https://georgepay.com/webpay");
@@ -381,6 +444,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
   {
     GetAllPaymentAppsForMethods({"https://georgepay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(2U, apps().size());
     ExpectPaymentAppFromScopeWithMethod("/app1/",
                                         "https://georgepay.com/webpay");
@@ -404,6 +468,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
     GetAllPaymentAppsForMethods(
         {"https://georgepay.com/webpay", "https://frankpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(2U, apps().size());
     ExpectPaymentAppFromScopeWithMethod("/app1/",
                                         "https://georgepay.com/webpay");
@@ -416,11 +481,36 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
     GetAllPaymentAppsForMethods(
         {"https://georgepay.com/webpay", "https://frankpay.com/webpay"});
 
+    EXPECT_TRUE(installable_apps().empty());
     ASSERT_EQ(2U, apps().size());
     ExpectPaymentAppFromScopeWithMethod("/app1/",
                                         "https://georgepay.com/webpay");
     ExpectPaymentAppFromScopeWithMethod("/app2/",
                                         "https://frankpay.com/webpay");
+  }
+}
+
+// The payment method https://kylepay.com/webpay does not require explicit
+// installation, because the webapp manifest https://kylepay.com/app.json
+// includes enough information for just in time installation of the service
+// worker https://kylepay.com/app.js with scope https://kylepay.com/webpay.
+IN_PROC_BROWSER_TEST_F(ServiceWorkerPaymentAppFactoryBrowserTest,
+                       InstallablePaymentApp) {
+  {
+    GetAllPaymentAppsForMethods({"https://kylepay.com/webpay"});
+
+    EXPECT_TRUE(apps().empty());
+    ASSERT_EQ(1U, installable_apps().size());
+    ExpectInstallablePaymentAppInScope("https://kylepay.com/webpay");
+  }
+
+  // Repeat lookups should have identical results.
+  {
+    GetAllPaymentAppsForMethods({"https://kylepay.com/webpay"});
+
+    EXPECT_TRUE(apps().empty());
+    ASSERT_EQ(1U, installable_apps().size());
+    ExpectInstallablePaymentAppInScope("https://kylepay.com/webpay");
   }
 }
 

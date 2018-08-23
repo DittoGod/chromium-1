@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 
 namespace content {
@@ -35,6 +36,14 @@ CONTENT_EXPORT extern const int kTraceEventGpuProcessSortIndex;
 
 // Constants used to organize content threads in about:tracing.
 CONTENT_EXPORT extern const int kTraceEventRendererMainThreadSortIndex;
+
+// HTTP header set in requests to indicate they should be marked DoNotTrack.
+extern const char kDoNotTrackHeader[];
+
+#if defined(OS_MACOSX)
+// Name of Mach port used for communication between parent and child processes.
+CONTENT_EXPORT extern const char kMachBootstrapName[];
+#endif
 
 } // namespace content
 

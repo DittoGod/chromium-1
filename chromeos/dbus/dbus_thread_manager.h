@@ -24,11 +24,15 @@ class Bus;
 namespace chromeos {
 
 // Style Note: Clients are sorted by names.
+class ArcAppfuseProviderClient;
 class ArcMidisClient;
 class ArcObbMounterClient;
 class ArcOemCryptoClient;
 class AuthPolicyClient;
 class BiodClient;
+class CecServiceClient;
+class CiceroneClient;
+class ConciergeClient;
 class CrasAudioClient;
 class CrosDisksClient;
 class CryptohomeClient;
@@ -38,14 +42,16 @@ class DBusThreadManagerSetter;
 class DebugDaemonClient;
 class EasyUnlockClient;
 class GsmSMSClient;
+class HammerdClient;
 class ImageBurnerClient;
 class ImageLoaderClient;
 class LorgnetteManagerClient;
+class MachineLearningClient;
 class MediaAnalyticsClient;
 class ModemMessagingClient;
+class OobeConfigurationClient;
 class PermissionBrokerClient;
 class PowerManagerClient;
-class SMSClient;
 class SessionManagerClient;
 class ShillDeviceClient;
 class ShillIPConfigClient;
@@ -54,6 +60,7 @@ class ShillProfileClient;
 class ShillServiceClient;
 class ShillThirdPartyVpnDriverClient;
 class SmbProviderClient;
+class SMSClient;
 class SystemClockClient;
 class UpdateEngineClient;
 class UpstartClient;
@@ -95,8 +102,7 @@ class CHROMEOS_EXPORT DBusThreadManager {
   // making it a Singleton, to ensure clean startup and shutdown.
   // This will initialize real or fake DBusClients depending on command-line
   // arguments and whether this process runs in a ChromeOS environment.
-  // Only D-Bus clients available in the processes in |process_mask| will be
-  // created.
+  // Only D-Bus clients specified in |client_set| will be created.
   static void Initialize(ClientSet client_set);
 
   // Equivalent to Initialize(kAll).
@@ -127,30 +133,37 @@ class CHROMEOS_EXPORT DBusThreadManager {
   // pointers after DBusThreadManager has been shut down.
   // TODO(jamescook): Replace this with calls to FooClient::Get().
   // http://crbug.com/647367
+  ArcAppfuseProviderClient* GetArcAppfuseProviderClient();
   ArcMidisClient* GetArcMidisClient();
   ArcObbMounterClient* GetArcObbMounterClient();
   ArcOemCryptoClient* GetArcOemCryptoClient();
   AuthPolicyClient* GetAuthPolicyClient();
   BiodClient* GetBiodClient();
+  CecServiceClient* GetCecServiceClient();
+  CiceroneClient* GetCiceroneClient();
+  ConciergeClient* GetConciergeClient();
   CrasAudioClient* GetCrasAudioClient();
   CrosDisksClient* GetCrosDisksClient();
   CryptohomeClient* GetCryptohomeClient();
   DebugDaemonClient* GetDebugDaemonClient();
   EasyUnlockClient* GetEasyUnlockClient();
   GsmSMSClient* GetGsmSMSClient();
+  HammerdClient* GetHammerdClient();
   ImageBurnerClient* GetImageBurnerClient();
   ImageLoaderClient* GetImageLoaderClient();
-  MediaAnalyticsClient* GetMediaAnalyticsClient();
   LorgnetteManagerClient* GetLorgnetteManagerClient();
+  MachineLearningClient* GetMachineLearningClient();
+  MediaAnalyticsClient* GetMediaAnalyticsClient();
   ModemMessagingClient* GetModemMessagingClient();
+  OobeConfigurationClient* GetOobeConfigurationClient();
   PermissionBrokerClient* GetPermissionBrokerClient();
   PowerManagerClient* GetPowerManagerClient();
   SessionManagerClient* GetSessionManagerClient();
   ShillDeviceClient* GetShillDeviceClient();
   ShillIPConfigClient* GetShillIPConfigClient();
   ShillManagerClient* GetShillManagerClient();
-  ShillServiceClient* GetShillServiceClient();
   ShillProfileClient* GetShillProfileClient();
+  ShillServiceClient* GetShillServiceClient();
   ShillThirdPartyVpnDriverClient* GetShillThirdPartyVpnDriverClient();
   SmbProviderClient* GetSmbProviderClient();
   SMSClient* GetSMSClient();
@@ -193,10 +206,13 @@ class CHROMEOS_EXPORT DBusThreadManagerSetter {
 
   void SetAuthPolicyClient(std::unique_ptr<AuthPolicyClient> client);
   void SetBiodClient(std::unique_ptr<BiodClient> client);
+  void SetCiceroneClient(std::unique_ptr<CiceroneClient> client);
+  void SetConciergeClient(std::unique_ptr<ConciergeClient> client);
   void SetCrasAudioClient(std::unique_ptr<CrasAudioClient> client);
   void SetCrosDisksClient(std::unique_ptr<CrosDisksClient> client);
   void SetCryptohomeClient(std::unique_ptr<CryptohomeClient> client);
   void SetDebugDaemonClient(std::unique_ptr<DebugDaemonClient> client);
+  void SetHammerdClient(std::unique_ptr<HammerdClient> client);
   void SetShillDeviceClient(std::unique_ptr<ShillDeviceClient> client);
   void SetShillIPConfigClient(std::unique_ptr<ShillIPConfigClient> client);
   void SetShillManagerClient(std::unique_ptr<ShillManagerClient> client);

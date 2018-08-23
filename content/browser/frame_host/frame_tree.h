@@ -141,7 +141,8 @@ class CONTENT_EXPORT FrameTree {
                 bool is_created_by_script,
                 const base::UnguessableToken& devtools_frame_token,
                 const blink::FramePolicy& frame_policy,
-                const FrameOwnerProperties& frame_owner_properties);
+                const FrameOwnerProperties& frame_owner_properties,
+                bool was_discarded);
 
   // Removes a frame from the frame tree. |child|, its children, and objects
   // owned by their RenderFrameHostManagers are immediately deleted. The root
@@ -182,6 +183,7 @@ class CONTENT_EXPORT FrameTree {
   RenderViewHostImpl* CreateRenderViewHost(SiteInstance* site_instance,
                                            int32_t routing_id,
                                            int32_t main_frame_routing_id,
+                                           int32_t widget_routing_id,
                                            bool swapped_out,
                                            bool hidden);
 

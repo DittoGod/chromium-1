@@ -67,13 +67,14 @@ class TargetView : public views::View {
 };
 
 views::Widget* CreateWidget(views::View* contents_view,
-                            const gfx::Rect& bounds) {
+                            const gfx::Rect& bounds,
+                            aura::Window* context) {
   views::Widget* widget = new views::Widget;
   views::Widget::InitParams params;
   params.type = views::Widget::InitParams::TYPE_WINDOW_FRAMELESS;
   params.accept_events = true;
-  params.context = Shell::GetPrimaryRootWindow();
   params.bounds = bounds;
+  params.context = context;
   widget->Init(params);
 
   widget->SetContentsView(contents_view);
@@ -87,25 +88,25 @@ void QuitLoop() {
 
 void DragDropAcrossMultiDisplay_Step4() {
   ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, ui_controls::UP,
-                                             base::Bind(&QuitLoop));
+                                             base::BindOnce(&QuitLoop));
 }
 
 void DragDropAcrossMultiDisplay_Step3() {
   // Move to the edge of the 1st display so that the mouse
   // is moved to 2nd display by ash.
   ui_controls::SendMouseMoveNotifyWhenDone(
-      399, 10, base::Bind(&DragDropAcrossMultiDisplay_Step4));
+      399, 10, base::BindOnce(&DragDropAcrossMultiDisplay_Step4));
 }
 
 void DragDropAcrossMultiDisplay_Step2() {
   ui_controls::SendMouseMoveNotifyWhenDone(
-      20, 10, base::Bind(&DragDropAcrossMultiDisplay_Step3));
+      20, 10, base::BindOnce(&DragDropAcrossMultiDisplay_Step3));
 }
 
 void DragDropAcrossMultiDisplay_Step1() {
   ui_controls::SendMouseEventsNotifyWhenDone(
       ui_controls::LEFT, ui_controls::DOWN,
-      base::Bind(&DragDropAcrossMultiDisplay_Step2));
+      base::BindOnce(&DragDropAcrossMultiDisplay_Step2));
 }
 
 }  // namespace
@@ -121,19 +122,19 @@ TEST_F(DragDropTest, DragDropAcrossMultiDisplay) {
   draggable_view->set_drag_controller(NULL);
   draggable_view->SetBounds(0, 0, 100, 100);
   views::Widget* source =
-      CreateWidget(draggable_view, gfx::Rect(0, 0, 100, 100));
+      CreateWidget(draggable_view, gfx::Rect(0, 0, 100, 100), CurrentContext());
 
   TargetView* target_view = new TargetView();
   target_view->SetBounds(0, 0, 100, 100);
   views::Widget* target =
-      CreateWidget(target_view, gfx::Rect(400, 0, 100, 100));
+      CreateWidget(target_view, gfx::Rect(400, 0, 100, 100), CurrentContext());
 
   // Make sure they're on the different root windows.
   EXPECT_EQ(root_windows[0], source->GetNativeView()->GetRootWindow());
   EXPECT_EQ(root_windows[1], target->GetNativeView()->GetRootWindow());
 
   ui_controls::SendMouseMoveNotifyWhenDone(
-      10, 10, base::Bind(&DragDropAcrossMultiDisplay_Step1));
+      10, 10, base::BindOnce(&DragDropAcrossMultiDisplay_Step1));
 
   base::RunLoop().Run();
 

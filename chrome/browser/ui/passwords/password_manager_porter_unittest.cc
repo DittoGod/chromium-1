@@ -150,9 +150,8 @@ class FakeCancellingSelectFileDialogFactory
 
 class TestPasswordManagerPorter : public PasswordManagerPorter {
  public:
-  TestPasswordManagerPorter(
-      std::unique_ptr<password_manager::PasswordManagerExporter> exporter)
-      : PasswordManagerPorter(std::move(exporter)) {}
+  TestPasswordManagerPorter()
+      : PasswordManagerPorter(nullptr, ProgressCallback()) {}
 
   MOCK_METHOD1(ImportPasswordsFromPath, void(const base::FilePath& path));
 
@@ -190,10 +189,10 @@ class PasswordManagerPorterTest : public testing::Test {
   ~PasswordManagerPorterTest() override = default;
 
   void SetUp() override {
-    password_manager_porter_.reset(new TestPasswordManagerPorter(nullptr));
+    password_manager_porter_.reset(new TestPasswordManagerPorter());
     profile_.reset(new TestingProfile());
-    web_contents_.reset(content::WebContentsTester::CreateTestWebContents(
-        profile_.get(), nullptr));
+    web_contents_ = content::WebContentsTester::CreateTestWebContents(
+        profile_.get(), nullptr);
     // SelectFileDialog::SetFactory is responsible for freeing the memory
     // associated with a new factory.
     selected_file_ = base::FilePath(kNullFileName);
@@ -236,33 +235,49 @@ TEST_F(PasswordManagerPorterTest, PasswordImport) {
 }
 
 TEST_F(PasswordManagerPorterTest, PasswordExport) {
-  // PasswordManagerPorter will take ownership of this, but we keep a pointer.
-  MockPasswordManagerExporter* mock_password_manager_exporter_ =
-      new StrictMock<MockPasswordManagerExporter>();
-  PasswordManagerPorter porter((std::unique_ptr<MockPasswordManagerExporter>(
-      mock_password_manager_exporter_)));
+  PasswordManagerPorter porter(nullptr,
+                               PasswordManagerPorter::ProgressCallback());
+  std::unique_ptr<MockPasswordManagerExporter> mock_password_manager_exporter_ =
+      std::make_unique<StrictMock<MockPasswordManagerExporter>>();
 
   EXPECT_CALL(*mock_password_manager_exporter_, PreparePasswordsForExport());
   EXPECT_CALL(*mock_password_manager_exporter_, SetDestination(selected_file_));
 
   porter.set_web_contents(web_contents());
+  porter.SetExporterForTesting(std::move(mock_password_manager_exporter_));
   porter.Store();
 }
 
 TEST_F(PasswordManagerPorterTest, CancelExportFileSelection) {
   ui::SelectFileDialog::SetFactory(new FakeCancellingSelectFileDialogFactory());
 
-  // PasswordManagerPorter will take ownership of this, but we keep a pointer.
-  MockPasswordManagerExporter* mock_password_manager_exporter_ =
-      new StrictMock<MockPasswordManagerExporter>();
-  PasswordManagerPorter porter((std::unique_ptr<MockPasswordManagerExporter>(
-      mock_password_manager_exporter_)));
+  std::unique_ptr<MockPasswordManagerExporter> mock_password_manager_exporter_ =
+      std::make_unique<StrictMock<MockPasswordManagerExporter>>();
+  PasswordManagerPorter porter(nullptr,
+                               PasswordManagerPorter::ProgressCallback());
 
   EXPECT_CALL(*mock_password_manager_exporter_, PreparePasswordsForExport());
   EXPECT_CALL(*mock_password_manager_exporter_, Cancel());
 
   porter.set_web_contents(web_contents());
+  porter.SetExporterForTesting(std::move(mock_password_manager_exporter_));
   porter.Store();
+}
+
+TEST_F(PasswordManagerPorterTest, CancelStore) {
+  std::unique_ptr<MockPasswordManagerExporter> mock_password_manager_exporter_ =
+      std::make_unique<StrictMock<MockPasswordManagerExporter>>();
+  PasswordManagerPorter porter(nullptr,
+                               PasswordManagerPorter::ProgressCallback());
+
+  EXPECT_CALL(*mock_password_manager_exporter_, PreparePasswordsForExport());
+  EXPECT_CALL(*mock_password_manager_exporter_, SetDestination(_));
+  EXPECT_CALL(*mock_password_manager_exporter_, Cancel());
+
+  porter.set_web_contents(web_contents());
+  porter.SetExporterForTesting(std::move(mock_password_manager_exporter_));
+  porter.Store();
+  porter.CancelStore();
 }
 
 #endif

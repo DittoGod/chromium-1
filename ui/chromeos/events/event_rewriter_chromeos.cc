@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -111,8 +110,9 @@ const ModifierRemapping* kModifierRemappingCtrl = &kModifierRemappings[0];
 const ModifierRemapping* kModifierRemappingNeoMod3 = &kModifierRemappings[1];
 
 // Gets a remapped key for |pref_name| key. For example, to find out which
-// key Search is currently remapped to, call the function with
-// prefs::kLanguageRemapSearchKeyTo.
+// key Ctrl is currently remapped to, call the function with
+// prefs::kLanguageRemapControlKeyTo.
+// Note: For the Search key, call GetSearchRemappedKey().
 const ModifierRemapping* GetRemappedKey(
     const std::string& pref_name,
     EventRewriterChromeOS::Delegate* delegate) {
@@ -123,11 +123,38 @@ const ModifierRemapping* GetRemappedKey(
   if (!delegate->GetKeyboardRemappedPrefValue(pref_name, &value))
     return nullptr;
 
-  for (size_t i = 0; i < arraysize(kModifierRemappings); ++i) {
-    if (value == static_cast<int>(kModifierRemappings[i].remap_to))
-      return &kModifierRemappings[i];
+  for (auto& remapping : kModifierRemappings) {
+    if (value == static_cast<int>(remapping.remap_to))
+      return &remapping;
   }
+
   return nullptr;
+}
+
+// Gets a remapped key for the Search key based on the |keyboard_type| of the
+// last event. Internal Search key, Command key on external Apple keyboards, and
+// Meta key (either Search or Windows) on external non-Apple keyboards can all
+// be remapped separately.
+const ModifierRemapping* GetSearchRemappedKey(
+    EventRewriterChromeOS::Delegate* delegate,
+    EventRewriterChromeOS::DeviceType keyboard_type) {
+  std::string pref_name;
+  switch (keyboard_type) {
+    case EventRewriterChromeOS::kDeviceAppleKeyboard:
+      pref_name = prefs::kLanguageRemapExternalCommandKeyTo;
+      break;
+
+    case EventRewriterChromeOS::kDeviceExternalNonAppleKeyboard:
+      pref_name = prefs::kLanguageRemapExternalMetaKeyTo;
+      break;
+
+    default:
+      // Use the preference for internal Search key remapping.
+      pref_name = prefs::kLanguageRemapSearchKeyTo;
+      break;
+  }
+
+  return GetRemappedKey(pref_name, delegate);
 }
 
 bool HasDiamondKey() {
@@ -143,36 +170,6 @@ bool IsISOLevel5ShiftUsedByCurrentInputMethod() {
   ::chromeos::input_method::InputMethodManager* manager =
       ::chromeos::input_method::InputMethodManager::Get();
   return manager->IsISOLevel5ShiftUsedByCurrentInputMethod();
-}
-
-EventRewriterChromeOS::DeviceType GetDeviceType(const std::string& device_name,
-                                                int vendor_id,
-                                                int product_id) {
-  if (vendor_id == kHotrodRemoteVendorId &&
-      product_id == kHotrodRemoteProductId) {
-    return EventRewriterChromeOS::kDeviceHotrodRemote;
-  }
-
-  if (base::LowerCaseEqualsASCII(device_name, "virtual core keyboard"))
-    return EventRewriterChromeOS::kDeviceVirtualCoreKeyboard;
-
-  std::vector<std::string> tokens = base::SplitString(
-      device_name, " .", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-
-  // If the |device_name| contains the two words, "apple" and "keyboard", treat
-  // it as an Apple keyboard.
-  bool found_apple = false;
-  bool found_keyboard = false;
-  for (size_t i = 0; i < tokens.size(); ++i) {
-    if (!found_apple && base::LowerCaseEqualsASCII(tokens[i], "apple"))
-      found_apple = true;
-    if (!found_keyboard && base::LowerCaseEqualsASCII(tokens[i], "keyboard"))
-      found_keyboard = true;
-    if (found_apple && found_keyboard)
-      return EventRewriterChromeOS::kDeviceAppleKeyboard;
-  }
-
-  return EventRewriterChromeOS::kDeviceUnknown;
 }
 
 struct KeyboardRemapping {
@@ -274,15 +271,56 @@ EventRewriterChromeOS::EventRewriterChromeOS(
 
 EventRewriterChromeOS::~EventRewriterChromeOS() {}
 
+// static
+EventRewriterChromeOS::DeviceType EventRewriterChromeOS::GetDeviceType(
+    const ui::InputDevice& keyboard_device) {
+  if (keyboard_device.vendor_id == kHotrodRemoteVendorId &&
+      keyboard_device.product_id == kHotrodRemoteProductId) {
+    return EventRewriterChromeOS::kDeviceHotrodRemote;
+  }
+
+  if (base::LowerCaseEqualsASCII(keyboard_device.name,
+                                 "virtual core keyboard")) {
+    return EventRewriterChromeOS::kDeviceVirtualCoreKeyboard;
+  }
+
+  const std::vector<std::string> tokens =
+      base::SplitString(keyboard_device.name, " .", base::KEEP_WHITESPACE,
+                        base::SPLIT_WANT_NONEMPTY);
+
+  // If the |device_name| contains the two words, "apple" and "keyboard", treat
+  // it as an Apple keyboard.
+  bool found_apple = false;
+  bool found_keyboard = false;
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    if (!found_apple && base::LowerCaseEqualsASCII(tokens[i], "apple"))
+      found_apple = true;
+    if (!found_keyboard && base::LowerCaseEqualsASCII(tokens[i], "keyboard"))
+      found_keyboard = true;
+    if (found_apple && found_keyboard)
+      return EventRewriterChromeOS::kDeviceAppleKeyboard;
+  }
+
+  if (!found_apple && found_keyboard &&
+      keyboard_device.type == INPUT_DEVICE_EXTERNAL) {
+    return EventRewriterChromeOS::kDeviceExternalNonAppleKeyboard;
+  }
+
+  return EventRewriterChromeOS::kDeviceUnknown;
+}
+
 void EventRewriterChromeOS::KeyboardDeviceAddedForTesting(
     int device_id,
     const std::string& device_name,
-    KeyboardTopRowLayout layout) {
+    KeyboardTopRowLayout layout,
+    InputDeviceType device_type) {
   // Tests must avoid XI2 reserved device IDs.
   DCHECK((device_id < 0) || (device_id > 1));
-  KeyboardDeviceAddedInternal(
-      device_id,
-      GetDeviceType(device_name, kUnknownVendorId, kUnknownProductId), layout);
+  InputDevice keyboard_device(device_id, device_type, device_name);
+  keyboard_device.vendor_id = kUnknownVendorId;
+  keyboard_device.product_id = kUnknownProductId;
+  KeyboardDeviceAddedInternal(device_id, GetDeviceType(keyboard_device),
+                              layout);
 }
 
 void EventRewriterChromeOS::RewriteMouseButtonEventForTesting(
@@ -399,27 +437,26 @@ void EventRewriterChromeOS::DeviceKeyPressedOrReleased(int device_id) {
   last_keyboard_device_id_ = device_id;
 }
 
-bool EventRewriterChromeOS::IsAppleKeyboard() const {
-  return IsLastKeyboardOfType(kDeviceAppleKeyboard);
-}
-
 bool EventRewriterChromeOS::IsHotrodRemote() const {
   return IsLastKeyboardOfType(kDeviceHotrodRemote);
 }
 
 bool EventRewriterChromeOS::IsLastKeyboardOfType(DeviceType device_type) const {
-  if (last_keyboard_device_id_ == ui::ED_UNKNOWN_DEVICE)
-    return false;
+  return GetLastKeyboardType() == device_type;
+}
 
-  // Check which device generated |event|.
+EventRewriterChromeOS::DeviceType EventRewriterChromeOS::GetLastKeyboardType()
+    const {
+  if (last_keyboard_device_id_ == ui::ED_UNKNOWN_DEVICE)
+    return kDeviceUnknown;
+
   const auto iter = device_id_to_info_.find(last_keyboard_device_id_);
   if (iter == device_id_to_info_.end()) {
     LOG(ERROR) << "Device ID " << last_keyboard_device_id_ << " is unknown.";
-    return false;
+    return kDeviceUnknown;
   }
 
-  const DeviceType type = iter->second.type;
-  return type == device_type;
+  return iter->second.type;
 }
 
 int EventRewriterChromeOS::GetRemappedModifierMasks(const ui::Event& event,
@@ -433,11 +470,7 @@ int EventRewriterChromeOS::GetRemappedModifierMasks(const ui::Event& event,
       continue;
     switch (kModifierRemappings[i].flag) {
       case ui::EF_COMMAND_DOWN:
-        // Rewrite Command key presses on an Apple keyboard to Control.
-        if (IsAppleKeyboard()) {
-          DCHECK_EQ(ui::EF_CONTROL_DOWN, kModifierRemappingCtrl->flag);
-          remapped_key = kModifierRemappingCtrl;
-        }
+        remapped_key = GetSearchRemappedKey(delegate_, GetLastKeyboardType());
         break;
       case ui::EF_MOD3_DOWN:
         // If EF_MOD3_DOWN is used by the current input method, leave it alone;
@@ -685,8 +718,7 @@ bool EventRewriterChromeOS::RewriteModifierKeys(const ui::KeyEvent& key_event,
               GetRemappedKey(prefs::kLanguageRemapCapsLockKeyTo, delegate_);
         } else {
           characteristic_flag = ui::EF_ALTGR_DOWN;
-          remapped_key =
-              GetRemappedKey(prefs::kLanguageRemapSearchKeyTo, delegate_);
+          remapped_key = GetSearchRemappedKey(delegate_, GetLastKeyboardType());
         }
       }
       if (remapped_key && remapped_key->result.key_code == ui::VKEY_CAPITAL)
@@ -723,6 +755,11 @@ bool EventRewriterChromeOS::RewriteModifierKeys(const ui::KeyEvent& key_event,
     // XK_ISO_Level3_Shift with Mod3Mask, not XF86XK_Launch7).
     case ui::DomCode::F16:
     case ui::DomCode::CAPS_LOCK:
+      // This key is already remapped to Mod3 in remapping based on DomKey. Skip
+      // more remapping.
+      if (IsISOLevel5ShiftUsedByCurrentInputMethod() && remapped_key)
+        break;
+
       characteristic_flag = ui::EF_CAPS_LOCK_ON;
       remapped_key =
           GetRemappedKey(prefs::kLanguageRemapCapsLockKeyTo, delegate_);
@@ -730,14 +767,7 @@ bool EventRewriterChromeOS::RewriteModifierKeys(const ui::KeyEvent& key_event,
     case ui::DomCode::META_LEFT:
     case ui::DomCode::META_RIGHT:
       characteristic_flag = ui::EF_COMMAND_DOWN;
-      // Rewrite Command-L/R key presses on an Apple keyboard to Control.
-      if (IsAppleKeyboard()) {
-        DCHECK_EQ(ui::VKEY_CONTROL, kModifierRemappingCtrl->result.key_code);
-        remapped_key = kModifierRemappingCtrl;
-      } else {
-        remapped_key =
-            GetRemappedKey(prefs::kLanguageRemapSearchKeyTo, delegate_);
-      }
+      remapped_key = GetSearchRemappedKey(delegate_, GetLastKeyboardType());
       // Default behavior is Super key, hence don't remap the event if the pref
       // is unavailable.
       break;
@@ -884,26 +914,6 @@ void EventRewriterChromeOS::RewriteExtendedKeys(const ui::KeyEvent& key_event,
          key_event.type() == ui::ET_KEY_RELEASED);
   MutableKeyState incoming = *state;
 
-  if ((incoming.flags &
-       (ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN | ui::EF_CONTROL_DOWN)) ==
-      (ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN)) {
-    // Search + Alt + Arrow keys are used to move window between displays, do
-    // not do remappings on these.
-    static const KeyboardRemapping::Condition kUseExistingKeys[] = {
-        {// Alt+Left
-         ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN, ui::VKEY_LEFT},
-        {// Alt+Right
-         ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN, ui::VKEY_RIGHT},
-        {// Alt+Up
-         ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN, ui::VKEY_UP},
-        {// Alt+Down
-         ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN, ui::VKEY_DOWN}};
-    for (const auto& condition : kUseExistingKeys) {
-      if (MatchKeyboardRemapping(*state, condition))
-        return;
-    }
-  }
-
   if ((incoming.flags & (ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN)) ==
       (ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN)) {
     // Allow Search to avoid rewriting extended keys.
@@ -948,7 +958,10 @@ void EventRewriterChromeOS::RewriteExtendedKeys(const ui::KeyEvent& key_event,
          {ui::EF_COMMAND_DOWN, ui::VKEY_OEM_PERIOD},
          {ui::EF_NONE, ui::DomCode::INSERT, ui::DomKey::INSERT,
           ui::VKEY_INSERT}}};
-    if (RewriteWithKeyboardRemappings(
+    bool skip_search_key_remapping =
+        delegate_ && delegate_->IsSearchKeyAcceleratorReserved();
+    if (!skip_search_key_remapping &&
+        RewriteWithKeyboardRemappings(
             kSearchRemappings, arraysize(kSearchRemappings), incoming, state)) {
       return;
     }
@@ -1186,8 +1199,7 @@ EventRewriterChromeOS::DeviceType EventRewriterChromeOS::KeyboardDeviceAdded(
       ui::InputDeviceManager::GetInstance()->GetKeyboardDevices();
   for (const auto& keyboard : keyboard_devices) {
     if (keyboard.id == device_id) {
-      const DeviceType type =
-          GetDeviceType(keyboard.name, keyboard.vendor_id, keyboard.product_id);
+      const DeviceType type = GetDeviceType(keyboard);
       if (type == kDeviceAppleKeyboard) {
         VLOG(1) << "Apple keyboard '" << keyboard.name << "' connected: "
                 << "id=" << device_id;

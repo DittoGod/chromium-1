@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -19,7 +20,7 @@
         {
           "object": "LayoutBlockFlow A id='link'",
           "rect": [43, 79, 754, 28],
-          "reason": "style change"
+          "reason": "appeared"
         },
         {
           "object": "LayoutListMarker (anonymous)",
@@ -27,20 +28,6 @@
           "reason": "style change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow A id='link'",
-      "reason": "style change"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutListMarker (anonymous)",
-      "reason": "style change"
     }
   ]
 }

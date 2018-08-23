@@ -6,7 +6,7 @@
 
 #include "ash/system/user/button_from_view.h"
 
-#include "ash/ash_constants.h"
+#include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/ash_features.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_utils.h"
@@ -46,8 +46,8 @@ ButtonFromView::ButtonFromView(views::View* content,
 
   SetFocusPainter(TrayPopupUtils::CreateFocusPainter());
 
-  SetBackground(features::IsNewSystemMenuEnabled()
-                    ? views::CreateSolidBackground(kNewMenuBackgroundColor)
+  SetBackground(features::IsSystemTrayUnifiedEnabled()
+                    ? views::CreateSolidBackground(kUnifiedMenuBackgroundColor)
                     : views::CreateThemedSolidBackground(
                           this, ui::NativeTheme::kColorId_BubbleBackground));
 }

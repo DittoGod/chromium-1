@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -64,16 +65,6 @@
       "name": "Scroll Corner Layer",
       "position": [193, 193],
       "bounds": [15, 15]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "background on scrolling contents layer"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='scroller'",
-      "reason": "style change"
     }
   ]
 }

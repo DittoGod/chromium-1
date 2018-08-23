@@ -21,6 +21,11 @@ namespace {
 
 const int kUpdateFrequencyMs = 1000;
 
+bool IsWifiEnabled() {
+  return NetworkHandler::Get()->network_state_handler()->IsTechnologyEnabled(
+      chromeos::NetworkTypePattern::WiFi());
+}
+
 }  // namespace
 
 namespace ash {
@@ -33,13 +38,20 @@ TrayNetworkStateObserver::TrayNetworkStateObserver(Delegate* delegate)
       ui::ScopedAnimationDurationScaleMode::NORMAL_DURATION) {
     update_frequency_ = 0;  // Send updates immediately for tests.
   }
+  // TODO(mash): Figure out what to do about NetworkHandler and
+  // NetworkPortalDetector.
   if (NetworkHandler::IsInitialized()) {
     NetworkHandler::Get()->network_state_handler()->AddObserver(this,
                                                                 FROM_HERE);
+    wifi_enabled_ = IsWifiEnabled();
   }
+  if (chromeos::network_portal_detector::IsInitialized())
+    chromeos::network_portal_detector::GetInstance()->AddObserver(this);
 }
 
 TrayNetworkStateObserver::~TrayNetworkStateObserver() {
+  if (chromeos::network_portal_detector::IsInitialized())
+    chromeos::network_portal_detector::GetInstance()->RemoveObserver(this);
   if (NetworkHandler::IsInitialized()) {
     NetworkHandler::Get()->network_state_handler()->RemoveObserver(this,
                                                                    FROM_HERE);
@@ -83,7 +95,22 @@ void TrayNetworkStateObserver::DevicePropertiesUpdated(
   SignalUpdate(false /* notify_a11y */);
 }
 
+void TrayNetworkStateObserver::OnPortalDetectionCompleted(
+    const chromeos::NetworkState* network,
+    const chromeos::NetworkPortalDetector::CaptivePortalState& state) {
+  SignalUpdate(true /* notify_a11y */);
+}
+
 void TrayNetworkStateObserver::SignalUpdate(bool notify_a11y) {
+  bool old_state = wifi_enabled_;
+  wifi_enabled_ = IsWifiEnabled();
+
+  // Update immediately when wifi network changed from enabled->disabled.
+  if (old_state && !wifi_enabled_) {
+    SendNetworkStateChanged(notify_a11y);
+    return;
+  }
+
   if (timer_.IsRunning())
     return;
   timer_.Start(FROM_HERE, base::TimeDelta::FromMilliseconds(update_frequency_),

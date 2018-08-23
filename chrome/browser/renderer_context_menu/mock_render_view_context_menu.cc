@@ -141,6 +141,10 @@ void MockRenderViewContextMenu::UpdateMenuIcon(int command_id,
          << " command_id: " << command_id;
 }
 
+void MockRenderViewContextMenu::RemoveMenuItem(int command_id) {}
+
+void MockRenderViewContextMenu::RemoveAdjacentSeparators() {}
+
 void MockRenderViewContextMenu::AddSpellCheckServiceItem(bool is_checked) {
   AddCheckItem(
       IDC_CONTENT_CONTEXT_SPELLING_TOGGLE,

@@ -13,6 +13,7 @@
 #include "base/i18n/rtl.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/histogram.h"
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -20,6 +21,7 @@
 #include "chrome/common/render_messages.h"
 #include "chrome/renderer/chrome_render_thread_observer.h"
 #include "chrome/renderer/ssl/ssl_certificate_error_page_controller.h"
+#include "chrome/renderer/supervised_user/supervised_user_error_page_controller.h"
 #include "components/error_page/common/error.h"
 #include "components/error_page/common/error_page_params.h"
 #include "components/error_page/common/localized_error.h"
@@ -39,17 +41,19 @@
 #include "ipc/ipc_message_macros.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "third_party/WebKit/public/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/public/common/associated_interfaces/associated_interface_registry.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebDocumentLoader.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
+#include "third_party/blink/public/platform/web_data.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_url_response.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_document_loader.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/jstemplate_builder.h"
 #include "url/gurl.h"
@@ -117,11 +121,12 @@ const net::NetworkTrafficAnnotationTag& GetNetworkTrafficAnnotationTag() {
 
 }  // namespace
 
-NetErrorHelper::NetErrorHelper(RenderFrame* render_frame, bool online)
+NetErrorHelper::NetErrorHelper(RenderFrame* render_frame)
     : RenderFrameObserver(render_frame),
       content::RenderFrameObserverTracker<NetErrorHelper>(render_frame),
       weak_controller_delegate_factory_(this),
-      weak_ssl_error_controller_delegate_factory_(this) {
+      weak_ssl_error_controller_delegate_factory_(this),
+      weak_supervised_user_error_controller_delegate_factory_(this) {
   RenderThread::Get()->AddObserver(this);
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   bool auto_reload_enabled =
@@ -130,9 +135,10 @@ NetErrorHelper::NetErrorHelper(RenderFrame* render_frame, bool online)
       command_line->HasSwitch(switches::kEnableOfflineAutoReloadVisibleOnly);
   // TODO(mmenke): Consider only creating a NetErrorHelperCore for main frames.
   // subframes don't need any of the NetErrorHelperCore's extra logic.
-  core_.reset(new NetErrorHelperCore(this, auto_reload_enabled,
+  core_.reset(new NetErrorHelperCore(this,
+                                     auto_reload_enabled,
                                      auto_reload_visible_only,
-                                     !render_frame->IsHidden(), online));
+                                     !render_frame->IsHidden()));
 
   render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
       base::Bind(&NetErrorHelper::OnNetworkDiagnosticsClientRequest,
@@ -218,6 +224,22 @@ void NetErrorHelper::SendCommand(
   }
 }
 
+void NetErrorHelper::GoBack() {
+  if (supervised_user_interface_)
+    supervised_user_interface_->GoBack();
+}
+
+void NetErrorHelper::RequestPermission(
+    base::OnceCallback<void(bool)> callback) {
+  if (supervised_user_interface_)
+    supervised_user_interface_->RequestPermission(std::move(callback));
+}
+
+void NetErrorHelper::Feedback() {
+  if (supervised_user_interface_)
+    supervised_user_interface_->Feedback();
+}
+
 void NetErrorHelper::DidStartProvisionalLoad(
     blink::WebDocumentLoader* document_loader) {
   core_->OnStartLoad(GetFrameType(render_frame()),
@@ -237,6 +259,7 @@ void NetErrorHelper::DidCommitProvisionalLoad(
   // it.
   weak_controller_delegate_factory_.InvalidateWeakPtrs();
   weak_ssl_error_controller_delegate_factory_.InvalidateWeakPtrs();
+  weak_supervised_user_error_controller_delegate_factory_.InvalidateWeakPtrs();
 
   core_->OnCommitLoad(GetFrameType(render_frame()),
                       render_frame()->GetWebFrame()->GetDocument().Url());
@@ -338,6 +361,12 @@ void NetErrorHelper::EnablePageHelperFunctions(net::Error net_error) {
   }
   NetErrorPageController::Install(
       render_frame(), weak_controller_delegate_factory_.GetWeakPtr());
+
+  render_frame()->GetRemoteAssociatedInterfaces()->GetInterface(
+      &supervised_user_interface_);
+  SupervisedUserErrorPageController::Install(
+      render_frame(),
+      weak_supervised_user_error_controller_delegate_factory_.GetWeakPtr());
 }
 
 void NetErrorHelper::UpdateErrorPage(const error_page::Error& error,
@@ -376,6 +405,9 @@ void NetErrorHelper::FetchNavigationCorrections(
   correction_fetcher_->SetBody(navigation_correction_request_body);
   correction_fetcher_->SetHeader("Content-Type", "application/json");
 
+  // Prevent CORB from triggering on this request by setting an Origin header.
+  correction_fetcher_->SetHeader("Origin", "null");
+
   correction_fetcher_->Start(
       render_frame()->GetWebFrame(),
       blink::WebURLRequest::kRequestContextInternal,
@@ -409,7 +441,7 @@ void NetErrorHelper::SendTrackingRequest(
 }
 
 void NetErrorHelper::ReloadPage(bool bypass_cache) {
-  render_frame()->GetWebFrame()->Reload(
+  render_frame()->GetWebFrame()->StartReload(
       bypass_cache ? blink::WebFrameLoadType::kReloadBypassingCache
                    : blink::WebFrameLoadType::kReload);
 }
@@ -422,7 +454,7 @@ void NetErrorHelper::LoadPageFromCache(const GURL& page_url) {
   blink::WebURLRequest request(page_url);
   request.SetCacheMode(blink::mojom::FetchCacheMode::kOnlyIfCached);
   request.SetRequestorOrigin(blink::WebSecurityOrigin::Create(page_url));
-  web_frame->LoadRequest(request);
+  web_frame->StartNavigation(request);
 }
 
 void NetErrorHelper::DiagnoseError(const GURL& page_url) {
@@ -442,6 +474,14 @@ void NetErrorHelper::SetIsShowingDownloadButton(bool show) {
       new ChromeViewHostMsg_SetIsShowingDownloadButtonInErrorPage(
           render_frame()->GetRoutingID(), show));
 #endif  // defined(OS_ANDROID)
+}
+
+void NetErrorHelper::OfflineContentAvailable(
+    const std::string& offline_content_json) {
+#if defined(OS_ANDROID)
+  render_frame()->ExecuteJavaScript(base::UTF8ToUTF16(
+      base::StrCat({"offlineContentAvailable(", offline_content_json, ");"})));
+#endif
 }
 
 void NetErrorHelper::DNSProbeStatus(int32_t status_num) {

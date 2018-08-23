@@ -7,15 +7,18 @@
 #include <cmath>
 #include <string>
 
-#include "content/common/media/media_stream_controls.h"
+#include "content/renderer/media/stream/media_stream_source.h"
 #include "content/renderer/media/stream/mock_constraint_factory.h"
 #include "media/base/limits.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebMediaConstraints.h"
+#include "third_party/blink/public/platform/web_media_constraints.h"
 
 namespace content {
 
 namespace {
+
+const double kDefaultScreenCastAspectRatio =
+    static_cast<double>(kDefaultScreenCastWidth) / kDefaultScreenCastHeight;
 
 void CheckNonResolutionDefaults(const VideoCaptureSettings& result) {
   EXPECT_EQ(kDefaultScreenCastFrameRate, result.FrameRate());
@@ -57,11 +60,12 @@ void CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(
 class MediaStreamConstraintsUtilVideoContentTest : public testing::Test {
  protected:
   VideoCaptureSettings SelectSettings(
-      const std::string& stream_source =
-          std::string(kMediaStreamSourceScreen)) {
+      MediaStreamType stream_type = MEDIA_GUM_DESKTOP_VIDEO_CAPTURE) {
     blink::WebMediaConstraints constraints =
         constraint_factory_.CreateWebMediaConstraints();
-    return SelectSettingsVideoContentCapture(constraints, stream_source);
+    return SelectSettingsVideoContentCapture(constraints, stream_type,
+                                             kDefaultScreenCastWidth,
+                                             kDefaultScreenCastHeight);
   }
 
   MockConstraintFactory constraint_factory_;
@@ -2030,7 +2034,7 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, ResolutionChangePolicy) {
   }
   {
     constraint_factory_.Reset();
-    auto result = SelectSettings(kMediaStreamSourceTab);
+    auto result = SelectSettings(MEDIA_GUM_TAB_VIDEO_CAPTURE);
     EXPECT_EQ(kDefaultScreenCastWidth, result.Width());
     EXPECT_EQ(kDefaultScreenCastHeight, result.Height());
     // Default policy for tab capture is fixed resolution.

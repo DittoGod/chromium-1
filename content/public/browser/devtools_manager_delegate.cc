@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_manager_delegate.h"
+#include "base/values.h"
+#include "content/public/browser/devtools_agent_host.h"
 
 namespace content {
 
@@ -22,6 +23,10 @@ std::string DevToolsManagerDelegate::GetTargetDescription(WebContents* wc) {
   return std::string();
 }
 
+bool DevToolsManagerDelegate::AllowInspectingWebContents(WebContents* wc) {
+  return true;
+}
+
 DevToolsAgentHost::List DevToolsManagerDelegate::RemoteDebuggingTargets() {
   return DevToolsAgentHost::GetOrCreateAll();
 }
@@ -31,23 +36,32 @@ scoped_refptr<DevToolsAgentHost> DevToolsManagerDelegate::CreateNewTarget(
   return nullptr;
 }
 
+std::vector<content::BrowserContext*>
+DevToolsManagerDelegate::GetBrowserContexts() {
+  return std::vector<content::BrowserContext*>();
+}
+
+content::BrowserContext* DevToolsManagerDelegate::CreateBrowserContext() {
+  return nullptr;
+}
+
+void DevToolsManagerDelegate::DisposeBrowserContext(BrowserContext*,
+                                                    DisposeCallback callback) {
+  std::move(callback).Run(false, "Browser Context disposal is not supported");
+}
+
 void DevToolsManagerDelegate::ClientAttached(DevToolsAgentHost* agent_host,
                                              DevToolsAgentHostClient* client) {}
 void DevToolsManagerDelegate::ClientDetached(DevToolsAgentHost* agent_host,
                                              DevToolsAgentHostClient* client) {}
 
-bool DevToolsManagerDelegate::HandleCommand(DevToolsAgentHost* agent_host,
-                                            DevToolsAgentHostClient* client,
-                                            base::DictionaryValue* command) {
-  return false;
-}
-
-bool DevToolsManagerDelegate::HandleAsyncCommand(
+void DevToolsManagerDelegate::HandleCommand(
     DevToolsAgentHost* agent_host,
     DevToolsAgentHostClient* client,
-    base::DictionaryValue* command,
-    const CommandCallback& callback) {
-  return false;
+    std::unique_ptr<base::DictionaryValue> command,
+    const std::string& message,
+    NotHandledCallback callback) {
+  std::move(callback).Run(std::move(command), message);
 }
 
 std::string DevToolsManagerDelegate::GetDiscoveryPageHTML() {

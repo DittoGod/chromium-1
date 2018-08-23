@@ -18,6 +18,28 @@
 
 namespace views {
 
+void FireLocationChanges(aura::Window* window) {
+  AXAuraObjCache::GetInstance()->FireEvent(
+      AXAuraObjCache::GetInstance()->GetOrCreate(window),
+      ax::mojom::Event::kLocationChanged);
+
+  Widget* widget = Widget::GetWidgetForNativeView(window);
+  if (widget) {
+    AXAuraObjCache::GetInstance()->FireEvent(
+        AXAuraObjCache::GetInstance()->GetOrCreate(widget),
+        ax::mojom::Event::kLocationChanged);
+
+    views::View* root_view = widget->GetRootView();
+    if (root_view)
+      root_view->NotifyAccessibilityEvent(ax::mojom::Event::kLocationChanged,
+                                          true);
+  }
+
+  aura::Window::Windows children = window->children();
+  for (size_t i = 0; i < children.size(); ++i)
+    FireLocationChanges(children[i]);
+}
+
 AXWindowObjWrapper::AXWindowObjWrapper(aura::Window* window)
     : window_(window),
       is_alert_(false),
@@ -34,6 +56,10 @@ AXWindowObjWrapper::~AXWindowObjWrapper() {
 
   window_->RemoveObserver(this);
   window_ = NULL;
+}
+
+bool AXWindowObjWrapper::IsIgnored() {
+  return false;
 }
 
 AXAuraObjWrapper* AXWindowObjWrapper::GetParent() {
@@ -69,13 +95,7 @@ void AXWindowObjWrapper::Serialize(ui::AXNodeData* out_node_data) {
                                     base::UTF16ToUTF8(window_->GetTitle()));
   if (!window_->IsVisible())
     out_node_data->AddState(ax::mojom::State::kInvisible);
-
-  out_node_data->location = gfx::RectF(window_->bounds());
-  if (window_->parent()) {
-    out_node_data->offset_container_id =
-        AXAuraObjCache::GetInstance()->GetID(window_->parent());
-  }
-
+  out_node_data->location = gfx::RectF(window_->GetBoundsInScreen());
   ui::AXTreeIDRegistry::AXTreeID child_ax_tree_id =
       window_->GetProperty(ui::kChildAXTreeID);
   if (child_ax_tree_id != ui::AXTreeIDRegistry::kNoAXTreeID) {
@@ -123,20 +143,7 @@ void AXWindowObjWrapper::OnWindowBoundsChanged(
   if (window != window_)
     return;
 
-  AXAuraObjCache::GetInstance()->FireEvent(this,
-                                           ax::mojom::Event::kLocationChanged);
-
-  Widget* widget = Widget::GetWidgetForNativeView(window);
-  if (widget) {
-    AXAuraObjCache::GetInstance()->FireEvent(
-        AXAuraObjCache::GetInstance()->GetOrCreate(widget),
-        ax::mojom::Event::kLocationChanged);
-
-    views::View* root_view = widget->GetRootView();
-    if (root_view)
-      root_view->NotifyAccessibilityEvent(ax::mojom::Event::kLocationChanged,
-                                          true);
-  }
+  FireLocationChanges(window_);
 }
 
 void AXWindowObjWrapper::OnWindowPropertyChanged(aura::Window* window,
@@ -146,6 +153,12 @@ void AXWindowObjWrapper::OnWindowPropertyChanged(aura::Window* window,
     AXAuraObjCache::GetInstance()->FireEvent(
         this, ax::mojom::Event::kChildrenChanged);
   }
+}
+
+void AXWindowObjWrapper::OnWindowVisibilityChanged(aura::Window* window,
+                                                   bool visible) {
+  AXAuraObjCache::GetInstance()->FireEvent(this,
+                                           ax::mojom::Event::kStateChanged);
 }
 
 }  // namespace views

@@ -74,10 +74,11 @@ typedef enum Cronet_RESULT {
   Cronet_RESULT_ILLEGAL_STATE_ENGINE_ALREADY_STARTED = -203,
   Cronet_RESULT_ILLEGAL_STATE_REQUEST_ALREADY_STARTED = -204,
   Cronet_RESULT_ILLEGAL_STATE_REQUEST_NOT_INITIALIZED = -205,
-  Cronet_RESULT_ILLEGAL_STATE_REQUEST_NOT_STARTED = -206,
-  Cronet_RESULT_ILLEGAL_STATE_UNEXPECTED_REDIRECT = -207,
-  Cronet_RESULT_ILLEGAL_STATE_UNEXPECTED_READ = -208,
-  Cronet_RESULT_ILLEGAL_STATE_READ_FAILED = -209,
+  Cronet_RESULT_ILLEGAL_STATE_REQUEST_ALREADY_INITIALIZED = -206,
+  Cronet_RESULT_ILLEGAL_STATE_REQUEST_NOT_STARTED = -207,
+  Cronet_RESULT_ILLEGAL_STATE_UNEXPECTED_REDIRECT = -208,
+  Cronet_RESULT_ILLEGAL_STATE_UNEXPECTED_READ = -209,
+  Cronet_RESULT_ILLEGAL_STATE_READ_FAILED = -210,
   Cronet_RESULT_NULL_POINTER = -300,
   Cronet_RESULT_NULL_POINTER_HOSTNAME = -301,
   Cronet_RESULT_NULL_POINTER_SHA256_PINS = -302,
@@ -135,9 +136,9 @@ typedef enum Cronet_UrlRequestStatusListener_Status {
   Cronet_UrlRequestStatusListener_Status_WAITING_FOR_AVAILABLE_SOCKET = 2,
   Cronet_UrlRequestStatusListener_Status_WAITING_FOR_DELEGATE = 3,
   Cronet_UrlRequestStatusListener_Status_WAITING_FOR_CACHE = 4,
-  Cronet_UrlRequestStatusListener_Status_DOWNLOADING_PROXY_SCRIPT = 5,
+  Cronet_UrlRequestStatusListener_Status_DOWNLOADING_PAC_FILE = 5,
   Cronet_UrlRequestStatusListener_Status_RESOLVING_PROXY_FOR_URL = 6,
-  Cronet_UrlRequestStatusListener_Status_RESOLVING_HOST_IN_PROXY_SCRIPT = 7,
+  Cronet_UrlRequestStatusListener_Status_RESOLVING_HOST_IN_PAC_FILE = 7,
   Cronet_UrlRequestStatusListener_Status_ESTABLISHING_PROXY_TUNNEL = 8,
   Cronet_UrlRequestStatusListener_Status_RESOLVING_HOST = 9,
   Cronet_UrlRequestStatusListener_Status_CONNECTING = 10,
@@ -467,34 +468,36 @@ Cronet_UploadDataSink_GetClientContext(Cronet_UploadDataSinkPtr self);
 // The app calls them to manipulate Cronet_UploadDataSink.
 CRONET_EXPORT
 void Cronet_UploadDataSink_OnReadSucceeded(Cronet_UploadDataSinkPtr self,
+                                           uint64_t bytes_read,
                                            bool final_chunk);
 CRONET_EXPORT
 void Cronet_UploadDataSink_OnReadError(Cronet_UploadDataSinkPtr self,
-                                       Cronet_ErrorPtr error);
+                                       Cronet_String error_message);
 CRONET_EXPORT
-void Cronet_UploadDataSink_OnRewindSucceded(Cronet_UploadDataSinkPtr self);
+void Cronet_UploadDataSink_OnRewindSucceeded(Cronet_UploadDataSinkPtr self);
 CRONET_EXPORT
 void Cronet_UploadDataSink_OnRewindError(Cronet_UploadDataSinkPtr self,
-                                         Cronet_ErrorPtr error);
+                                         Cronet_String error_message);
 // Concrete interface Cronet_UploadDataSink is implemented by Cronet.
 // The app can implement these for testing / mocking.
 typedef void (*Cronet_UploadDataSink_OnReadSucceededFunc)(
     Cronet_UploadDataSinkPtr self,
+    uint64_t bytes_read,
     bool final_chunk);
 typedef void (*Cronet_UploadDataSink_OnReadErrorFunc)(
     Cronet_UploadDataSinkPtr self,
-    Cronet_ErrorPtr error);
-typedef void (*Cronet_UploadDataSink_OnRewindSuccededFunc)(
+    Cronet_String error_message);
+typedef void (*Cronet_UploadDataSink_OnRewindSucceededFunc)(
     Cronet_UploadDataSinkPtr self);
 typedef void (*Cronet_UploadDataSink_OnRewindErrorFunc)(
     Cronet_UploadDataSinkPtr self,
-    Cronet_ErrorPtr error);
+    Cronet_String error_message);
 // Concrete interface Cronet_UploadDataSink is implemented by Cronet.
 // The app can use this for testing / mocking.
 CRONET_EXPORT Cronet_UploadDataSinkPtr Cronet_UploadDataSink_CreateWith(
     Cronet_UploadDataSink_OnReadSucceededFunc OnReadSucceededFunc,
     Cronet_UploadDataSink_OnReadErrorFunc OnReadErrorFunc,
-    Cronet_UploadDataSink_OnRewindSuccededFunc OnRewindSuccededFunc,
+    Cronet_UploadDataSink_OnRewindSucceededFunc OnRewindSucceededFunc,
     Cronet_UploadDataSink_OnRewindErrorFunc OnRewindErrorFunc);
 
 ///////////////////////

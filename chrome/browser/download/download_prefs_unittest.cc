@@ -117,3 +117,47 @@ TEST(DownloadPrefsTest, AutoOpenCheckIsCaseInsensitive) {
   EXPECT_TRUE(prefs.IsAutoOpenEnabledBasedOnExtension(
       base::FilePath(FILE_PATH_LITERAL("x.Bar"))));
 }
+
+#if defined(OS_CHROMEOS)
+TEST(DownloadPrefsTest, DownloadDirSanitization) {
+  content::TestBrowserThreadBundle threads_are_required_for_testing_profile;
+  TestingProfile profile;
+  DownloadPrefs prefs(&profile);
+  const base::FilePath default_dir =
+      prefs.GetDefaultDownloadDirectoryForProfile();
+
+  // Test a valid path.
+  base::FilePath testdir = default_dir.AppendASCII("testdir");
+  profile.GetPrefs()->SetString(prefs::kDownloadDefaultDirectory,
+                                testdir.value());
+  EXPECT_TRUE(prefs.DownloadPath().IsAbsolute());
+  EXPECT_EQ(prefs.DownloadPath(), testdir);
+
+  // Test a valid path for Android files.
+  testdir = base::FilePath("/run/arc/sdcard/write/emulated/0/Documents");
+  profile.GetPrefs()->SetString(prefs::kDownloadDefaultDirectory,
+                                testdir.value());
+  EXPECT_TRUE(prefs.DownloadPath().IsAbsolute());
+  EXPECT_EQ(prefs.DownloadPath(), testdir);
+
+  // Test a valid path for Linux files.
+  testdir = base::FilePath("/media/fuse/crostini_test_termina_penguin/testdir");
+  profile.GetPrefs()->SetString(prefs::kDownloadDefaultDirectory,
+                                testdir.value());
+  EXPECT_TRUE(prefs.DownloadPath().IsAbsolute());
+  EXPECT_EQ(prefs.DownloadPath(), testdir);
+
+  // Test with an invalid path outside the download directory.
+  profile.GetPrefs()->SetString(prefs::kDownloadDefaultDirectory,
+                                "/home/chronos");
+  EXPECT_TRUE(prefs.DownloadPath().IsAbsolute());
+  EXPECT_EQ(prefs.DownloadPath(), default_dir);
+
+  // Test with an invalid path containing parent references.
+  base::FilePath parent_reference = default_dir.AppendASCII("..");
+  profile.GetPrefs()->SetString(prefs::kDownloadDefaultDirectory,
+                                parent_reference.value());
+  EXPECT_TRUE(prefs.DownloadPath().IsAbsolute());
+  EXPECT_EQ(prefs.DownloadPath(), default_dir);
+}
+#endif

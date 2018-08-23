@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -26,12 +27,6 @@
     {
       "name": "LayoutInline (relative positioned) SPAN",
       "position": [108, 108]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (floating) DIV id='float'",
-      "reason": "style change"
     }
   ]
 }

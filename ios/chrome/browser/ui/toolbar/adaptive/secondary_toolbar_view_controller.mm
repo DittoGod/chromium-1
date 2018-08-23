@@ -5,8 +5,8 @@
 #import "ios/chrome/browser/ui/toolbar/adaptive/secondary_toolbar_view_controller.h"
 
 #import "ios/chrome/browser/ui/toolbar/adaptive/secondary_toolbar_view.h"
-#import "ios/chrome/browser/ui/toolbar/clean/toolbar_constants.h"
-#import "ios/chrome/browser/ui/toolbar/clean/toolbar_tools_menu_button.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_constants.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_tools_menu_button.h"
 #import "ios/chrome/browser/ui/util/named_guide.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -28,9 +28,10 @@
       [[SecondaryToolbarView alloc] initWithButtonFactory:self.buttonFactory];
 }
 
-- (void)viewDidLoad {
-  [super viewDidLoad];
-  self.view.toolsMenuButton.guideName = kTabSwitcherGuide;
+- (void)didMoveToParentViewController:(UIViewController*)parent {
+  [super didMoveToParentViewController:parent];
+  [NamedGuide guideWithName:kSecondaryToolbarGuide view:self.view]
+      .constrainedView = self.view;
 }
 
 @end

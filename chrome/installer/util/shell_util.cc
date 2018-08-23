@@ -1273,7 +1273,7 @@ bool GetAppShortcutsFolder(ShellUtil::ShellChange level, base::FilePath* path) {
   DCHECK_GE(base::win::GetVersion(), base::win::VERSION_WIN8);
 
   base::FilePath folder;
-  if (!PathService::Get(base::DIR_APP_SHORTCUTS, &folder)) {
+  if (!base::PathService::Get(base::DIR_APP_SHORTCUTS, &folder)) {
     LOG(ERROR) << "Could not get application shortcuts location.";
     return false;
   }
@@ -1620,7 +1620,7 @@ bool ShellUtil::GetShortcutPath(ShortcutLocation location,
       return false;
   }
 
-  if (!PathService::Get(dir_key, path) || path->empty()) {
+  if (!base::PathService::Get(dir_key, path) || path->empty()) {
     NOTREACHED() << dir_key;
     return false;
   }
@@ -1906,7 +1906,7 @@ base::string16 ShellUtil::BuildAppModelId(
 
 ShellUtil::DefaultState ShellUtil::GetChromeDefaultState() {
   base::FilePath app_path;
-  if (!PathService::Get(base::FILE_EXE, &app_path)) {
+  if (!base::PathService::Get(base::FILE_EXE, &app_path)) {
     NOTREACHED();
     return UNKNOWN_DEFAULT;
   }
@@ -1938,7 +1938,7 @@ ShellUtil::DefaultState ShellUtil::GetChromeDefaultProtocolClientState(
     return UNKNOWN_DEFAULT;
 
   base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED();
     return UNKNOWN_DEFAULT;
   }
@@ -2029,6 +2029,29 @@ bool ShellUtil::MakeChromeDefault(BrowserDistribution* dist,
   SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
   return ret;
 }
+
+#if defined(GOOGLE_CHROME_BUILD)
+// static
+bool ShellUtil::LaunchUninstallAppsSettings() {
+  DCHECK_GE(base::win::GetVersion(), base::win::VERSION_WIN10);
+
+  static constexpr wchar_t kControlPanelAppModelId[] =
+      L"windows.immersivecontrolpanel_cw5n1h2txyewy"
+      L"!microsoft.windows.immersivecontrolpanel";
+
+  Microsoft::WRL::ComPtr<IApplicationActivationManager> activator;
+  HRESULT hr = ::CoCreateInstance(CLSID_ApplicationActivationManager, nullptr,
+                                  CLSCTX_ALL, IID_PPV_ARGS(&activator));
+  if (FAILED(hr))
+    return false;
+
+  DWORD pid = 0;
+  CoAllowSetForegroundWindow(activator.Get(), nullptr);
+  hr = activator->ActivateApplication(
+      kControlPanelAppModelId, L"page=SettingsPageAppsSizes", AO_NONE, &pid);
+  return SUCCEEDED(hr);
+}
+#endif  // defined(GOOGLE_CHROME_BUILD)
 
 bool ShellUtil::ShowMakeChromeDefaultSystemUI(
     BrowserDistribution* dist,

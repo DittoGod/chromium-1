@@ -29,6 +29,7 @@ class UiSceneCreator {
                  ContentInputDelegate* content_input_delegate,
                  KeyboardDelegate* keyboard_delegate,
                  TextInputDelegate* text_input_delegate,
+                 AudioDelegate* audio_delegate,
                  Model* model);
   ~UiSceneCreator();
 
@@ -39,27 +40,25 @@ class UiSceneCreator {
   void CreateWebVrRoot();
   void CreateSystemIndicators();
   void CreateContentQuad();
-  void CreateUnderDevelopmentNotice();
   void CreateBackground();
   void CreateViewportAwareRoot();
   void CreateUrlBar();
-  void CreateLoadingIndicator();
-  void CreateSnackbars();
+  void CreateOverflowMenu();
   void CreateOmnibox();
   void CreateCloseButton();
   void CreateExitPrompt();
-  void CreateAudioPermissionPrompt();
-  void CreateFullscreenToast();
+  void CreatePrompts();
+  void CreateToasts();
   void CreateVoiceSearchUiGroup();
   void CreateContentRepositioningAffordance();
   void CreateExitWarning();
   void CreateWebVrSubtree();
   void CreateWebVrOverlayElements();
-  void CreateSplashScreenForDirectWebVrLaunch();
   void CreateWebVrTimeoutScreen();
   void CreateController();
   void CreateKeyboard();
-  void CreateHostedUi();
+  void Create2dBrowsingHostedUi();
+  void CreateTabsViews();
 
   UiBrowserInterface* browser_;
   UiScene* scene_;
@@ -67,6 +66,7 @@ class UiSceneCreator {
   ContentInputDelegate* content_input_delegate_;
   KeyboardDelegate* keyboard_delegate_;
   TextInputDelegate* text_input_delegate_;
+  AudioDelegate* audio_delegate_;
   Model* model_;
 
   DISALLOW_COPY_AND_ASSIGN(UiSceneCreator);

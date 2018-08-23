@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -27,16 +28,6 @@
           "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='outer'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='inner2'",
-      "reason": "appeared"
     }
   ]
 }

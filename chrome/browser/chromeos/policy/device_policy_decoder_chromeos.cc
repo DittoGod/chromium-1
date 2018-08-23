@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/syslog_logging.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
@@ -393,6 +394,19 @@ void DecodeLoginPolicies(const em::ChromeDeviceSettingsProto& policy,
                   POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
                   POLICY_SOURCE_CLOUD, std::move(rules), nullptr);
   }
+
+  if (policy.has_saml_login_authentication_type()) {
+    const em::SamlLoginAuthenticationTypeProto& container(
+        policy.saml_login_authentication_type());
+    if (container.has_saml_login_authentication_type()) {
+      policies->Set(key::kDeviceSamlLoginAuthenticationType,
+                    POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                    POLICY_SOURCE_CLOUD,
+                    std::make_unique<base::Value>(
+                        container.saml_login_authentication_type()),
+                    nullptr);
+    }
+  }
 }
 
 void DecodeNetworkPolicies(const em::ChromeDeviceSettingsProto& policy,
@@ -658,6 +672,31 @@ void DecodeAutoUpdatePolicies(const em::ChromeDeviceSettingsProto& policy,
                     std::make_unique<base::Value>(container.p2p_enabled()),
                     nullptr);
     }
+
+    if (container.has_disallowed_time_intervals()) {
+      std::unique_ptr<base::Value> decoded_json =
+          DecodeJsonStringAndDropUnknownBySchema(
+              container.disallowed_time_intervals(),
+              key::kDeviceAutoUpdateTimeRestrictions);
+      if (decoded_json && !decoded_json->is_none()) {
+        policies->Set(key::kDeviceAutoUpdateTimeRestrictions,
+                      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                      POLICY_SOURCE_CLOUD, std::move(decoded_json), nullptr);
+      }
+    }
+
+    if (container.has_staging_schedule()) {
+      std::unique_ptr<base::Value> staging_percent_of_fleet_per_week_policy =
+          DecodeJsonStringAndDropUnknownBySchema(
+              container.staging_schedule(), key::kDeviceUpdateStagingSchedule);
+
+      if (staging_percent_of_fleet_per_week_policy) {
+        policies->Set(key::kDeviceUpdateStagingSchedule, POLICY_LEVEL_MANDATORY,
+                      POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+                      std::move(staging_percent_of_fleet_per_week_policy),
+                      nullptr);
+      }
+    }
   }
 
   if (policy.has_allow_kiosk_app_control_chrome_version()) {
@@ -897,9 +936,14 @@ void DecodeGenericPolicies(const em::ChromeDeviceSettingsProto& policy,
       std::unique_ptr<base::DictionaryValue> dict_val =
           base::DictionaryValue::From(
               base::JSONReader::Read(container.device_wallpaper_image()));
-      policies->Set(key::kDeviceWallpaperImage, POLICY_LEVEL_MANDATORY,
-                    POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
-                    std::move(dict_val), nullptr);
+      if (dict_val) {
+        policies->Set(key::kDeviceWallpaperImage, POLICY_LEVEL_MANDATORY,
+                      POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+                      std::move(dict_val), nullptr);
+      } else {
+        SYSLOG(ERROR) << "Value of wallpaper policy has invalid format: "
+                      << container.device_wallpaper_image();
+      }
     }
   }
 
@@ -1000,11 +1044,13 @@ void DecodeGenericPolicies(const em::ChromeDeviceSettingsProto& policy,
   if (policy.has_unaffiliated_arc_allowed()) {
     const em::UnaffiliatedArcAllowedProto& container(
         policy.unaffiliated_arc_allowed());
-    policies->Set(
-        key::kUnaffiliatedArcAllowed, POLICY_LEVEL_MANDATORY,
-        POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
-        std::make_unique<base::Value>(container.unaffiliated_arc_allowed()),
-        nullptr);
+    if (container.has_unaffiliated_arc_allowed()) {
+      policies->Set(
+          key::kUnaffiliatedArcAllowed, POLICY_LEVEL_MANDATORY,
+          POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+          std::make_unique<base::Value>(container.unaffiliated_arc_allowed()),
+          nullptr);
+    }
   }
 
   if (policy.has_device_user_policy_loopback_processing_mode()) {
@@ -1043,11 +1089,13 @@ void DecodeGenericPolicies(const em::ChromeDeviceSettingsProto& policy,
   if (policy.has_virtual_machines_allowed()) {
     const em::VirtualMachinesAllowedProto& container(
         policy.virtual_machines_allowed());
-    policies->Set(
-        key::kVirtualMachinesAllowed, POLICY_LEVEL_MANDATORY,
-        POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
-        std::make_unique<base::Value>(container.virtual_machines_allowed()),
-        nullptr);
+    if (container.has_virtual_machines_allowed()) {
+      policies->Set(
+          key::kVirtualMachinesAllowed, POLICY_LEVEL_MANDATORY,
+          POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+          std::make_unique<base::Value>(container.virtual_machines_allowed()),
+          nullptr);
+    }
   }
 
   if (policy.has_device_machine_password_change_rate()) {

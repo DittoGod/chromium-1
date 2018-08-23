@@ -25,18 +25,18 @@
 #include "components/spellcheck/common/spellcheck_switches.h"
 #include "components/spellcheck/renderer/spellcheck_language.h"
 #include "components/spellcheck/renderer/spellcheck_provider.h"
-#include "components/spellcheck/spellcheck_build_features.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/simple_connection_filter.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_frame_visitor.h"
 #include "content/public/renderer/render_thread.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebTextCheckingCompletion.h"
-#include "third_party/WebKit/public/web/WebTextCheckingResult.h"
-#include "third_party/WebKit/public/web/WebTextDecorationType.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_text_checking_completion.h"
+#include "third_party/blink/public/web/web_text_checking_result.h"
+#include "third_party/blink/public/web/web_text_decoration_type.h"
 
 using blink::WebVector;
 using blink::WebString;
@@ -65,29 +65,12 @@ bool UpdateSpellcheckEnabled::Visit(content::RenderFrame* render_frame) {
   return true;
 }
 
-class DocumentMarkersRemover : public content::RenderFrameVisitor {
- public:
-  explicit DocumentMarkersRemover(const std::set<std::string>& words);
-  ~DocumentMarkersRemover() override {}
-  bool Visit(content::RenderFrame* render_frame) override;
-
- private:
-  WebVector<WebString> words_;
-  DISALLOW_COPY_AND_ASSIGN(DocumentMarkersRemover);
-};
-
-DocumentMarkersRemover::DocumentMarkersRemover(
-    const std::set<std::string>& words)
-    : words_(words.size()) {
-  std::transform(words.begin(), words.end(), words_.begin(),
+WebVector<WebString> ConvertToWebStringFromUtf8(
+    const std::set<std::string>& words) {
+  WebVector<WebString> result(words.size());
+  std::transform(words.begin(), words.end(), result.begin(),
                  [](const std::string& w) { return WebString::FromUTF8(w); });
-}
-
-bool DocumentMarkersRemover::Visit(content::RenderFrame* render_frame) {
-  // TODO(xiaochengh): Both nullptr checks seem unnecessary.
-  if (render_frame && render_frame->GetWebFrame())
-    render_frame->GetWebFrame()->RemoveSpellingMarkersUnderWords(words_);
-  return true;
+  return result;
 }
 
 bool IsApostrophe(base::char16 c) {
@@ -233,7 +216,8 @@ void SpellCheck::Initialize(
   custom_dictionary_.Init(
       std::set<std::string>(custom_words.begin(), custom_words.end()));
 #if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
-  PostDelayedSpellCheckTask(pending_request_param_.release());
+  if (!InitializeIfNeeded())
+    PostDelayedSpellCheckTask(pending_request_param_.release());
 #endif
 
   spellcheck_enabled_ = enable;
@@ -245,14 +229,9 @@ void SpellCheck::CustomDictionaryChanged(
     const std::vector<std::string>& words_added,
     const std::vector<std::string>& words_removed) {
   const std::set<std::string> added(words_added.begin(), words_added.end());
-
+  NotifyDictionaryObservers(ConvertToWebStringFromUtf8(added));
   custom_dictionary_.OnCustomDictionaryChanged(
       added, std::set<std::string>(words_removed.begin(), words_removed.end()));
-  if (added.empty())
-    return;
-
-  DocumentMarkersRemover markersRemover(added);
-  content::RenderFrame::ForEach(&markersRemover);
 }
 
 // TODO(groby): Make sure we always have a spelling engine, even before
@@ -411,7 +390,7 @@ void SpellCheck::RequestTextChecking(
     const base::string16& text,
     blink::WebTextCheckingCompletion* completion) {
   // Clean up the previous request before starting a new request.
-  if (pending_request_param_.get())
+  if (pending_request_param_)
     pending_request_param_->completion()->DidCancelCheckingText();
 
   pending_request_param_.reset(new SpellcheckRequest(
@@ -532,4 +511,21 @@ bool SpellCheck::IsSpellcheckEnabled() {
   if (!spellcheck::IsAndroidSpellCheckFeatureEnabled()) return false;
 #endif
   return spellcheck_enabled_;
+}
+
+void SpellCheck::AddDictionaryUpdateObserver(
+    DictionaryUpdateObserver* observer) {
+  return dictionary_update_observers_.AddObserver(observer);
+}
+
+void SpellCheck::RemoveDictionaryUpdateObserver(
+    DictionaryUpdateObserver* observer) {
+  return dictionary_update_observers_.RemoveObserver(observer);
+}
+
+void SpellCheck::NotifyDictionaryObservers(
+    const WebVector<WebString>& words_added) {
+  for (auto& observer : dictionary_update_observers_) {
+    observer.OnDictionaryUpdated(words_added);
+  }
 }

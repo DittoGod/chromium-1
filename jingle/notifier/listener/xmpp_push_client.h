@@ -47,8 +47,10 @@ class XmppPushClient :
   void AddObserver(PushClientObserver* observer) override;
   void RemoveObserver(PushClientObserver* observer) override;
   void UpdateSubscriptions(const SubscriptionList& subscriptions) override;
-  void UpdateCredentials(const std::string& email,
-                         const std::string& token) override;
+  void UpdateCredentials(
+      const std::string& email,
+      const std::string& token,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation) override;
   void SendNotification(const Notification& notification) override;
   void SendPing() override;
 
@@ -71,7 +73,7 @@ class XmppPushClient :
  private:
   base::ThreadChecker thread_checker_;
   const NotifierOptions notifier_options_;
-  base::ObserverList<PushClientObserver> observers_;
+  base::ObserverList<PushClientObserver>::Unchecked observers_;
 
   // XMPP connection settings.
   SubscriptionList subscriptions_;

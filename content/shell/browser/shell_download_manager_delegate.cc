@@ -18,7 +18,7 @@
 #include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -93,7 +93,8 @@ bool ShellDownloadManagerDelegate::DetermineDownloadTarget(
       base::BindOnce(&ShellDownloadManagerDelegate::GenerateFilename,
                      download->GetURL(), download->GetContentDisposition(),
                      download->GetSuggestedFilename(), download->GetMimeType(),
-                     default_download_path_, filename_determined_callback));
+                     default_download_path_,
+                     std::move(filename_determined_callback)));
   return true;
 }
 

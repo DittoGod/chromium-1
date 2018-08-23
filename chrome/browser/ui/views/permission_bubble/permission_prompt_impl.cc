@@ -15,9 +15,8 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/bubble_anchor_util_views.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row_observer.h"
 #include "chrome/grit/generated_resources.h"
@@ -28,7 +27,7 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_constants.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -41,7 +40,7 @@
 namespace {
 
 // (Square) pixel size of icon.
-constexpr int kIconSize = 18;
+constexpr int kPermissionIconSize = 18;
 
 // The type of arrow to display on the permission bubble.
 constexpr views::BubbleBorder::Arrow kPermissionAnchorArrow =
@@ -73,9 +72,7 @@ class PermissionsBubbleDialogDelegateView
 
   void CloseBubble();
 
-  // BubbleDialogDelegateView:
-  ax::mojom::Role GetAccessibleWindowRole() const override;
-  base::string16 GetAccessibleWindowTitle() const override;
+  // BubbleDialogDelegateView overrides.
   bool ShouldShowCloseButton() const override;
   base::string16 GetWindowTitle() const override;
   void OnWidgetDestroying(views::Widget* widget) override;
@@ -131,8 +128,8 @@ PermissionsBubbleDialogDelegateView::PermissionsBubbleDialogDelegateView(
         provider->GetDistanceMetric(views::DISTANCE_RELATED_LABEL_HORIZONTAL)));
     views::ImageView* icon = new views::ImageView();
     const gfx::VectorIcon& vector_id = requests[index]->GetIconId();
-    icon->SetImage(
-        gfx::CreateVectorIcon(vector_id, kIconSize, gfx::kChromeIconGrey));
+    icon->SetImage(gfx::CreateVectorIcon(vector_id, kPermissionIconSize,
+                                         gfx::kChromeIconGrey));
     icon->SetTooltipText(base::string16());  // Redundant with the text fragment
     label_container->AddChildView(icon);
     views::Label* label =
@@ -176,17 +173,6 @@ void PermissionsBubbleDialogDelegateView::AddedToWidget() {
   // truncated from the least significant side. Explicitly disable multiline.
   title->SetMultiLine(false);
   GetBubbleFrameView()->SetTitleView(std::move(title));
-}
-
-ax::mojom::Role PermissionsBubbleDialogDelegateView::GetAccessibleWindowRole()
-    const {
-  return ax::mojom::Role::kAlertDialog;
-}
-
-base::string16 PermissionsBubbleDialogDelegateView::GetAccessibleWindowTitle()
-    const {
-  return l10n_util::GetStringFUTF16(IDS_PERMISSIONS_BUBBLE_ACCESSIBLE_TITLE,
-                                    name_or_origin_.name_or_origin);
 }
 
 bool PermissionsBubbleDialogDelegateView::ShouldShowCloseButton() const {
@@ -314,11 +300,6 @@ void PermissionPromptImpl::Show() {
   // Set |parent_window| because some valid anchors can become hidden.
   bubble_delegate_->set_parent_window(
       platform_util::GetViewForWindow(browser_->window()->GetNativeWindow()));
-
-  // Compensate for vertical padding in the anchor view's image. Note this is
-  // ignored whenever the anchor view is null.
-  bubble_delegate_->set_anchor_view_insets(gfx::Insets(
-      GetLayoutConstant(LOCATION_BAR_BUBBLE_ANCHOR_VERTICAL_INSET), 0));
 
   views::Widget* widget =
       views::BubbleDialogDelegateView::CreateBubble(bubble_delegate_);

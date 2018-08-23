@@ -63,8 +63,8 @@ class PreSigninPolicyFetcherTestBase : public testing::Test {
     // are shared between session_manager and chrome through files) and set it
     // into PathService, so PreSigninPolicyFetcher will use it.
     ASSERT_TRUE(tmp_dir_.CreateUniqueTempDir());
-    PathService::Override(chromeos::DIR_USER_POLICY_KEYS,
-                          user_policy_keys_dir());
+    base::PathService::Override(chromeos::DIR_USER_POLICY_KEYS,
+                                user_policy_keys_dir());
 
     auto cloud_policy_client = std::make_unique<MockCloudPolicyClient>();
     cloud_policy_client_ = cloud_policy_client.get();
@@ -93,8 +93,8 @@ class PreSigninPolicyFetcherTestBase : public testing::Test {
   // regular gaia user and AD user.
   virtual const AccountId& GetAccountId() const = 0;
 
-  cryptohome::Identification GetCryptohomeIdentification() const {
-    return cryptohome::Identification(GetAccountId());
+  cryptohome::AccountIdentifier GetCryptohomeAccountIdentifier() const {
+    return cryptohome::CreateAccountIdentifierFromAccountId(GetAccountId());
   }
 
   void StoreUserPolicyKey(const std::string& public_key) {
@@ -111,7 +111,7 @@ class PreSigninPolicyFetcherTestBase : public testing::Test {
   base::FilePath user_policy_key_file() const {
     const std::string sanitized_username =
         chromeos::CryptohomeClient::GetStubSanitizedUsername(
-            GetCryptohomeIdentification());
+            GetCryptohomeAccountIdentifier());
     return user_policy_keys_dir()
         .AppendASCII(sanitized_username)
         .AppendASCII("policy.pub");
@@ -121,7 +121,9 @@ class PreSigninPolicyFetcherTestBase : public testing::Test {
   // fetch call sequence.
   void ExpectFreshPolicyFetchOnClient(const std::string& dm_token,
                                       const std::string& client_id) {
-    EXPECT_CALL(*cloud_policy_client_, SetupRegistration(dm_token, client_id));
+    EXPECT_CALL(*cloud_policy_client_,
+                SetupRegistration(dm_token, client_id,
+                                  PolicyBuilder::GetUserAffiliationIds()));
     EXPECT_CALL(*cloud_policy_client_, FetchPolicy());
 
     expecting_fresh_policy_fetch_ = true;
@@ -171,9 +173,9 @@ class PreSigninPolicyFetcherTestBase : public testing::Test {
   UserPolicyBuilder cached_policy_;
   UserPolicyBuilder fresh_policy_;
   const cryptohome::KeyDefinition cryptohome_key_ =
-      cryptohome::KeyDefinition("secret",
-                                std::string() /* label */,
-                                cryptohome::PRIV_DEFAULT);
+      cryptohome::KeyDefinition::CreateForPassword("secret",
+                                                   std::string() /* label */,
+                                                   cryptohome::PRIV_DEFAULT);
 
   MockCloudPolicyClient* cloud_policy_client_ = nullptr;
   std::unique_ptr<PreSigninPolicyFetcher> pre_signin_policy_fetcher_;
@@ -209,7 +211,7 @@ TEST_F(PreSigninPolicyFetcherTest, NoPolicy) {
   // session_manager's RetrievePolicy* methods signal that there is no policy by
   // passing an empty string as policy blob.
   session_manager_client_.set_user_policy_without_session(
-      GetCryptohomeIdentification(), std::string());
+      GetCryptohomeAccountIdentifier(), std::string());
 
   ExpectNoFreshPolicyFetchOnClient();
   ExecuteFetchPolicy();
@@ -255,7 +257,7 @@ TEST_F(PreSigninPolicyFetcherTest, CachedPolicyFailsToValidate) {
   StoreUserPolicyKey(cached_policy_.GetPublicSigningKeyAsString());
 
   session_manager_client_.set_user_policy_without_session(
-      GetCryptohomeIdentification(), cached_policy_.GetBlob());
+      GetCryptohomeAccountIdentifier(), cached_policy_.GetBlob());
 
   ExpectNoFreshPolicyFetchOnClient();
   ExecuteFetchPolicy();
@@ -278,7 +280,7 @@ TEST_F(PreSigninPolicyFetcherTest, CachedPolicyFailsToValidate) {
 // attempt to fetch fresh policy in this case.
 TEST_F(PreSigninPolicyFetcherTest, NoCachedPolicyKeyAccessible) {
   session_manager_client_.set_user_policy_without_session(
-      GetCryptohomeIdentification(), cached_policy_.GetBlob());
+      GetCryptohomeAccountIdentifier(), cached_policy_.GetBlob());
 
   ExpectNoFreshPolicyFetchOnClient();
   ExecuteFetchPolicy();
@@ -302,7 +304,7 @@ TEST_F(PreSigninPolicyFetcherTest, NoCachedPolicyKeyAccessible) {
 TEST_F(PreSigninPolicyFetcherTest, FreshPolicyFetchFails) {
   StoreUserPolicyKey(cached_policy_.GetPublicSigningKeyAsString());
   session_manager_client_.set_user_policy_without_session(
-      GetCryptohomeIdentification(), cached_policy_.GetBlob());
+      GetCryptohomeAccountIdentifier(), cached_policy_.GetBlob());
 
   ExpectFreshPolicyFetchOnClient(PolicyBuilder::kFakeToken,
                                  PolicyBuilder::kFakeDeviceId);
@@ -333,7 +335,7 @@ TEST_F(PreSigninPolicyFetcherTest, FreshPolicyFetchTimeout) {
   StoreUserPolicyKey(cached_policy_.GetPublicSigningKeyAsString());
 
   session_manager_client_.set_user_policy_without_session(
-      GetCryptohomeIdentification(), cached_policy_.GetBlob());
+      GetCryptohomeAccountIdentifier(), cached_policy_.GetBlob());
 
   ExpectFreshPolicyFetchOnClient(PolicyBuilder::kFakeToken,
                                  PolicyBuilder::kFakeDeviceId);
@@ -364,7 +366,7 @@ TEST_F(PreSigninPolicyFetcherTest, FreshPolicyFetchFailsToValidate) {
   StoreUserPolicyKey(cached_policy_.GetPublicSigningKeyAsString());
 
   session_manager_client_.set_user_policy_without_session(
-      GetCryptohomeIdentification(), cached_policy_.GetBlob());
+      GetCryptohomeAccountIdentifier(), cached_policy_.GetBlob());
 
   ExpectFreshPolicyFetchOnClient(PolicyBuilder::kFakeToken,
                                  PolicyBuilder::kFakeDeviceId);
@@ -402,7 +404,7 @@ TEST_F(PreSigninPolicyFetcherTest, FreshPolicyFetchSuccess) {
   StoreUserPolicyKey(cached_policy_.GetPublicSigningKeyAsString());
 
   session_manager_client_.set_user_policy_without_session(
-      GetCryptohomeIdentification(), cached_policy_.GetBlob());
+      GetCryptohomeAccountIdentifier(), cached_policy_.GetBlob());
 
   ExpectFreshPolicyFetchOnClient(PolicyBuilder::kFakeToken,
                                  PolicyBuilder::kFakeDeviceId);
@@ -446,7 +448,7 @@ class PreSigninPolicyFetcherTestAD : public PreSigninPolicyFetcherTestBase {
 // key and no fresh policy fetch is attempted currently.
 TEST_F(PreSigninPolicyFetcherTestAD, UnsignedCachedPolicyForActiveDirectory) {
   session_manager_client_.set_user_policy_without_session(
-      GetCryptohomeIdentification(), cached_policy_.GetBlob());
+      GetCryptohomeAccountIdentifier(), cached_policy_.GetBlob());
 
   ExpectNoFreshPolicyFetchOnClient();
   ExecuteFetchPolicy();

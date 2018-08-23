@@ -13,7 +13,6 @@
 #include "base/guid.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
@@ -26,10 +25,9 @@
 #include "chrome/browser/loader/chrome_navigation_data.h"
 #include "chrome/browser/loader/predictor_resource_throttle.h"
 #include "chrome/browser/loader/safe_browsing_resource_throttle.h"
-#include "chrome/browser/mod_pagespeed/mod_pagespeed_metrics.h"
-#include "chrome/browser/net/loading_predictor_observer.h"
 #include "chrome/browser/page_load_metrics/metrics_web_contents_observer.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
+#include "chrome/browser/plugins/plugin_utils.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/prerender/prerender_resource_throttle.h"
@@ -40,9 +38,8 @@
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/signin/chrome_signin_helper.h"
 #include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/browser/ui/login/login_handler.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/features.h"
 #include "chrome/common/url_constants.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -52,14 +49,13 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_io_data.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_util.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
-#include "components/google/core/browser/google_util.h"
-#include "components/nacl/common/features.h"
+#include "components/google/core/common/google_util.h"
+#include "components/nacl/common/buildflags.h"
+#include "components/offline_pages/buildflags/buildflags.h"
 #include "components/offline_pages/core/request_header/offline_page_navigation_ui_data.h"
-#include "components/offline_pages/features/features.h"
 #include "components/policy/content/policy_blacklist_navigation_throttle.h"
-#include "components/policy/core/common/cloud/policy_header_io_helper.h"
 #include "components/previews/content/previews_content_util.h"
-#include "components/previews/content/previews_io_data.h"
+#include "components/previews/content/previews_decider_impl.h"
 #include "components/previews/core/previews_decider.h"
 #include "components/previews/core/previews_experiments.h"
 #include "components/previews/core/previews_user_data.h"
@@ -82,7 +78,7 @@
 #include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/previews_state.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/load_flags.h"
@@ -101,13 +97,8 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/api/streams_private/streams_private_api.h"
 #include "chrome/browser/extensions/user_script_listener.h"
-#include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
-#include "extensions/browser/extension_throttle_manager.h"
 #include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
-#include "extensions/browser/info_map.h"
-#include "extensions/common/constants.h"
 #include "extensions/common/extension_urls.h"
-#include "extensions/common/manifest_handlers/mime_types_handler.h"
 #include "extensions/common/user_script.h"
 #endif
 
@@ -129,8 +120,8 @@
 #endif
 
 using content::BrowserThread;
+using content::LoginDelegate;
 using content::RenderViewHost;
-using content::ResourceDispatcherHostLoginDelegate;
 using content::ResourceRequestInfo;
 using content::ResourceType;
 
@@ -144,20 +135,6 @@ using navigation_interception::InterceptNavigationDelegate;
 #endif
 
 namespace {
-
-ExternalProtocolHandler::Delegate* g_external_protocol_handler_delegate = NULL;
-
-void NotifyDownloadInitiatedOnUI(
-    const content::ResourceRequestInfo::WebContentsGetter& wc_getter) {
-  content::WebContents* web_contents = wc_getter.Run();
-  if (!web_contents)
-    return;
-
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_DOWNLOAD_INITIATED,
-      content::Source<content::WebContents>(web_contents),
-      content::NotificationService::NoDetails());
-}
 
 prerender::PrerenderManager* GetPrerenderManager(
     content::WebContents* web_contents) {
@@ -187,95 +164,6 @@ void UpdatePrerenderNetworkBytesCallback(content::WebContents* web_contents,
       GetPrerenderManager(web_contents);
   if (prerender_manager)
     prerender_manager->AddProfileNetworkBytesIfEnabled(bytes);
-}
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-void SendExecuteMimeTypeHandlerEvent(
-    std::unique_ptr<content::StreamInfo> stream,
-    int64_t expected_content_size,
-    const std::string& extension_id,
-    const std::string& view_id,
-    bool embedded,
-    int frame_tree_node_id,
-    int render_process_id,
-    int render_frame_id) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  content::WebContents* web_contents = nullptr;
-  if (frame_tree_node_id != -1) {
-    web_contents =
-        content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
-  } else {
-    web_contents = content::WebContents::FromRenderFrameHost(
-        content::RenderFrameHost::FromID(render_process_id, render_frame_id));
-  }
-  if (!web_contents)
-    return;
-
-  // If the request was for a prerender, abort the prerender and do not
-  // continue.
-  prerender::PrerenderContents* prerender_contents =
-      prerender::PrerenderContents::FromWebContents(web_contents);
-  if (prerender_contents) {
-    prerender_contents->Destroy(prerender::FINAL_STATUS_DOWNLOAD);
-    return;
-  }
-
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
-
-  StreamsPrivateAPI* streams_private = StreamsPrivateAPI::Get(profile);
-  if (!streams_private)
-    return;
-  streams_private->ExecuteMimeTypeHandler(
-      extension_id, std::move(stream), view_id, expected_content_size, embedded,
-      frame_tree_node_id, render_process_id, render_frame_id);
-}
-#endif  // !BUILDFLAG(ENABLE_EXTENSIONS)
-
-void LaunchURL(
-    const GURL& url,
-    const content::ResourceRequestInfo::WebContentsGetter& web_contents_getter,
-    ui::PageTransition page_transition,
-    bool has_user_gesture) {
-  // If there is no longer a WebContents, the request may have raced with tab
-  // closing. Don't fire the external request. (It may have been a prerender.)
-  content::WebContents* web_contents = web_contents_getter.Run();
-  if (!web_contents)
-    return;
-
-  // Do not launch external requests attached to unswapped prerenders.
-  prerender::PrerenderContents* prerender_contents =
-      prerender::PrerenderContents::FromWebContents(web_contents);
-  if (prerender_contents) {
-    prerender_contents->Destroy(prerender::FINAL_STATUS_UNSUPPORTED_SCHEME);
-    prerender::ReportPrerenderExternalURL();
-    return;
-  }
-
-  bool is_whitelisted = false;
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  PolicyBlacklistService* service =
-      PolicyBlacklistFactory::GetForProfile(profile);
-  if (service) {
-    const policy::URLBlacklist::URLBlacklistState url_state =
-        service->GetURLBlacklistState(url);
-    is_whitelisted =
-        url_state == policy::URLBlacklist::URLBlacklistState::URL_IN_WHITELIST;
-  }
-
-  // If the URL is in whitelist, we launch it without asking the user and
-  // without any additional security checks. Since the URL is whitelisted,
-  // we assume it can be executed.
-  if (is_whitelisted) {
-    ExternalProtocolHandler::LaunchUrlWithoutSecurityCheck(url, web_contents);
-  } else {
-    ExternalProtocolHandler::LaunchUrlWithDelegate(
-        url, web_contents->GetRenderViewHost()->GetProcess()->GetID(),
-        web_contents->GetRenderViewHost()->GetRoutingID(), page_transition,
-        has_user_gesture, g_external_protocol_handler_delegate);
-  }
 }
 
 #if BUILDFLAG(ENABLE_NACL)
@@ -421,16 +309,17 @@ void LogCommittedPreviewsDecision(
     ProfileIOData* io_data,
     const GURL& url,
     previews::PreviewsUserData* previews_user_data) {
-  previews::PreviewsIOData* previews_io_data = io_data->previews_io_data();
-  if (previews_io_data && previews_user_data) {
+  previews::PreviewsDeciderImpl* previews_decider_impl =
+      io_data->previews_decider_impl();
+  if (previews_decider_impl && previews_user_data) {
     std::vector<previews::PreviewsEligibilityReason> passed_reasons;
     if (previews_user_data->cache_control_no_transform_directive()) {
-      previews_io_data->LogPreviewDecisionMade(
+      previews_decider_impl->LogPreviewDecisionMade(
           previews::PreviewsEligibilityReason::CACHE_CONTROL_NO_TRANSFORM, url,
           base::Time::Now(), previews::PreviewsType::UNSPECIFIED,
           std::move(passed_reasons), previews_user_data->page_id());
     } else {
-      previews_io_data->LogPreviewDecisionMade(
+      previews_decider_impl->LogPreviewDecisionMade(
           previews::PreviewsEligibilityReason::COMMITTED, url,
           base::Time::Now(), previews_user_data->committed_previews_type(),
           std::move(passed_reasons), previews_user_data->page_id());
@@ -444,46 +333,16 @@ ChromeResourceDispatcherHostDelegate::ChromeResourceDispatcherHostDelegate()
     : download_request_limiter_(g_browser_process->download_request_limiter()),
       safe_browsing_(g_browser_process->safe_browsing_service())
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-      , user_script_listener_(new extensions::UserScriptListener())
+      ,
+      user_script_listener_(new extensions::UserScriptListener())
 #endif
-      {
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::BindOnce(
-          content::ServiceWorkerContext::AddExcludedHeadersForFetchEvent,
-          variations::GetVariationHeaderNames()));
+{
 }
 
 ChromeResourceDispatcherHostDelegate::~ChromeResourceDispatcherHostDelegate() {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   CHECK(stream_target_info_.empty());
 #endif
-}
-
-bool ChromeResourceDispatcherHostDelegate::ShouldBeginRequest(
-    const std::string& method,
-    const GURL& url,
-    ResourceType resource_type,
-    content::ResourceContext* resource_context) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  // Handle a PREFETCH resource type. If prefetch is disabled, squelch the
-  // request.  Otherwise, do a normal request to warm the cache.
-  if (resource_type == content::RESOURCE_TYPE_PREFETCH) {
-    // All PREFETCH requests should be GETs, but be defensive about it.
-    if (method != "GET")
-      return false;
-
-    // If prefetch is disabled, kill the request.
-    std::string prefetch_experiment =
-        base::FieldTrialList::FindFullName("Prefetch");
-    if (base::StartsWith(prefetch_experiment, "ExperimentDisable",
-                         base::CompareCase::INSENSITIVE_ASCII)) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 void ChromeResourceDispatcherHostDelegate::RequestBeginning(
@@ -497,7 +356,9 @@ void ChromeResourceDispatcherHostDelegate::RequestBeginning(
   ProfileIOData* io_data = ProfileIOData::FromResourceContext(resource_context);
   client_hints::RequestBeginning(request, io_data->GetCookieSettings());
 
+#if BUILDFLAG(ENABLE_OFFLINE_PAGES) || BUILDFLAG(ENABLE_NACL)
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
+#endif
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
   // TODO(petewil): Unify the safe browsing request and the metrics observer
@@ -524,7 +385,7 @@ void ChromeResourceDispatcherHostDelegate::RequestBeginning(
     if (!merge_session_throttling_utils::AreAllSessionMergedAlready() &&
         request->url().SchemeIsHTTPOrHTTPS()) {
       throttles->push_back(
-          base::MakeUnique<MergeSessionResourceThrottle>(request));
+          std::make_unique<MergeSessionResourceThrottle>(request));
     }
   }
 #endif
@@ -548,11 +409,9 @@ void ChromeResourceDispatcherHostDelegate::RequestBeginning(
     request->SetExtraRequestHeaders(headers);
   }
 
-  if (io_data->policy_header_helper())
-    io_data->policy_header_helper()->AddPolicyHeaders(request->url(), request);
-
-  signin::FixAccountConsistencyRequestHeader(request, GURL() /* redirect_url */,
-                                             io_data);
+  signin::ChromeRequestAdapter signin_request_adapter(request);
+  signin::FixAccountConsistencyRequestHeader(
+      &signin_request_adapter, GURL() /* redirect_url */, io_data);
 
   AppendStandardResourceThrottles(request,
                                   resource_context,
@@ -562,11 +421,6 @@ void ChromeResourceDispatcherHostDelegate::RequestBeginning(
   AppendComponentUpdaterThrottles(request, *info, resource_context,
                                   resource_type, throttles);
 #endif  // BUILDFLAG(ENABLE_NACL)
-
-  if (io_data->loading_predictor_observer()) {
-    io_data->loading_predictor_observer()->OnRequestStarted(
-        request, resource_type, info->GetWebContentsGetterForRequest());
-  }
 }
 
 void ChromeResourceDispatcherHostDelegate::DownloadStarting(
@@ -578,14 +432,9 @@ void ChromeResourceDispatcherHostDelegate::DownloadStarting(
     std::vector<std::unique_ptr<content::ResourceThrottle>>* throttles) {
   const content::ResourceRequestInfo* info =
         content::ResourceRequestInfo::ForRequest(request);
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&NotifyDownloadInitiatedOnUI,
-                     info->GetWebContentsGetterForRequest()));
-
   // If it's from the web, we don't trust it, so we push the throttle on.
   if (is_content_initiated) {
-    throttles->push_back(base::MakeUnique<DownloadResourceThrottle>(
+    throttles->push_back(std::make_unique<DownloadResourceThrottle>(
         download_request_limiter_, info->GetWebContentsGetterForRequest(),
         request->url(), request->method()));
   }
@@ -600,7 +449,7 @@ void ChromeResourceDispatcherHostDelegate::DownloadStarting(
 #if defined(OS_ANDROID)
     // On Android, forward text/html downloads to OfflinePages backend.
     throttles->push_back(
-        base::MakeUnique<offline_pages::downloads::ResourceThrottle>(request));
+        std::make_unique<offline_pages::downloads::ResourceThrottle>(request));
 #endif
   }
 
@@ -609,49 +458,10 @@ void ChromeResourceDispatcherHostDelegate::DownloadStarting(
   // AppendStandardResourceThrottles so the download will not bypass
   // safebrowsing checks.
   if (is_content_initiated) {
-    throttles->push_back(base::MakeUnique<InterceptDownloadResourceThrottle>(
+    throttles->push_back(std::make_unique<InterceptDownloadResourceThrottle>(
         request, info->GetWebContentsGetterForRequest()));
   }
 #endif
-}
-
-ResourceDispatcherHostLoginDelegate*
-    ChromeResourceDispatcherHostDelegate::CreateLoginDelegate(
-        net::AuthChallengeInfo* auth_info, net::URLRequest* request) {
-  return CreateLoginPrompt(auth_info, request);
-}
-
-bool ChromeResourceDispatcherHostDelegate::HandleExternalProtocol(
-    const GURL& url,
-    content::ResourceRequestInfo* info) {
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  // External protocols are disabled for guests. An exception is made for the
-  // "mailto" protocol, so that pages that utilize it work properly in a
-  // WebView.
-  int child_id = info->GetChildID();
-  ChromeNavigationUIData* navigation_data =
-      static_cast<ChromeNavigationUIData*>(info->GetNavigationUIData());
-  if ((extensions::WebViewRendererState::GetInstance()->IsGuest(child_id) ||
-      (navigation_data &&
-       navigation_data->GetExtensionNavigationUIData()->is_web_view())) &&
-      !url.SchemeIs(url::kMailToScheme)) {
-    return false;
-  }
-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
-
-#if defined(OS_ANDROID)
-  // Main frame external protocols are handled by
-  // InterceptNavigationResourceThrottle.
-  if (info->IsMainFrame())
-    return false;
-#endif  // defined(ANDROID)
-
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&LaunchURL, url, info->GetWebContentsGetterForRequest(),
-                     info->GetPageTransition(), info->HasUserGesture()));
-  return true;
 }
 
 void ChromeResourceDispatcherHostDelegate::AppendStandardResourceThrottles(
@@ -670,17 +480,10 @@ void ChromeResourceDispatcherHostDelegate::AppendStandardResourceThrottles(
 #endif  // defined(OS_ANDROID)
 
 #if defined(SAFE_BROWSING_DB_LOCAL) || defined(SAFE_BROWSING_DB_REMOTE)
-  if (!first_throttle && io_data->safe_browsing_enabled()->GetValue()) {
-    bool url_loader_throttle_used =
-        base::FeatureList::IsEnabled(
-            safe_browsing::kCheckByURLLoaderThrottle) &&
-        (!content::IsResourceTypeFrame(resource_type) ||
-         content::IsNavigationMojoResponseEnabled());
-
-    if (!url_loader_throttle_used) {
-      first_throttle = MaybeCreateSafeBrowsingResourceThrottle(
-          request, resource_type, safe_browsing_.get());
-    }
+  if (!first_throttle && io_data->safe_browsing_enabled()->GetValue() &&
+      !base::FeatureList::IsEnabled(safe_browsing::kCheckByURLLoaderThrottle)) {
+    first_throttle = MaybeCreateSafeBrowsingResourceThrottle(
+        request, resource_type, safe_browsing_.get(), io_data);
   }
 #endif  // defined(SAFE_BROWSING_DB_LOCAL) || defined(SAFE_BROWSING_DB_REMOTE)
 
@@ -693,15 +496,6 @@ void ChromeResourceDispatcherHostDelegate::AppendStandardResourceThrottles(
                                                     resource_type);
   if (wait_for_extensions_init_throttle)
     throttles->push_back(base::WrapUnique(wait_for_extensions_init_throttle));
-
-  extensions::ExtensionThrottleManager* extension_throttle_manager =
-      io_data->GetExtensionThrottleManager();
-  if (extension_throttle_manager) {
-    std::unique_ptr<content::ResourceThrottle> extension_throttle =
-        extension_throttle_manager->MaybeCreateThrottle(request);
-    if (extension_throttle)
-      throttles->push_back(std::move(extension_throttle));
-  }
 #endif
 
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
@@ -712,7 +506,7 @@ void ChromeResourceDispatcherHostDelegate::AppendStandardResourceThrottles(
     if (!base::FeatureList::IsEnabled(network::features::kNetworkService) &&
         content::IsResourceTypeFrame(info->GetResourceType())) {
       throttles->push_back(
-          base::MakeUnique<prerender::PrerenderResourceThrottle>(request));
+          std::make_unique<prerender::PrerenderResourceThrottle>(request));
     }
   }
 
@@ -724,56 +518,21 @@ void ChromeResourceDispatcherHostDelegate::AppendStandardResourceThrottles(
 
 bool ChromeResourceDispatcherHostDelegate::ShouldInterceptResourceAsStream(
     net::URLRequest* request,
-    const base::FilePath& plugin_path,
     const std::string& mime_type,
     GURL* origin,
     std::string* payload) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
-  ProfileIOData* io_data =
-      ProfileIOData::FromResourceContext(info->GetContext());
-  bool profile_is_off_the_record = io_data->IsOffTheRecord();
-  const scoped_refptr<const extensions::InfoMap> extension_info_map(
-      io_data->GetExtensionInfoMap());
-  std::vector<std::string> whitelist = MimeTypesHandler::GetMIMETypeWhitelist();
-  // Go through the white-listed extensions and try to use them to intercept
-  // the URL request.
-  for (const std::string& extension_id : whitelist) {
-    const Extension* extension =
-        extension_info_map->extensions().GetByID(extension_id);
-    // The white-listed extension may not be installed, so we have to NULL check
-    // |extension|.
-    if (!extension ||
-        (profile_is_off_the_record &&
-         !extension_info_map->IsIncognitoEnabled(extension_id))) {
-      continue;
-    }
-    MimeTypesHandler* handler = MimeTypesHandler::GetHandler(extension);
-    if (!handler)
-      continue;
-
-    // If a plugin path is provided then a stream is being intercepted for the
-    // mimeHandlerPrivate API. Otherwise a stream is being intercepted for the
-    // streamsPrivate API.
-    if (!plugin_path.empty()) {
-      if (handler->HasPlugin() && plugin_path == handler->GetPluginPath()) {
-        StreamTargetInfo target_info;
-        *origin = Extension::GetBaseURLFromExtensionId(extension_id);
-        target_info.extension_id = extension_id;
-        target_info.view_id = base::GenerateGUID();
-        *payload = target_info.view_id;
-        stream_target_info_[request] = target_info;
-        return true;
-      }
-    } else {
-      if (!handler->HasPlugin() && handler->CanHandleMIMEType(mime_type)) {
-        StreamTargetInfo target_info;
-        *origin = Extension::GetBaseURLFromExtensionId(extension_id);
-        target_info.extension_id = extension_id;
-        stream_target_info_[request] = target_info;
-        return true;
-      }
-    }
+  std::string extension_id =
+      PluginUtils::GetExtensionIdForMimeType(info->GetContext(), mime_type);
+  if (!extension_id.empty()) {
+    StreamTargetInfo target_info;
+    *origin = Extension::GetBaseURLFromExtensionId(extension_id);
+    target_info.extension_id = extension_id;
+    target_info.view_id = base::GenerateGUID();
+    *payload = target_info.view_id;
+    stream_target_info_[request] = target_info;
+    return true;
   }
 #endif
   return false;
@@ -790,10 +549,12 @@ void ChromeResourceDispatcherHostDelegate::OnStreamCreated(
   bool embedded = info->GetResourceType() != content::RESOURCE_TYPE_MAIN_FRAME;
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&SendExecuteMimeTypeHandlerEvent, base::Passed(&stream),
-                     request->GetExpectedContentSize(), ix->second.extension_id,
-                     ix->second.view_id, embedded, info->GetFrameTreeNodeId(),
-                     info->GetChildID(), info->GetRenderFrameID()));
+      base::BindOnce(
+          &extensions::StreamsPrivateAPI::SendExecuteMimeTypeHandlerEvent,
+          request->GetExpectedContentSize(), ix->second.extension_id,
+          ix->second.view_id, embedded, info->GetFrameTreeNodeId(),
+          info->GetChildID(), info->GetRenderFrameID(), std::move(stream),
+          nullptr /* transferrable_loader */, GURL()));
   stream_target_info_.erase(request);
 #endif
 }
@@ -802,17 +563,18 @@ void ChromeResourceDispatcherHostDelegate::OnResponseStarted(
     net::URLRequest* request,
     content::ResourceContext* resource_context,
     network::ResourceResponse* response) {
-  const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
+  ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
   ProfileIOData* io_data = ProfileIOData::FromResourceContext(resource_context);
 
-  signin::ProcessAccountConsistencyResponseHeaders(request, GURL(),
-                                                   io_data->IsOffTheRecord());
+  signin::ResponseAdapter signin_response_adapter(request);
+  signin::ProcessAccountConsistencyResponseHeaders(
+      &signin_response_adapter, GURL(), io_data->IsOffTheRecord());
 
   // Built-in additional protection for the chrome web store origin.
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   GURL webstore_url(extension_urls::GetWebstoreLaunchURL());
   if (request->url().SchemeIsHTTPOrHTTPS() &&
-      request->url().DomainIs(webstore_url.host().c_str())) {
+      request->url().DomainIs(webstore_url.host_piece())) {
     net::HttpResponseHeaders* response_headers = request->response_headers();
     if (response_headers &&
         !response_headers->HasHeaderValue("x-frame-options", "deny") &&
@@ -823,12 +585,8 @@ void ChromeResourceDispatcherHostDelegate::OnResponseStarted(
   }
 #endif
 
-  if (io_data->loading_predictor_observer())
-    io_data->loading_predictor_observer()->OnResponseStarted(
-        request, info->GetWebContentsGetterForRequest());
-
   // Update the PreviewsState for main frame response if needed.
-  if (previews::HasEnabledPreviews(response->head.previews_state) &&
+  if (previews::HasEnabledPreviews(info->GetPreviewsState()) &&
       info->GetResourceType() == content::RESOURCE_TYPE_MAIN_FRAME &&
       request->url().SchemeIsHTTPOrHTTPS()) {
     // Annotate request if no-transform directive found in response headers.
@@ -843,11 +601,11 @@ void ChromeResourceDispatcherHostDelegate::OnResponseStarted(
 
     // Determine effective PreviewsState for this committed main frame response.
     content::PreviewsState committed_state = DetermineCommittedPreviews(
-        request, io_data->previews_io_data(),
-        static_cast<content::PreviewsState>(response->head.previews_state));
+        request, io_data->previews_decider_impl(), info->GetPreviewsState());
 
-    // Update previews state in response to renderer.
-    response->head.previews_state = static_cast<int>(committed_state);
+    // Update previews state in ResourceRequestInfo before it is sent to
+    // renderer.
+    info->SetPreviewsState(committed_state);
 
     // Update previews state in nav data to UI.
     ChromeNavigationData* data =
@@ -868,9 +626,6 @@ void ChromeResourceDispatcherHostDelegate::OnResponseStarted(
       LogCommittedPreviewsDecision(io_data, request->url(), previews_user_data);
     }
   }
-
-  mod_pagespeed::RecordMetrics(info->GetResourceType(), request->url(),
-                               request->response_headers());
 }
 
 void ChromeResourceDispatcherHostDelegate::OnRequestRedirected(
@@ -888,18 +643,12 @@ void ChromeResourceDispatcherHostDelegate::OnRequestRedirected(
   // X-Chrome-Connected header to all Gaia requests from a connected profile so
   // Gaia could return a 204 response and let Chrome handle the action with
   // native UI.
-  signin::FixAccountConsistencyRequestHeader(request, redirect_url, io_data);
-  signin::ProcessAccountConsistencyResponseHeaders(request, redirect_url,
-                                                   io_data->IsOffTheRecord());
-
-  if (io_data->loading_predictor_observer()) {
-    const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
-    io_data->loading_predictor_observer()->OnRequestRedirected(
-        request, redirect_url, info->GetWebContentsGetterForRequest());
-  }
-
-  if (io_data->policy_header_helper())
-    io_data->policy_header_helper()->AddPolicyHeaders(redirect_url, request);
+  signin::ChromeRequestAdapter signin_request_adapter(request);
+  signin::FixAccountConsistencyRequestHeader(&signin_request_adapter,
+                                             redirect_url, io_data);
+  signin::ResponseAdapter signin_response_adapter(request);
+  signin::ProcessAccountConsistencyResponseHeaders(
+      &signin_response_adapter, redirect_url, io_data->IsOffTheRecord());
 }
 
 // Notification that a request has completed.
@@ -948,7 +697,7 @@ void ChromeResourceDispatcherHostDelegate::RequestComplete(
     }
   }
 
-  auto load_timing_info = base::MakeUnique<net::LoadTimingInfo>();
+  auto load_timing_info = std::make_unique<net::LoadTimingInfo>();
   url_request->GetLoadTimingInfo(load_timing_info.get());
 
   BrowserThread::PostTask(
@@ -977,12 +726,13 @@ ChromeResourceDispatcherHostDelegate::DetermineEnabledPreviews(
 
   content::PreviewsState previews_state = content::PREVIEWS_UNSPECIFIED;
 
-  previews::PreviewsIOData* previews_io_data = io_data->previews_io_data();
-  if (data_reduction_proxy_io_data && previews_io_data) {
+  previews::PreviewsDeciderImpl* previews_decider_impl =
+      io_data->previews_decider_impl();
+  if (data_reduction_proxy_io_data && previews_decider_impl) {
     previews::PreviewsUserData::Create(url_request,
-                                       previews_io_data->GeneratePageId());
+                                       previews_decider_impl->GeneratePageId());
     if (data_reduction_proxy_io_data->ShouldAcceptServerPreview(
-            *url_request, previews_io_data)) {
+            *url_request, previews_decider_impl)) {
       previews_state |= content::SERVER_LOFI_ON;
       previews_state |= content::SERVER_LITE_PAGE_ON;
     }
@@ -990,7 +740,7 @@ ChromeResourceDispatcherHostDelegate::DetermineEnabledPreviews(
     // Check for enabled client-side previews if data saver is enabled.
     if (data_reduction_proxy_io_data->IsEnabled()) {
       previews_state |= previews::DetermineEnabledClientPreviewsState(
-          *url_request, previews_io_data);
+          *url_request, previews_decider_impl);
     }
   }
 
@@ -1007,13 +757,6 @@ ChromeResourceDispatcherHostDelegate::DetermineEnabledPreviews(
       previews_state = content::PREVIEWS_OFF;
   }
   return previews_state;
-}
-
-// static
-void ChromeResourceDispatcherHostDelegate::
-    SetExternalProtocolHandlerDelegateForTesting(
-    ExternalProtocolHandler::Delegate* delegate) {
-  g_external_protocol_handler_delegate = delegate;
 }
 
 content::NavigationData*
@@ -1047,6 +790,7 @@ ChromeResourceDispatcherHostDelegate::DetermineCommittedPreviews(
     const net::URLRequest* request,
     const previews::PreviewsDecider* previews_decider,
     content::PreviewsState initial_state) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   if (!previews::HasEnabledPreviews(initial_state))
     return content::PREVIEWS_OFF;
 

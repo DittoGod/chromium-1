@@ -9,7 +9,7 @@
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "storage/browser/quota/quota_client.h"
-#include "third_party/WebKit/common/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/origin.h"
 
 namespace content {
@@ -24,15 +24,15 @@ class ServiceWorkerQuotaClient : public storage::QuotaClient {
   void OnQuotaManagerDestroyed() override;
   void GetOriginUsage(const url::Origin& origin,
                       blink::mojom::StorageType type,
-                      const GetUsageCallback& callback) override;
+                      GetUsageCallback callback) override;
   void GetOriginsForType(blink::mojom::StorageType type,
-                         const GetOriginsCallback& callback) override;
+                         GetOriginsCallback callback) override;
   void GetOriginsForHost(blink::mojom::StorageType type,
                          const std::string& host,
-                         const GetOriginsCallback& callback) override;
+                         GetOriginsCallback callback) override;
   void DeleteOriginData(const url::Origin& origin,
                         blink::mojom::StorageType type,
-                        const DeletionCallback& callback) override;
+                        DeletionCallback callback) override;
   bool DoesSupport(blink::mojom::StorageType type) const override;
 
  private:

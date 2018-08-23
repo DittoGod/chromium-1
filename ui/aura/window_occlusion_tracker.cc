@@ -6,7 +6,6 @@
 
 #include "base/auto_reset.h"
 #include "base/containers/adapters.h"
-#include "base/debug/dump_without_crashing.h"
 #include "base/stl_util.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkRegion.h"
@@ -27,7 +26,11 @@ constexpr ui::LayerAnimationElement::AnimatableProperties
 
 // Maximum number of times that MaybeComputeOcclusion() should have to recompute
 // occlusion states before they become stable.
-constexpr int kMaxRecomputeOcclusion = 2;
+//
+// TODO(fdoray): This can be changed to 2 once showing/hiding a WebContents
+// doesn't cause a call to Show()/Hide() on the aura::Window of a
+// RenderWidgetHostViewAura. https://crbug.com/827268
+constexpr int kMaxRecomputeOcclusion = 3;
 
 WindowOcclusionTracker* g_tracker = nullptr;
 
@@ -132,11 +135,19 @@ WindowOcclusionTracker::WindowOcclusionTracker() = default;
 
 WindowOcclusionTracker::~WindowOcclusionTracker() = default;
 
-void WindowOcclusionTracker::MaybeComputeOcclusion() {
-  if (g_num_pause_occlusion_tracking || num_times_occlusion_recomputed_ != 0)
-    return;
+WindowOcclusionTracker* WindowOcclusionTracker::GetInstance() {
+  DCHECK(g_tracker);
+  return g_tracker;
+}
 
-  base::AutoReset<int> auto_reset(&num_times_occlusion_recomputed_, 0);
+void WindowOcclusionTracker::MaybeComputeOcclusion() {
+  if (g_num_pause_occlusion_tracking ||
+      num_times_occlusion_recomputed_in_current_step_ != 0) {
+    return;
+  }
+
+  base::AutoReset<int> auto_reset(
+      &num_times_occlusion_recomputed_in_current_step_, 0);
 
   // Recompute occlusion states until either:
   // - They are stable, i.e. calling Window::SetOcclusionState() on all tracked
@@ -147,10 +158,12 @@ void WindowOcclusionTracker::MaybeComputeOcclusion() {
   // If occlusion states have been recomputed
   // |kMaxComputeOcclusionIterationsBeforeStable| times and are still not
   // stable, iterate one last time to set the occlusion state of all tracked
-  // windows to NOT_OCCLUDED.
-  while (num_times_occlusion_recomputed_ <= kMaxRecomputeOcclusion) {
+  // windows based on IsVisible().
+  while (num_times_occlusion_recomputed_in_current_step_ <=
+         kMaxRecomputeOcclusion) {
     const bool exceeded_max_num_times_occlusion_recomputed =
-        num_times_occlusion_recomputed_ == kMaxRecomputeOcclusion;
+        num_times_occlusion_recomputed_in_current_step_ ==
+        kMaxRecomputeOcclusion;
     bool found_dirty_root = false;
 
     // Compute occlusion states and store them in |tracked_windows_|. Do not
@@ -168,10 +181,11 @@ void WindowOcclusionTracker::MaybeComputeOcclusion() {
       }
     }
 
-    ++num_times_occlusion_recomputed_;
-
     if (!found_dirty_root)
       break;
+
+    ++num_times_occlusion_recomputed_;
+    ++num_times_occlusion_recomputed_in_current_step_;
 
     // Call Window::SetOcclusionState() on tracked windows. A WindowDelegate may
     // change the window tree in response to this.
@@ -184,12 +198,14 @@ void WindowOcclusionTracker::MaybeComputeOcclusion() {
       auto it = tracked_windows_.find(window);
       if (it != tracked_windows_.end() &&
           it->second != Window::OcclusionState::UNKNOWN) {
-        // Fallback to NOT_OCCLUDED for all IsVisible() windows if the maximum
-        // number of times that occlusion can be recomputed was exceeded.
-        if (exceeded_max_num_times_occlusion_recomputed && window->IsVisible())
-          it->second = Window::OcclusionState::NOT_OCCLUDED;
+        // Fallback to VISIBLE/HIDDEN if the maximum number of times that
+        // occlusion can be recomputed was exceeded.
+        if (exceeded_max_num_times_occlusion_recomputed) {
+          it->second = window->IsVisible() ? Window::OcclusionState::VISIBLE
+                                           : Window::OcclusionState::HIDDEN;
+        }
 
-        window->SetOccluded(it->second == Window::OcclusionState::OCCLUDED);
+        window->SetOcclusionState(it->second);
       }
     }
   }
@@ -290,12 +306,17 @@ void WindowOcclusionTracker::SetWindowAndDescendantsAreOccluded(
     SetWindowAndDescendantsAreOccluded(child_window, is_occluded);
 }
 
-void WindowOcclusionTracker::SetOccluded(Window* window, bool occluded) {
+void WindowOcclusionTracker::SetOccluded(Window* window, bool is_occluded) {
   auto tracked_window = tracked_windows_.find(window);
-  if (tracked_window != tracked_windows_.end()) {
-    tracked_window->second = occluded ? Window::OcclusionState::OCCLUDED
-                                      : Window::OcclusionState::NOT_OCCLUDED;
-  }
+  if (tracked_window == tracked_windows_.end())
+    return;
+
+  if (!window->IsVisible())
+    tracked_window->second = Window::OcclusionState::HIDDEN;
+  else if (is_occluded)
+    tracked_window->second = Window::OcclusionState::OCCLUDED;
+  else
+    tracked_window->second = Window::OcclusionState::VISIBLE;
 }
 
 bool WindowOcclusionTracker::WindowIsTracked(Window* window) const {
@@ -334,19 +355,13 @@ void WindowOcclusionTracker::MarkRootWindowAsDirtyAndMaybeComputeOcclusionIf(
 
 void WindowOcclusionTracker::MarkRootWindowAsDirty(
     RootWindowState* root_window_state) {
-  root_window_state->dirty = true;
+  // If a root window is marked as dirty and occlusion states have already been
+  // recomputed |kMaxRecomputeOcclusion| times, it means that they are not
+  // stabilizing.
+  DCHECK_LT(num_times_occlusion_recomputed_in_current_step_,
+            kMaxRecomputeOcclusion);
 
-  // Generate a crash report when a root window is marked as dirty and occlusion
-  // states have been recomputed |kMaxRecomputeOcclusion| times, because it
-  // indicates that they are not stabilizing. Don't report it when
-  // |num_times_occlusion_recomputed_| is greater than |kMaxRecomputeOcclusion|
-  // to avoid generating multiple reports from the same client.
-  //
-  // TODO(fdoray): Remove this once we are confident that occlusion states are
-  // stable after |kMaxRecomputeOcclusion| iterations in production.
-  // https://crbug.com/813076
-  if (num_times_occlusion_recomputed_ == kMaxRecomputeOcclusion)
-    base::debug::DumpWithoutCrashing();
+  root_window_state->dirty = true;
 }
 
 bool WindowOcclusionTracker::WindowOrParentIsAnimated(Window* window) const {
@@ -483,8 +498,13 @@ void WindowOcclusionTracker::OnWillRemoveWindow(Window* window) {
 
 void WindowOcclusionTracker::OnWindowVisibilityChanged(Window* window,
                                                        bool visible) {
-  MarkRootWindowAsDirtyAndMaybeComputeOcclusionIf(
-      window, [=]() { return !WindowOrParentIsAnimated(window); });
+  MarkRootWindowAsDirtyAndMaybeComputeOcclusionIf(window, [=]() {
+    // A child isn't visible when its parent isn't IsVisible(). Therefore, there
+    // is no need to compute occlusion when Show() or Hide() is called on a
+    // window with a hidden parent.
+    return (!window->parent() || window->parent()->IsVisible()) &&
+           !WindowOrParentIsAnimated(window);
+  });
 }
 
 void WindowOcclusionTracker::OnWindowBoundsChanged(

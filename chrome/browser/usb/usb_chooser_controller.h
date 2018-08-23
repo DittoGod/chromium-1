@@ -14,12 +14,13 @@
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/chooser_controller/chooser_controller.h"
-#include "device/usb/public/mojom/chooser_service.mojom.h"
 #include "device/usb/usb_service.h"
+#include "third_party/blink/public/mojom/usb/web_usb_service.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
 class RenderFrameHost;
+class WebContents;
 }
 
 namespace device {
@@ -36,7 +37,7 @@ class UsbChooserController : public ChooserController,
   UsbChooserController(
       content::RenderFrameHost* render_frame_host,
       std::vector<device::mojom::UsbDeviceFilterPtr> device_filters,
-      device::mojom::UsbChooserService::GetPermissionCallback callback);
+      blink::mojom::WebUsbService::GetPermissionCallback callback);
   ~UsbChooserController() override;
 
   // ChooserController:
@@ -60,10 +61,11 @@ class UsbChooserController : public ChooserController,
   bool DisplayDevice(scoped_refptr<device::UsbDevice> device) const;
 
   std::vector<device::mojom::UsbDeviceFilterPtr> filters_;
-  device::mojom::UsbChooserService::GetPermissionCallback callback_;
+  blink::mojom::WebUsbService::GetPermissionCallback callback_;
   GURL requesting_origin_;
   GURL embedding_origin_;
 
+  content::WebContents* const web_contents_;
   base::WeakPtr<UsbChooserContext> chooser_context_;
   ScopedObserver<device::UsbService, device::UsbService::Observer>
       usb_service_observer_;

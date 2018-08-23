@@ -30,12 +30,16 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/referrer.h"
 #include "net/base/net_errors.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "url/gurl.h"
 
 class GURL;
 
-namespace content {
+namespace download {
 class DownloadItemImpl;
+}
+
+namespace content {
 class DownloadManagerImpl;
 class FrameTreeNode;
 class RenderFrameHostImpl;
@@ -45,15 +49,15 @@ class SaveItem;
 class SavePackage;
 class WebContents;
 
-// The SavePackage object manages the process of saving a page as only-html or
-// complete-html or MHTML and providing the information for displaying saving
-// status.  Saving page as only-html means means that we save web page to a
-// single HTML file regardless internal sub resources and sub frames.  Saving
-// page as complete-html page means we save not only the main html file the user
-// told it to save but also a directory for the auxiliary files such as all
-// sub-frame html files, image files, css files and js files.  Saving page as
-// MHTML means the same thing as complete-html, but it uses the MHTML format to
-// contain the html and all auxiliary files in a single text file.
+// SavePackage manages the process of saving a page as only-HTML, complete-HTML
+// or MHTML and provides status information about the job.
+// - only-html: the web page is saved to a single HTML file excluding
+// sub-resources and sub-frames
+// - complete-html: the web page's main frame HTML is saved to the user selected
+// file and a directory for the auxiliary files such as all sub-frame html
+// files, image files, css files and js files is created
+// - MHTML: the main frame and all auxiliary files are stored a single text
+//   file using the MHTML format.
 //
 // Each page saving job may include one or multiple files which need to be
 // saved. Each file is represented by a SaveItem, and all SaveItems are owned
@@ -156,7 +160,7 @@ class CONTENT_EXPORT SavePackage
 
   void InitWithDownloadItem(
       const SavePackageDownloadCreatedCallback& download_created_callback,
-      DownloadItemImpl* item);
+      download::DownloadItemImpl* item);
 
   // Callback for WebContents::GenerateMHTML().
   void OnMHTMLGenerated(int64_t size);
@@ -369,7 +373,7 @@ class CONTENT_EXPORT SavePackage
 
   // DownloadManager owns the download::DownloadItem and handles history and UI.
   DownloadManagerImpl* download_manager_ = nullptr;
-  DownloadItemImpl* download_ = nullptr;
+  download::DownloadItemImpl* download_ = nullptr;
 
   // The URL of the page the user wants to save.
   const GURL page_url_;
@@ -414,6 +418,10 @@ class CONTENT_EXPORT SavePackage
 
   // Unique ID for this SavePackage.
   const SavePackageId unique_id_;
+
+  // UKM IDs for reporting.
+  ukm::SourceId ukm_source_id_;
+  uint64_t ukm_download_id_;
 
   DISALLOW_COPY_AND_ASSIGN(SavePackage);
 };

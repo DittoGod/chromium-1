@@ -28,7 +28,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
-#include "media/gpu/shared_memory_region.h"
+#include "media/base/unaligned_shared_memory.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_image.h"
 #include "ui/gl/scoped_binders.h"
@@ -75,8 +75,7 @@ class V4L2SliceVideoDecodeAccelerator::V4L2DecodeSurface
  public:
   using ReleaseCB = base::Callback<void(int)>;
 
-  V4L2DecodeSurface(int32_t bitstream_id,
-                    int input_record,
+  V4L2DecodeSurface(int input_record,
                     int output_record,
                     const ReleaseCB& release_cb);
 
@@ -85,7 +84,6 @@ class V4L2SliceVideoDecodeAccelerator::V4L2DecodeSurface
   void SetDecoded();
   bool decoded() const { return decoded_; }
 
-  int32_t bitstream_id() const { return bitstream_id_; }
   int input_record() const { return input_record_; }
   int output_record() const { return output_record_; }
   uint32_t config_store() const { return config_store_; }
@@ -114,7 +112,6 @@ class V4L2SliceVideoDecodeAccelerator::V4L2DecodeSurface
   friend class base::RefCounted<V4L2DecodeSurface>;
   ~V4L2DecodeSurface();
 
-  int32_t bitstream_id_;
   int input_record_;
   int output_record_;
   uint32_t config_store_;
@@ -130,12 +127,10 @@ class V4L2SliceVideoDecodeAccelerator::V4L2DecodeSurface
 };
 
 V4L2SliceVideoDecodeAccelerator::V4L2DecodeSurface::V4L2DecodeSurface(
-    int32_t bitstream_id,
     int input_record,
     int output_record,
     const ReleaseCB& release_cb)
-    : bitstream_id_(bitstream_id),
-      input_record_(input_record),
+    : input_record_(input_record),
       output_record_(output_record),
       config_store_(input_record + 1),
       decoded_(false),
@@ -192,16 +187,22 @@ V4L2SliceVideoDecodeAccelerator::OutputRecord::OutputRecord()
       egl_sync(EGL_NO_SYNC_KHR),
       cleared(false) {}
 
+V4L2SliceVideoDecodeAccelerator::OutputRecord::OutputRecord(OutputRecord&&) =
+    default;
+
+V4L2SliceVideoDecodeAccelerator::OutputRecord::~OutputRecord() = default;
+
 struct V4L2SliceVideoDecodeAccelerator::BitstreamBufferRef {
   BitstreamBufferRef(
       base::WeakPtr<VideoDecodeAccelerator::Client>& client,
       const scoped_refptr<base::SingleThreadTaskRunner>& client_task_runner,
-      SharedMemoryRegion* shm,
+      const BitstreamBuffer* buffer,
       int32_t input_id);
   ~BitstreamBufferRef();
   const base::WeakPtr<VideoDecodeAccelerator::Client> client;
   const scoped_refptr<base::SingleThreadTaskRunner> client_task_runner;
-  const std::unique_ptr<SharedMemoryRegion> shm;
+  const std::unique_ptr<UnalignedSharedMemory> shm;
+  off_t offset;
   off_t bytes_used;
   const int32_t input_id;
 };
@@ -209,11 +210,15 @@ struct V4L2SliceVideoDecodeAccelerator::BitstreamBufferRef {
 V4L2SliceVideoDecodeAccelerator::BitstreamBufferRef::BitstreamBufferRef(
     base::WeakPtr<VideoDecodeAccelerator::Client>& client,
     const scoped_refptr<base::SingleThreadTaskRunner>& client_task_runner,
-    SharedMemoryRegion* shm,
+    const BitstreamBuffer* buffer,
     int32_t input_id)
     : client(client),
       client_task_runner(client_task_runner),
-      shm(shm),
+      shm(buffer ? std::make_unique<UnalignedSharedMemory>(buffer->handle(),
+                                                           buffer->size(),
+                                                           true)
+                 : nullptr),
+      offset(buffer ? buffer->offset() : 0),
       bytes_used(0),
       input_id(input_id) {}
 
@@ -257,29 +262,32 @@ V4L2SliceVideoDecodeAccelerator::PictureRecord::~PictureRecord() {}
 class V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator
     : public H264Decoder::H264Accelerator {
  public:
+  using Status = H264Decoder::H264Accelerator::Status;
+
   explicit V4L2H264Accelerator(V4L2SliceVideoDecodeAccelerator* v4l2_dec);
   ~V4L2H264Accelerator() override;
 
   // H264Decoder::H264Accelerator implementation.
   scoped_refptr<H264Picture> CreateH264Picture() override;
 
-  bool SubmitFrameMetadata(const H264SPS* sps,
-                           const H264PPS* pps,
-                           const H264DPB& dpb,
-                           const H264Picture::Vector& ref_pic_listp0,
-                           const H264Picture::Vector& ref_pic_listb0,
-                           const H264Picture::Vector& ref_pic_listb1,
-                           const scoped_refptr<H264Picture>& pic) override;
+  Status SubmitFrameMetadata(const H264SPS* sps,
+                             const H264PPS* pps,
+                             const H264DPB& dpb,
+                             const H264Picture::Vector& ref_pic_listp0,
+                             const H264Picture::Vector& ref_pic_listb0,
+                             const H264Picture::Vector& ref_pic_listb1,
+                             const scoped_refptr<H264Picture>& pic) override;
 
-  bool SubmitSlice(const H264PPS* pps,
-                   const H264SliceHeader* slice_hdr,
-                   const H264Picture::Vector& ref_pic_list0,
-                   const H264Picture::Vector& ref_pic_list1,
-                   const scoped_refptr<H264Picture>& pic,
-                   const uint8_t* data,
-                   size_t size) override;
+  Status SubmitSlice(const H264PPS* pps,
+                     const H264SliceHeader* slice_hdr,
+                     const H264Picture::Vector& ref_pic_list0,
+                     const H264Picture::Vector& ref_pic_list1,
+                     const scoped_refptr<H264Picture>& pic,
+                     const uint8_t* data,
+                     size_t size,
+                     const std::vector<SubsampleEntry>& subsamples) override;
 
-  bool SubmitDecode(const scoped_refptr<H264Picture>& pic) override;
+  Status SubmitDecode(const scoped_refptr<H264Picture>& pic) override;
   bool OutputPicture(const scoped_refptr<H264Picture>& pic) override;
 
   void Reset() override;
@@ -317,11 +325,8 @@ class V4L2SliceVideoDecodeAccelerator::V4L2VP8Accelerator
   // VP8Decoder::VP8Accelerator implementation.
   scoped_refptr<VP8Picture> CreateVP8Picture() override;
 
-  bool SubmitDecode(const scoped_refptr<VP8Picture>& pic,
-                    const Vp8FrameHeader* frame_hdr,
-                    const scoped_refptr<VP8Picture>& last_frame,
-                    const scoped_refptr<VP8Picture>& golden_frame,
-                    const scoped_refptr<VP8Picture>& alt_frame) override;
+  bool SubmitDecode(scoped_refptr<VP8Picture> pic,
+                    const Vp8ReferenceFrameVector& reference_frames) override;
 
   bool OutputPicture(const scoped_refptr<VP8Picture>& pic) override;
 
@@ -540,13 +545,13 @@ bool V4L2SliceVideoDecodeAccelerator::Initialize(const Config& config,
     decode_client_ = client_;
   }
 
-  if (egl_display_ == EGL_NO_DISPLAY) {
-    VLOGF(1) << "could not get EGLDisplay";
-    return false;
-  }
-
   // We need the context to be initialized to query extensions.
   if (!make_context_current_cb_.is_null()) {
+    if (egl_display_ == EGL_NO_DISPLAY) {
+      VLOGF(1) << "could not get EGLDisplay";
+      return false;
+    }
+
     if (!make_context_current_cb_.Run()) {
       VLOGF(1) << "could not make context current";
       return false;
@@ -576,18 +581,16 @@ bool V4L2SliceVideoDecodeAccelerator::Initialize(const Config& config,
   }
 
   if (video_profile_ >= H264PROFILE_MIN && video_profile_ <= H264PROFILE_MAX) {
-    h264_accelerator_.reset(new V4L2H264Accelerator(this));
-    decoder_.reset(new H264Decoder(h264_accelerator_.get()));
+    decoder_.reset(
+        new H264Decoder(std::make_unique<V4L2H264Accelerator>(this)));
   } else if (video_profile_ >= VP8PROFILE_MIN &&
              video_profile_ <= VP8PROFILE_MAX) {
-    vp8_accelerator_.reset(new V4L2VP8Accelerator(this));
-    decoder_.reset(new VP8Decoder(vp8_accelerator_.get()));
+    decoder_.reset(new VP8Decoder(std::make_unique<V4L2VP8Accelerator>(this)));
   } else if (video_profile_ >= VP9PROFILE_MIN &&
              video_profile_ <= VP9PROFILE_MAX) {
-    vp9_accelerator_.reset(new V4L2VP9Accelerator(this));
-    decoder_.reset(new VP9Decoder(vp9_accelerator_.get()));
+    decoder_.reset(new VP9Decoder(std::make_unique<V4L2VP9Accelerator>(this)));
   } else {
-    NOTREACHED() << "Unsupported profile " << video_profile_;
+    NOTREACHED() << "Unsupported profile " << GetProfileName(video_profile_);
     return false;
   }
 
@@ -1342,23 +1345,23 @@ void V4L2SliceVideoDecodeAccelerator::DecodeTask(
             << " size=" << bitstream_buffer.size();
   DCHECK(decoder_thread_task_runner_->BelongsToCurrentThread());
 
-  std::unique_ptr<BitstreamBufferRef> bitstream_record(new BitstreamBufferRef(
-      decode_client_, decode_task_runner_,
-      new SharedMemoryRegion(bitstream_buffer, true), bitstream_buffer.id()));
+  std::unique_ptr<BitstreamBufferRef> bitstream_record(
+      new BitstreamBufferRef(decode_client_, decode_task_runner_,
+                             &bitstream_buffer, bitstream_buffer.id()));
 
   // Skip empty buffer.
   if (bitstream_buffer.size() == 0)
     return;
 
-  if (!bitstream_record->shm->Map()) {
+  if (!bitstream_record->shm->MapAt(bitstream_record->offset,
+                                    bitstream_record->shm->size())) {
     VLOGF(1) << "Could not map bitstream_buffer";
     NOTIFY_ERROR(UNREADABLE_INPUT);
     return;
   }
   DVLOGF(4) << "mapped at=" << bitstream_record->shm->memory();
 
-  decoder_input_queue_.push(
-      linked_ptr<BitstreamBufferRef>(bitstream_record.release()));
+  decoder_input_queue_.push(std::move(bitstream_record));
 
   ScheduleDecodeBufferTaskIfNeeded();
 }
@@ -1370,8 +1373,7 @@ bool V4L2SliceVideoDecodeAccelerator::TrySetNewBistreamBuffer() {
   if (decoder_input_queue_.empty())
     return false;
 
-  decoder_current_bitstream_buffer_.reset(
-      decoder_input_queue_.front().release());
+  decoder_current_bitstream_buffer_ = std::move(decoder_input_queue_.front());
   decoder_input_queue_.pop();
 
   if (decoder_current_bitstream_buffer_->input_id == kFlushBufferId) {
@@ -1383,7 +1385,8 @@ bool V4L2SliceVideoDecodeAccelerator::TrySetNewBistreamBuffer() {
   const uint8_t* const data = reinterpret_cast<const uint8_t*>(
       decoder_current_bitstream_buffer_->shm->memory());
   const size_t data_size = decoder_current_bitstream_buffer_->shm->size();
-  decoder_->SetStream(data, data_size);
+  decoder_->SetStream(decoder_current_bitstream_buffer_->input_id, data,
+                      data_size);
 
   return true;
 }
@@ -1434,6 +1437,13 @@ void V4L2SliceVideoDecodeAccelerator::DecodeBufferTask() {
 
       case AcceleratedVideoDecoder::kDecodeError:
         VLOGF(1) << "Error decoding stream";
+        NOTIFY_ERROR(PLATFORM_FAILURE);
+        return;
+
+      case AcceleratedVideoDecoder::kTryAgain:
+        NOTREACHED() << "Should not reach here unless this class accepts "
+                        "encrypted streams.";
+        DVLOGF(4) << "No key for decoding stream.";
         NOTIFY_ERROR(PLATFORM_FAILURE);
         return;
     }
@@ -1514,12 +1524,6 @@ bool V4L2SliceVideoDecodeAccelerator::DestroyOutputs(bool dismiss) {
       if (eglDestroySyncKHR(egl_display_, output_record.egl_sync) != EGL_TRUE)
         VLOGF(1) << "eglDestroySyncKHR failed.";
     }
-
-    child_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(IgnoreResult(bind_image_cb_),
-                                  output_record.client_texture_id,
-                                  device_->GetTextureTarget(),
-                                  scoped_refptr<gl::GLImage>(), false));
 
     picture_buffers_to_dismiss.push_back(output_record.picture_id);
   }
@@ -1927,9 +1931,8 @@ void V4L2SliceVideoDecodeAccelerator::FlushTask() {
   DCHECK(decoder_thread_task_runner_->BelongsToCurrentThread());
 
   // Queue an empty buffer which - when reached - will trigger flush sequence.
-  decoder_input_queue_.push(
-      linked_ptr<BitstreamBufferRef>(new BitstreamBufferRef(
-          decode_client_, decode_task_runner_, nullptr, kFlushBufferId)));
+  decoder_input_queue_.push(std::make_unique<BitstreamBufferRef>(
+      decode_client_, decode_task_runner_, nullptr, kFlushBufferId));
 
   ScheduleDecodeBufferTaskIfNeeded();
 }
@@ -2141,7 +2144,8 @@ void V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::H264DPBToV4L2DPB(
   }
 }
 
-bool V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitFrameMetadata(
+H264Decoder::H264Accelerator::Status
+V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitFrameMetadata(
     const H264SPS* sps,
     const H264PPS* pps,
     const H264DPB& dpb,
@@ -2316,20 +2320,22 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitFrameMetadata(
   H264DPBToV4L2DPB(dpb, &ref_surfaces);
   dec_surface->SetReferenceSurfaces(ref_surfaces);
 
-  return true;
+  return Status::kOk;
 }
 
-bool V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitSlice(
+H264Decoder::H264Accelerator::Status
+V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitSlice(
     const H264PPS* pps,
     const H264SliceHeader* slice_hdr,
     const H264Picture::Vector& ref_pic_list0,
     const H264Picture::Vector& ref_pic_list1,
     const scoped_refptr<H264Picture>& pic,
     const uint8_t* data,
-    size_t size) {
+    size_t size,
+    const std::vector<SubsampleEntry>& subsamples) {
   if (num_slices_ == kMaxSlices) {
     VLOGF(1) << "Over limit of supported slices per frame";
-    return false;
+    return Status::kFail;
   }
 
   struct v4l2_ctrl_h264_slice_param& v4l2_slice_param =
@@ -2437,7 +2443,9 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitSlice(
   data_copy[2] = 0x01;
   memcpy(data_copy.get() + 3, data, size);
   return v4l2_dec_->SubmitSlice(dec_surface->input_record(), data_copy.get(),
-                                data_copy_size);
+                                data_copy_size)
+             ? Status::kOk
+             : Status::kFail;
 }
 
 bool V4L2SliceVideoDecodeAccelerator::SubmitSlice(int index,
@@ -2483,7 +2491,8 @@ bool V4L2SliceVideoDecodeAccelerator::IsCtrlExposed(uint32_t ctrl_id) {
   return (device_->Ioctl(VIDIOC_QUERYCTRL, &query_ctrl) == 0);
 }
 
-bool V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitDecode(
+H264Decoder::H264Accelerator::Status
+V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitDecode(
     const scoped_refptr<H264Picture>& pic) {
   scoped_refptr<V4L2DecodeSurface> dec_surface =
       H264PictureToV4L2DecodeSurface(pic);
@@ -2514,20 +2523,21 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::SubmitDecode(
   ext_ctrls.controls = &ctrls[0];
   ext_ctrls.config_store = dec_surface->config_store();
   if (!v4l2_dec_->SubmitExtControls(&ext_ctrls))
-    return false;
+    return Status::kFail;
 
   Reset();
 
-  v4l2_dec_->DecodeSurface(dec_surface);
-  return true;
+  DVLOGF(4) << "Submitting decode for surface: " << dec_surface->ToString();
+  v4l2_dec_->Enqueue(dec_surface);
+  return Status::kOk;
 }
 
 bool V4L2SliceVideoDecodeAccelerator::V4L2H264Accelerator::OutputPicture(
     const scoped_refptr<H264Picture>& pic) {
   scoped_refptr<V4L2DecodeSurface> dec_surface =
       H264PictureToV4L2DecodeSurface(pic);
-  dec_surface->set_visible_rect(pic->visible_rect);
-  v4l2_dec_->SurfaceReady(dec_surface);
+  dec_surface->set_visible_rect(pic->visible_rect());
+  v4l2_dec_->SurfaceReady(pic->bitstream_id(), dec_surface);
   return true;
 }
 
@@ -2637,16 +2647,14 @@ static void FillV4L2Vp8EntropyHeader(
 }
 
 bool V4L2SliceVideoDecodeAccelerator::V4L2VP8Accelerator::SubmitDecode(
-    const scoped_refptr<VP8Picture>& pic,
-    const Vp8FrameHeader* frame_hdr,
-    const scoped_refptr<VP8Picture>& last_frame,
-    const scoped_refptr<VP8Picture>& golden_frame,
-    const scoped_refptr<VP8Picture>& alt_frame) {
+    scoped_refptr<VP8Picture> pic,
+    const Vp8ReferenceFrameVector& reference_frames) {
   struct v4l2_ctrl_vp8_frame_hdr v4l2_frame_hdr;
   memset(&v4l2_frame_hdr, 0, sizeof(v4l2_frame_hdr));
 
+  const auto& frame_hdr = pic->frame_hdr;
+  v4l2_frame_hdr.key_frame = frame_hdr->frame_type;
 #define FHDR_TO_V4L2_FHDR(a) v4l2_frame_hdr.a = frame_hdr->a
-  FHDR_TO_V4L2_FHDR(key_frame);
   FHDR_TO_V4L2_FHDR(version);
   FHDR_TO_V4L2_FHDR(width);
   FHDR_TO_V4L2_FHDR(horizontal_scale);
@@ -2702,6 +2710,7 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2VP8Accelerator::SubmitDecode(
       VP8PictureToV4L2DecodeSurface(pic);
   std::vector<scoped_refptr<V4L2DecodeSurface>> ref_surfaces;
 
+  const auto last_frame = reference_frames.GetFrame(Vp8RefType::VP8_FRAME_LAST);
   if (last_frame) {
     scoped_refptr<V4L2DecodeSurface> last_frame_surface =
         VP8PictureToV4L2DecodeSurface(last_frame);
@@ -2711,6 +2720,8 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2VP8Accelerator::SubmitDecode(
     v4l2_frame_hdr.last_frame = VIDEO_MAX_FRAME;
   }
 
+  const auto golden_frame =
+      reference_frames.GetFrame(Vp8RefType::VP8_FRAME_GOLDEN);
   if (golden_frame) {
     scoped_refptr<V4L2DecodeSurface> golden_frame_surface =
         VP8PictureToV4L2DecodeSurface(golden_frame);
@@ -2720,6 +2731,8 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2VP8Accelerator::SubmitDecode(
     v4l2_frame_hdr.golden_frame = VIDEO_MAX_FRAME;
   }
 
+  const auto alt_frame =
+      reference_frames.GetFrame(Vp8RefType::VP8_FRAME_ALTREF);
   if (alt_frame) {
     scoped_refptr<V4L2DecodeSurface> alt_frame_surface =
         VP8PictureToV4L2DecodeSurface(alt_frame);
@@ -2750,7 +2763,8 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2VP8Accelerator::SubmitDecode(
                               frame_hdr->frame_size))
     return false;
 
-  v4l2_dec_->DecodeSurface(dec_surface);
+  DVLOGF(4) << "Submitting decode for surface: " << dec_surface->ToString();
+  v4l2_dec_->Enqueue(dec_surface);
   return true;
 }
 
@@ -2758,8 +2772,8 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2VP8Accelerator::OutputPicture(
     const scoped_refptr<VP8Picture>& pic) {
   scoped_refptr<V4L2DecodeSurface> dec_surface =
       VP8PictureToV4L2DecodeSurface(pic);
-  dec_surface->set_visible_rect(pic->visible_rect);
-  v4l2_dec_->SurfaceReady(dec_surface);
+  dec_surface->set_visible_rect(pic->visible_rect());
+  v4l2_dec_->SurfaceReady(pic->bitstream_id(), dec_surface);
   return true;
 }
 
@@ -3053,7 +3067,8 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2VP9Accelerator::SubmitDecode(
                               frame_hdr->frame_size))
     return false;
 
-  v4l2_dec_->DecodeSurface(dec_surface);
+  DVLOGF(4) << "Submitting decode for surface: " << dec_surface->ToString();
+  v4l2_dec_->Enqueue(dec_surface);
   return true;
 }
 
@@ -3061,8 +3076,8 @@ bool V4L2SliceVideoDecodeAccelerator::V4L2VP9Accelerator::OutputPicture(
     const scoped_refptr<VP9Picture>& pic) {
   scoped_refptr<V4L2DecodeSurface> dec_surface =
       VP9PictureToV4L2DecodeSurface(pic);
-  dec_surface->set_visible_rect(pic->visible_rect);
-  v4l2_dec_->SurfaceReady(dec_surface);
+  dec_surface->set_visible_rect(pic->visible_rect());
+  v4l2_dec_->SurfaceReady(pic->bitstream_id(), dec_surface);
   return true;
 }
 
@@ -3137,37 +3152,32 @@ V4L2SliceVideoDecodeAccelerator::V4L2VP9Accelerator::
   return v4l2_pic->dec_surface();
 }
 
-void V4L2SliceVideoDecodeAccelerator::DecodeSurface(
-    const scoped_refptr<V4L2DecodeSurface>& dec_surface) {
-  DCHECK(decoder_thread_task_runner_->BelongsToCurrentThread());
-
-  DVLOGF(4) << "Submitting decode for surface: " << dec_surface->ToString();
-  Enqueue(dec_surface);
-}
-
 void V4L2SliceVideoDecodeAccelerator::SurfaceReady(
+    int32_t bitstream_id,
     const scoped_refptr<V4L2DecodeSurface>& dec_surface) {
   DVLOGF(4);
   DCHECK(decoder_thread_task_runner_->BelongsToCurrentThread());
 
-  decoder_display_queue_.push(dec_surface);
+  decoder_display_queue_.push(std::make_pair(bitstream_id, dec_surface));
   TryOutputSurfaces();
 }
 
 void V4L2SliceVideoDecodeAccelerator::TryOutputSurfaces() {
   while (!decoder_display_queue_.empty()) {
     scoped_refptr<V4L2DecodeSurface> dec_surface =
-        decoder_display_queue_.front();
+        decoder_display_queue_.front().second;
 
     if (!dec_surface->decoded())
       break;
 
+    int32_t bitstream_id = decoder_display_queue_.front().first;
     decoder_display_queue_.pop();
-    OutputSurface(dec_surface);
+    OutputSurface(bitstream_id, dec_surface);
   }
 }
 
 void V4L2SliceVideoDecodeAccelerator::OutputSurface(
+    int32_t bitstream_id,
     const scoped_refptr<V4L2DecodeSurface>& dec_surface) {
   DCHECK(decoder_thread_task_runner_->BelongsToCurrentThread());
 
@@ -3186,7 +3196,7 @@ void V4L2SliceVideoDecodeAccelerator::OutputSurface(
   output_record.at_client = true;
 
   // TODO(hubbe): Insert correct color space. http://crbug.com/647725
-  Picture picture(output_record.picture_id, dec_surface->bitstream_id(),
+  Picture picture(output_record.picture_id, bitstream_id,
                   dec_surface->visible_rect(), gfx::ColorSpace(),
                   true /* allow_overlay */);
   DVLOGF(4) << dec_surface->ToString()
@@ -3218,7 +3228,7 @@ V4L2SliceVideoDecodeAccelerator::CreateSurface() {
   input_record.input_id = decoder_current_bitstream_buffer_->input_id;
 
   scoped_refptr<V4L2DecodeSurface> dec_surface = new V4L2DecodeSurface(
-      decoder_current_bitstream_buffer_->input_id, input, output,
+      input, output,
       base::Bind(&V4L2SliceVideoDecodeAccelerator::ReuseOutputBuffer,
                  base::Unretained(this)));
 

@@ -8,9 +8,11 @@
 #include <stdint.h>
 
 #include <memory>
+#include <random>
 
 #include "base/macros.h"
 #include "base/optional.h"
+#include "build/build_config.h"
 #include "ui/events/events_export.h"
 #include "ui/gfx/x/x11_types.h"
 
@@ -69,12 +71,18 @@ class EVENTS_EXPORT X11EventSource {
   // current event does not have a timestamp.
   Time GetTimestamp();
 
+#if !defined(USE_OZONE)
   // Returns the root pointer location only if there is an event being
   // dispatched that contains that information.
   base::Optional<gfx::Point> GetRootCursorLocationFromCurrentEvent() const;
+#endif
 
   void StopCurrentEventStream();
   void OnDispatcherListChanged();
+
+  // Explicitly asks the X11 server for the current timestamp, and updates
+  // |last_seen_server_time_| with this value.
+  Time GetCurrentServerTime();
 
  protected:
   // Extracts cookie data from |xevent| if it's of GenericType, and dispatches
@@ -84,10 +92,6 @@ class EVENTS_EXPORT X11EventSource {
 
   // Handles updates after event has been dispatched.
   void PostDispatchEvent(XEvent* xevent);
-
-  // Explicitly asks the X11 server for the current timestamp, and updates
-  // |last_seen_server_time_| with this value.
-  Time GetCurrentServerTime();
 
  private:
   static X11EventSource* instance_;
@@ -111,6 +115,10 @@ class EVENTS_EXPORT X11EventSource {
   bool continue_stream_ = true;
 
   std::unique_ptr<X11HotplugEventHandler> hotplug_event_handler_;
+
+  // Used to sample RTT measurements, with frequency 1/1000.
+  std::default_random_engine generator_;
+  std::uniform_int_distribution<int> distribution_;
 
   DISALLOW_COPY_AND_ASSIGN(X11EventSource);
 };

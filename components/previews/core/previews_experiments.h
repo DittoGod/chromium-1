@@ -11,6 +11,7 @@
 
 #include "base/time/time.h"
 #include "net/nqe/effective_connection_type.h"
+#include "url/gurl.h"
 
 namespace previews {
 
@@ -27,8 +28,9 @@ enum class PreviewsType {
   // The user is shown a server lite page.
   LITE_PAGE = 3,
 
-  // AMP version of the page is shown as a preview.
-  AMP_REDIRECTION = 4,
+  // AMP version of the page is shown as a preview. Deprecated, and should not
+  // be used.
+  DEPRECATED_AMP_REDIRECTION = 4,
 
   // Preview that disables JavaScript for the navigation.
   NOSCRIPT = 5,
@@ -37,9 +39,15 @@ enum class PreviewsType {
   // might be used for checks or logging that applies to any type.
   UNSPECIFIED = 6,
 
+  // Request that resource loading hints be used during pageload.
+  RESOURCE_LOADING_HINTS = 7,
+
+  // Allows the browser to redirect navigations to a Lite Page server.
+  LITE_PAGE_REDIRECT = 8,
+
   // Insert new enum values here. Keep values sequential to allow looping from
   // NONE+1 to LAST-1. Also add the enum to Previews.Types histogram suffix.
-  LAST = 7,
+  LAST = 9,
 };
 
 typedef std::vector<std::pair<PreviewsType, int>> PreviewsTypeList;
@@ -81,6 +89,15 @@ base::TimeDelta SingleOptOutDuration();
 // shown as a preview.
 base::TimeDelta OfflinePreviewFreshnessDuration();
 
+// The host for Lite Page server previews.
+GURL GetLitePagePreviewsDomainURL();
+
+// The duration of a single bypass for Lite Page Server Previews.
+base::TimeDelta LitePagePreviewsSingleBypassDuration();
+
+// The maximum number of seconds to loadshed the Previews server for.
+int PreviewServerLoadshedMaxSeconds();
+
 // The threshold of EffectiveConnectionType above which preview |type| will be
 // triggered.
 net::EffectiveConnectionType GetECTThresholdForPreview(
@@ -92,14 +109,16 @@ bool ArePreviewsAllowed();
 // Whether the preview type is enabled.
 bool IsOfflinePreviewsEnabled();
 bool IsClientLoFiEnabled();
-bool IsAMPRedirectionPreviewEnabled();
 bool IsNoScriptPreviewsEnabled();
+bool IsResourceLoadingHintsEnabled();
+bool IsLitePageServerPreviewsEnabled();
 
 // The blacklist version for each preview type.
 int OfflinePreviewsVersion();
 int ClientLoFiVersion();
-int AMPRedirectionPreviewsVersion();
+int LitePageServerPreviewsVersion();
 int NoScriptPreviewsVersion();
+int ResourceLoadingHintsVersion();
 
 // Whether server optimization hints are enabled.
 bool IsOptimizationHintsEnabled();

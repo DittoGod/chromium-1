@@ -7,10 +7,9 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/storage_monitor/media_storage_util.h"
 #include "components/storage_monitor/removable_device_constants.h"
@@ -86,7 +85,7 @@ TEST_F(MediaStorageUtilTest, MediaDeviceAttached) {
   base::FilePath mount_point(CreateMountPoint(true));
   ASSERT_FALSE(mount_point.empty());
   base::PostTaskWithTraits(
-      FROM_HERE, {base::TaskPriority::BACKGROUND, base::MayBlock()},
+      FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
       base::BindOnce(&MediaStorageUtilTest::CheckDCIMDeviceType,
                      base::Unretained(this), mount_point));
   RunUntilIdle();
@@ -99,7 +98,7 @@ TEST_F(MediaStorageUtilTest, NonMediaDeviceAttached) {
   base::FilePath mount_point(CreateMountPoint(false));
   ASSERT_FALSE(mount_point.empty());
   base::PostTaskWithTraits(
-      FROM_HERE, {base::TaskPriority::BACKGROUND, base::MayBlock()},
+      FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
       base::BindOnce(&MediaStorageUtilTest::CheckNonDCIMDeviceType,
                      base::Unretained(this), mount_point));
   RunUntilIdle();
@@ -120,15 +119,13 @@ TEST_F(MediaStorageUtilTest, DetectDeviceFiltered) {
   MediaStorageUtil::DeviceIdSet devices;
   devices.insert(kImageCaptureDeviceId);
 
-  MediaStorageUtil::FilterAttachedDevices(&devices,
-                                          base::Bind(&base::DoNothing));
+  MediaStorageUtil::FilterAttachedDevices(&devices, base::DoNothing());
   RunUntilIdle();
   EXPECT_FALSE(devices.find(kImageCaptureDeviceId) != devices.end());
 
   ProcessAttach(kImageCaptureDeviceId, FILE_PATH_LITERAL("/location"));
   devices.insert(kImageCaptureDeviceId);
-  MediaStorageUtil::FilterAttachedDevices(&devices,
-                                          base::Bind(&base::DoNothing));
+  MediaStorageUtil::FilterAttachedDevices(&devices, base::DoNothing());
   RunUntilIdle();
 
   EXPECT_TRUE(devices.find(kImageCaptureDeviceId) != devices.end());

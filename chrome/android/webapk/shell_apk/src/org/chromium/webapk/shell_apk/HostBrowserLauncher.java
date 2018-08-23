@@ -29,8 +29,6 @@ import java.util.List;
 class HostBrowserLauncher {
     private static final String LAST_RESORT_HOST_BROWSER = "com.android.chrome";
     private static final String LAST_RESORT_HOST_BROWSER_APPLICATION_NAME = "Google Chrome";
-    private static final String EXTRA_CUSTOM_TABS_SESSION =
-            "android.support.customtabs.extra.SESSION";
     private static final String TAG = "cr_HostBrowserLauncher";
 
     // Action for launching {@link WebappLauncherActivity}.
@@ -61,14 +59,17 @@ class HostBrowserLauncher {
     /** Whether the WebAPK should be navigated to {@link mStartUrl} if it is already running. */
     private boolean mForceNavigation;
 
+    private long mWebApkLaunchTime;
+
     public HostBrowserLauncher(Activity parentActivity, Intent intent, String startUrl, int source,
-            boolean forceNavigation) {
+            boolean forceNavigation, long webApkLaunchTime) {
         mParentActivity = parentActivity;
         mContext = parentActivity.getApplicationContext();
         mIntent = intent;
         mStartUrl = startUrl;
         mSource = source;
         mForceNavigation = forceNavigation;
+        mWebApkLaunchTime = webApkLaunchTime;
     }
 
     /**
@@ -107,7 +108,7 @@ class HostBrowserLauncher {
         }
 
         if (!TextUtils.isEmpty(runtimeHost)) {
-            launchInHostBrowser(metadata, runtimeHost);
+            launchInHostBrowser(runtimeHost, false);
             finishCallback.run();
             return;
         }
@@ -115,7 +116,7 @@ class HostBrowserLauncher {
         List<ResolveInfo> infos =
                 WebApkUtils.getInstalledBrowserResolveInfos(mContext.getPackageManager());
         if (hasBrowserSupportingWebApks(infos)) {
-            showChooseHostBrowserDialog(infos, metadata, finishCallback);
+            showChooseHostBrowserDialog(infos, finishCallback);
         } else {
             showInstallHostBrowserDialog(metadata, finishCallback);
         }
@@ -138,17 +139,12 @@ class HostBrowserLauncher {
                 mContext.getDir(HostBrowserClassLoader.DEX_DIR_NAME, Context.MODE_PRIVATE));
     }
 
-    private void launchInHostBrowser(Bundle metadata, String runtimeHost) {
+    private void launchInHostBrowser(String runtimeHost, boolean hostBrowserDialogShown) {
         PackageInfo info;
         try {
             info = mContext.getPackageManager().getPackageInfo(runtimeHost, 0);
         } catch (PackageManager.NameNotFoundException e) {
             Log.e(TAG, "Unable to get the host browser's package info.");
-            return;
-        }
-
-        if (metadata.getBoolean(WebApkMetaDataKeys.DISABLE_FULL_SCREEN_MODE)) {
-            launchInCCT(runtimeHost);
             return;
         }
 
@@ -169,27 +165,16 @@ class HostBrowserLauncher {
                 .putExtra(WebApkConstants.EXTRA_WEBAPK_PACKAGE_NAME, mContext.getPackageName())
                 .putExtra(WebApkConstants.EXTRA_FORCE_NAVIGATION, mForceNavigation);
 
+        // Only pass on the start time if no user action was required between launching the webapk
+        // and chrome starting up. See https://crbug.com/842023
+        if (!hostBrowserDialogShown) {
+            intent.putExtra(WebApkConstants.EXTRA_WEBAPK_LAUNCH_TIME, mWebApkLaunchTime);
+        }
+
         try {
             mParentActivity.startActivity(intent);
         } catch (ActivityNotFoundException e) {
             Log.w(TAG, "Unable to launch browser in WebAPK mode.");
-            e.printStackTrace();
-        }
-    }
-
-    /** Launches a WebAPK in a Custom Tab. */
-    private void launchInCCT(String runtimeHost) {
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setData(Uri.parse(mStartUrl));
-        intent.setPackage(runtimeHost);
-        // Ideally a custom tab session should be created when launching a CCT. We don't want to
-        // create real custom tab sessions because we don't want to import custom tab library in the
-        // shell APK.
-        intent.putExtra(EXTRA_CUSTOM_TABS_SESSION, "");
-        try {
-            mParentActivity.startActivity(intent);
-        } catch (ActivityNotFoundException e) {
-            Log.w(TAG, "Unable to launch the WebAPK in a Custom Tab.");
             e.printStackTrace();
         }
     }
@@ -228,13 +213,12 @@ class HostBrowserLauncher {
     }
 
     /** Shows a dialog to choose the host browser. */
-    private void showChooseHostBrowserDialog(
-            List<ResolveInfo> infos, Bundle metadata, Runnable finishCallback) {
+    private void showChooseHostBrowserDialog(List<ResolveInfo> infos, Runnable finishCallback) {
         ChooseHostBrowserDialog.DialogListener listener =
                 new ChooseHostBrowserDialog.DialogListener() {
                     @Override
                     public void onHostBrowserSelected(String selectedHostBrowser) {
-                        launchInHostBrowser(metadata, selectedHostBrowser);
+                        launchInHostBrowser(selectedHostBrowser, true);
                         WebApkUtils.writeHostBrowserToSharedPref(mContext, selectedHostBrowser);
                         finishCallback.run();
                     }

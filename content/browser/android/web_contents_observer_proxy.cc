@@ -199,6 +199,11 @@ void WebContentsObserverProxy::NavigationEntryCommitted(
   Java_WebContentsObserverProxy_navigationEntryCommitted(env, java_observer_);
 }
 
+void WebContentsObserverProxy::NavigationEntriesDeleted() {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_navigationEntriesDeleted(env, java_observer_);
+}
+
 void WebContentsObserverProxy::DidAttachInterstitialPage() {
   JNIEnv* env = AttachCurrentThread();
   Java_WebContentsObserverProxy_didAttachInterstitialPage(env, java_observer_);
@@ -263,6 +268,13 @@ void WebContentsObserverProxy::SetToBaseURLForDataURLIfNeeded(
     // loadDataWithBaseUrl.
     *url = base_url_of_last_started_data_url_.possibly_invalid_spec();
   }
+}
+
+void WebContentsObserverProxy::ViewportFitChanged(
+    blink::mojom::ViewportFit value) {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_viewportFitChanged(
+      env, java_observer_, as_jint(static_cast<int>(value)));
 }
 
 }  // namespace content

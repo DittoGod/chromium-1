@@ -5,6 +5,9 @@
 #ifndef DEVICE_FIDO_ATTESTATION_STATEMENT_H_
 #define DEVICE_FIDO_ATTESTATION_STATEMENT_H_
 
+#include <string>
+
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "components/cbor/cbor_values.h"
 
@@ -17,7 +20,7 @@ namespace device {
 // - The set of attestation types supported by the format.
 // - The syntax of an attestation statement produced in this format.
 // https://www.w3.org/TR/2017/WD-webauthn-20170505/#cred-attestation.
-class AttestationStatement {
+class COMPONENT_EXPORT(DEVICE_FIDO) AttestationStatement {
  public:
   virtual ~AttestationStatement();
 
@@ -26,28 +29,40 @@ class AttestationStatement {
   // https://www.w3.org/TR/2017/WD-webauthn-20170505/#defined-attestation-formats
   // This is not a CBOR-encoded byte array, but the map that will be
   // nested within another CBOR object and encoded then.
-  virtual cbor::CBORValue::MapValue GetAsCBORMap() = 0;
+  virtual cbor::CBORValue::MapValue GetAsCBORMap() const = 0;
 
-  const std::string& format_name() { return format_; }
+  // Returns true if the attestation is a "self" attestation, i.e. is just the
+  // private key signing itself to show that it is fresh.
+  virtual bool IsSelfAttestation() = 0;
+
+  // Returns true if the attestation is known to be inappropriately identifying.
+  // Some tokens return unique attestation certificates even when the bit to
+  // request that is not set. (Normal attestation certificates are not
+  // indended to be trackable.)
+  virtual bool IsAttestationCertificateInappropriatelyIdentifying() = 0;
+
+  const std::string& format_name() const { return format_; }
 
  protected:
-  AttestationStatement(std::string format);
-
- private:
+  explicit AttestationStatement(std::string format);
   const std::string format_;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(AttestationStatement);
 };
 
 // NoneAttestationStatement represents a “none” attestation, which is used when
 // attestation information will not be returned. See
 // https://w3c.github.io/webauthn/#none-attestation
-class NoneAttestationStatement : public AttestationStatement {
+class COMPONENT_EXPORT(DEVICE_FIDO) NoneAttestationStatement
+    : public AttestationStatement {
  public:
   NoneAttestationStatement();
-
   ~NoneAttestationStatement() override;
-  cbor::CBORValue::MapValue GetAsCBORMap() override;
+
+  bool IsSelfAttestation() override;
+  bool IsAttestationCertificateInappropriatelyIdentifying() override;
+  cbor::CBORValue::MapValue GetAsCBORMap() const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NoneAttestationStatement);

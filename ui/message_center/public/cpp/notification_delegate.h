@@ -11,44 +11,70 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "ui/message_center/public/cpp/message_center_public_export.h"
 
 namespace message_center {
 
-// Delegate for a notification. This class has two roles: to implement callback
-// methods for notification, and to provide an identity of the associated
-// notification.
-class MESSAGE_CENTER_PUBLIC_EXPORT NotificationDelegate
-    : public base::RefCountedThreadSafe<NotificationDelegate> {
+// Handles actions performed on a notification.
+class MESSAGE_CENTER_PUBLIC_EXPORT NotificationObserver {
  public:
-  // To be called when the desktop notification is closed.  If closed by a
-  // user explicitly (as opposed to timeout/script), |by_user| should be true.
-  virtual void Close(bool by_user);
+  // Called when the desktop notification is closed. If closed by a user
+  // explicitly (as opposed to timeout/script), |by_user| should be true.
+  virtual void Close(bool by_user) {}
 
-  // To be called when a desktop notification is clicked.
-  virtual void Click();
+  // Called when a desktop notification is clicked. |button_index| is filled in
+  // if a button was clicked (as opposed to the body of the notification) while
+  // |reply| is filled in if there was an input field associated with the
+  // button.
+  virtual void Click(const base::Optional<int>& button_index,
+                     const base::Optional<base::string16>& reply) {}
 
-  // To be called when the user clicks a button in a notification.
-  virtual void ButtonClick(int button_index);
-
-  // To be called when the user types a reply to a notification.
-  virtual void ButtonClickWithReply(int button_index,
-                                    const base::string16& reply);
-
-  // To be called when the user clicks the settings button in a notification
-  // which has a DELEGATE settings button action.
-  virtual void SettingsClick();
+  // Called when the user clicks the settings button in a notification which has
+  // a DELEGATE settings button action.
+  virtual void SettingsClick() {}
 
   // Called when the user attempts to disable the notification.
-  virtual void DisableNotification();
+  virtual void DisableNotification() {}
+};
 
+// Ref counted version of NotificationObserver, required to satisfy
+// message_center::Notification::delegate_.
+class MESSAGE_CENTER_PUBLIC_EXPORT NotificationDelegate
+    : public NotificationObserver,
+      public base::RefCountedThreadSafe<NotificationDelegate> {
  protected:
-  virtual ~NotificationDelegate() {}
+  virtual ~NotificationDelegate() = default;
 
  private:
   friend class base::RefCountedThreadSafe<NotificationDelegate>;
+};
+
+// A pass-through which converts the RefCounted requirement to a WeakPtr
+// requirement. This class replaces the need for individual delegates that pass
+// through to an actual controller class, and which only exist because the
+// actual controller has a strong ownership model.
+class MESSAGE_CENTER_PUBLIC_EXPORT ThunkNotificationDelegate
+    : public NotificationDelegate {
+ public:
+  explicit ThunkNotificationDelegate(base::WeakPtr<NotificationObserver> impl);
+
+  // NotificationDelegate:
+  void Close(bool by_user) override;
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override;
+  void SettingsClick() override;
+  void DisableNotification() override;
+
+ protected:
+  ~ThunkNotificationDelegate() override;
+
+ private:
+  base::WeakPtr<NotificationObserver> impl_;
+
+  DISALLOW_COPY_AND_ASSIGN(ThunkNotificationDelegate);
 };
 
 // A simple notification delegate which invokes the passed closure when the body
@@ -70,8 +96,8 @@ class MESSAGE_CENTER_PUBLIC_EXPORT HandleNotificationClickDelegate
       const base::RepeatingClosure& closure);
 
   // NotificationDelegate overrides:
-  void Click() override;
-  void ButtonClick(int button_index) override;
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override;
 
  protected:
   ~HandleNotificationClickDelegate() override;

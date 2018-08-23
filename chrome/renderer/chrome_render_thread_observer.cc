@@ -17,7 +17,6 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/statistics_recorder.h"
@@ -47,7 +46,7 @@
 #include "content/public/renderer/render_view.h"
 #include "content/public/renderer/render_view_visitor.h"
 #include "content/public/renderer/resource_dispatcher_delegate.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ipc/ipc_sync_channel.h"
 #include "media/base/localized_strings.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
@@ -55,11 +54,11 @@
 #include "net/base/net_module.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "third_party/WebKit/public/common/associated_interfaces/associated_interface_registry.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebSecurityPolicy.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_security_policy.h"
+#include "third_party/blink/public/web/web_view.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/renderer/extensions/extension_localization_peer.h"
@@ -136,6 +135,10 @@ class RendererResourceDelegate : public content::ResourceDispatcherDelegate {
 }  // namespace
 
 bool ChromeRenderThreadObserver::is_incognito_process_ = false;
+bool ChromeRenderThreadObserver::force_safe_search_ = false;
+int32_t ChromeRenderThreadObserver::youtube_restrict_ = 0;
+std::string* ChromeRenderThreadObserver::allowed_domains_for_apps_ = nullptr;
+std::string* ChromeRenderThreadObserver::variation_ids_header_ = nullptr;
 
 ChromeRenderThreadObserver::ChromeRenderThreadObserver()
     : visited_link_slave_(new visitedlink::VisitedLinkSlave),
@@ -161,13 +164,13 @@ ChromeRenderThreadObserver::ChromeRenderThreadObserver()
   WebSecurityPolicy::RegisterURLSchemeAsNotAllowingJavascriptURLs(
       native_scheme);
 
-  auto registry = base::MakeUnique<service_manager::BinderRegistry>();
+  auto registry = std::make_unique<service_manager::BinderRegistry>();
   registry->AddInterface(visited_link_slave_->GetBindCallback(),
                          base::ThreadTaskRunnerHandle::Get());
   if (content::ChildThread::Get()) {
     content::ChildThread::Get()
         ->GetServiceManagerConnection()
-        ->AddConnectionFilter(base::MakeUnique<content::SimpleConnectionFilter>(
+        ->AddConnectionFilter(std::make_unique<content::SimpleConnectionFilter>(
             std::move(registry)));
   }
 }
@@ -187,13 +190,24 @@ void ChromeRenderThreadObserver::UnregisterMojoInterfaces(
       chrome::mojom::RendererConfiguration::Name_);
 }
 
-void ChromeRenderThreadObserver::NetworkStateChanged(bool online) {
-  online_ = online;
-}
-
 void ChromeRenderThreadObserver::SetInitialConfiguration(
     bool is_incognito_process) {
   is_incognito_process_ = is_incognito_process;
+}
+
+void ChromeRenderThreadObserver::SetConfiguration(
+    bool force_safe_search,
+    int32_t youtube_restrict,
+    const std::string& allowed_domains_for_apps,
+    const std::string& variation_ids_header) {
+  force_safe_search_ = force_safe_search;
+  youtube_restrict_ = youtube_restrict;
+  if (!allowed_domains_for_apps_)
+    allowed_domains_for_apps_ = new std::string();
+  *allowed_domains_for_apps_ = allowed_domains_for_apps;
+  if (!variation_ids_header_)
+    variation_ids_header_ = new std::string();
+  *variation_ids_header_ = variation_ids_header;
 }
 
 void ChromeRenderThreadObserver::SetContentSettingRules(

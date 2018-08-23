@@ -12,7 +12,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/proxy_resolution/proxy_resolver_factory.h"
 #include "services/proxy_resolver/public/mojom/proxy_resolver.mojom.h"
 
@@ -20,7 +20,7 @@ namespace net {
 class HostResolver;
 class NetLog;
 class ProxyResolverErrorObserver;
-class ProxyResolverScriptData;
+class PacFileData;
 }  // namespace net
 
 namespace network {
@@ -39,11 +39,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ProxyResolverFactoryMojo
   ~ProxyResolverFactoryMojo() override;
 
   // ProxyResolverFactory override.
-  int CreateProxyResolver(
-      const scoped_refptr<net::ProxyResolverScriptData>& pac_script,
-      std::unique_ptr<net::ProxyResolver>* resolver,
-      const net::CompletionCallback& callback,
-      std::unique_ptr<Request>* request) override;
+  int CreateProxyResolver(const scoped_refptr<net::PacFileData>& pac_script,
+                          std::unique_ptr<net::ProxyResolver>* resolver,
+                          net::CompletionOnceCallback callback,
+                          std::unique_ptr<Request>* request) override;
 
  private:
   class Job;

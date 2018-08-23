@@ -23,7 +23,10 @@ def _CommonChecks(input_api, output_api, block_on_failure=False):
 
   results.extend(_CheckExpectations(input_api, output_api))
   results.extend(_CheckJson(input_api, output_api))
-  results.extend(_CheckPerfData(input_api, output_api, block_on_failure))
+  results.extend(
+      _CheckPerfDataCurrentness(input_api, output_api, block_on_failure))
+  results.extend(
+      _CheckPerfJsonConfigs(input_api, output_api, block_on_failure))
   results.extend(_CheckWprShaFiles(input_api, output_api))
   results.extend(input_api.RunTests(input_api.canned_checks.GetPylint(
       input_api, output_api, extra_paths_list=_GetPathsToPrepend(input_api),
@@ -64,8 +67,9 @@ def _RunArgs(args, input_api):
 def _CheckExpectations(input_api, output_api):
   results = []
   perf_dir = input_api.PresubmitLocalPath()
+  vpython = 'vpython.bat' if input_api.is_windows else 'vpython'
   out, return_code = _RunArgs([
-      input_api.python_executable,
+      vpython,
       input_api.os_path.join(perf_dir, 'validate_story_expectation_data')],
       input_api)
   if return_code:
@@ -74,20 +78,38 @@ def _CheckExpectations(input_api, output_api):
   return results
 
 
-def _CheckPerfData(input_api, output_api, block_on_failure):
+def _CheckPerfDataCurrentness(input_api, output_api, block_on_failure):
   results = []
   perf_dir = input_api.PresubmitLocalPath()
+  vpython = 'vpython.bat' if input_api.is_windows else 'vpython'
   out, return_code = _RunArgs([
-      input_api.python_executable,
+      vpython,
       input_api.os_path.join(perf_dir, 'generate_perf_data'),
       '--validate-only'], input_api)
   if return_code:
     if block_on_failure:
       results.append(output_api.PresubmitError(
-          'Validating perf data failed', long_text=out))
+          'Validating perf data currentness failed', long_text=out))
     else:
       results.append(output_api.PresubmitPromptWarning(
-          'Validating perf data failed', long_text=out))
+          'Validating perf data currentness failed', long_text=out))
+  return results
+
+
+def _CheckPerfJsonConfigs(input_api, output_api, block_on_failure):
+  results = []
+  perf_dir = input_api.PresubmitLocalPath()
+  vpython = 'vpython.bat' if input_api.is_windows else 'vpython'
+  out, return_code = _RunArgs([
+      vpython,
+      input_api.os_path.join(perf_dir, 'validate_perf_json_config')], input_api)
+  if return_code:
+    if block_on_failure:
+      results.append(output_api.PresubmitError(
+          'Validating perf data correctness failed', long_text=out))
+    else:
+      results.append(output_api.PresubmitPromptWarning(
+          'Validating perf data correctness failed', long_text=out))
   return results
 
 
@@ -103,8 +125,9 @@ def _CheckWprShaFiles(input_api, output_api):
       continue
     wpr_archive_shas.append(filename)
 
+  vpython = 'vpython.bat' if input_api.is_windows else 'vpython'
   out, return_code = _RunArgs([
-      input_api.python_executable,
+      vpython,
       input_api.os_path.join(perf_dir, 'validate_wpr_archives')] +
       wpr_archive_shas,
       input_api)

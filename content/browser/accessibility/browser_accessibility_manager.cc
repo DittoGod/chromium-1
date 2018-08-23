@@ -351,7 +351,7 @@ bool BrowserAccessibilityManager::UseRootScrollOffsetsWhenComputingBounds() {
 }
 
 void BrowserAccessibilityManager::OnAccessibilityEvents(
-    const std::vector<AXEventNotificationDetails>& details) {
+    const AXEventNotificationDetails& details) {
   TRACE_EVENT0("accessibility",
                "BrowserAccessibilityManager::OnAccessibilityEvents");
 
@@ -360,15 +360,21 @@ void BrowserAccessibilityManager::OnAccessibilityEvents(
     device_scale_factor_ = delegate_->AccessibilityGetDeviceScaleFactor();
 
   // Process all changes to the accessibility tree first.
-  for (uint32_t index = 0; index < details.size(); ++index) {
-    const AXEventNotificationDetails& detail = details[index];
-    if (!tree_->Unserialize(detail.update)) {
-      if (delegate_) {
-        LOG(ERROR) << tree_->error();
-        delegate_->AccessibilityFatalError();
-      } else {
-        CHECK(false) << tree_->error();
-      }
+  for (uint32_t index = 0; index < details.updates.size(); ++index) {
+    if (!tree_->Unserialize(details.updates[index])) {
+      static auto* ax_tree_error = base::debug::AllocateCrashKeyString(
+          "ax_tree_error", base::debug::CrashKeySize::Size32);
+      static auto* ax_tree_update = base::debug::AllocateCrashKeyString(
+          "ax_tree_update", base::debug::CrashKeySize::Size64);
+      // Temporarily log some additional crash keys so we can try to
+      // figure out why we're getting bad accessibility trees here.
+      // http://crbug.com/870661
+      // Be sure to re-enable BrowserAccessibilityManagerTest.TestFatalError
+      // when done.
+      base::debug::SetCrashKeyString(ax_tree_error, tree_->error());
+      base::debug::SetCrashKeyString(ax_tree_update,
+                                     details.updates[index].ToString());
+      LOG(FATAL) << tree_->error();
       return;
     }
   }
@@ -405,23 +411,23 @@ void BrowserAccessibilityManager::OnAccessibilityEvents(
     if (!event_target)
       continue;
 
-    FireGeneratedEvent(targeted_event.event, event_target);
+    FireGeneratedEvent(targeted_event.event_params.event, event_target);
   }
   ClearEvents();
 
   // Fire events from Blink.
-  for (uint32_t index = 0; index < details.size(); index++) {
-    const AXEventNotificationDetails& detail = details[index];
+  for (uint32_t index = 0; index < details.events.size(); index++) {
+    const ui::AXEvent& event = details.events[index];
 
     // Fire the native event.
-    BrowserAccessibility* event_target = GetFromID(detail.id);
+    BrowserAccessibility* event_target = GetFromID(event.id);
     if (!event_target)
       return;
 
-    if (detail.event_type == ax::mojom::Event::kHover)
+    if (event.event_type == ax::mojom::Event::kHover)
       GetRootManager()->CacheHitTestResult(event_target);
 
-    FireBlinkEvent(detail.event_type, event_target);
+    FireBlinkEvent(event.event_type, event_target);
   }
 }
 
@@ -494,11 +500,16 @@ BrowserAccessibility* BrowserAccessibilityManager::GetActiveDescendant(
 
   if (focus->GetRole() == ax::mojom::Role::kPopUpButton) {
     BrowserAccessibility* child = focus->InternalGetChild(0);
-    if (child && child->GetRole() == ax::mojom::Role::kMenuListPopup) {
+    if (child && child->GetRole() == ax::mojom::Role::kMenuListPopup &&
+        !child->GetData().HasState(ax::mojom::State::kInvisible)) {
       // The active descendant is found on the menu list popup, i.e. on the
       // actual list and not on the button that opens it.
       // If there is no active descendant, focus should stay on the button so
       // that Windows screen readers would enable their virtual cursor.
+      // Do not expose an activedescendant in a hidden/collapsed list, as
+      // screen readers expect the focus event to go to the button itself.
+      // Note that the AX hierarchy in this case is strange -- the active
+      // option is the only visible option, and is inside an invisible list.
       if (child->GetIntAttribute(ax::mojom::IntAttribute::kActivedescendantId,
                                  &active_descendant_id)) {
         active_descendant = child->manager()->GetFromID(active_descendant_id);
@@ -506,7 +517,8 @@ BrowserAccessibility* BrowserAccessibilityManager::GetActiveDescendant(
     }
   }
 
-  if (active_descendant)
+  if (active_descendant &&
+      !active_descendant->GetData().HasState(ax::mojom::State::kInvisible))
     return active_descendant;
 
   return focus;
@@ -674,9 +686,8 @@ void BrowserAccessibilityManager::SetScrollOffset(
   delegate_->AccessibilityPerformAction(action_data);
 }
 
-void BrowserAccessibilityManager::SetValue(
-    const BrowserAccessibility& node,
-    const base::string16& value) {
+void BrowserAccessibilityManager::SetValue(const BrowserAccessibility& node,
+                                           const std::string& value) {
   if (!delegate_)
     return;
 
@@ -707,6 +718,28 @@ void BrowserAccessibilityManager::LoadInlineTextBoxes(
 
   ui::AXActionData action_data;
   action_data.action = ax::mojom::Action::kLoadInlineTextBoxes;
+  action_data.target_node_id = node.GetId();
+  delegate_->AccessibilityPerformAction(action_data);
+}
+
+void BrowserAccessibilityManager::SetAccessibilityFocus(
+    const BrowserAccessibility& node) {
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ax::mojom::Action::kSetAccessibilityFocus;
+  action_data.target_node_id = node.GetId();
+  delegate_->AccessibilityPerformAction(action_data);
+}
+
+void BrowserAccessibilityManager::ClearAccessibilityFocus(
+    const BrowserAccessibility& node) {
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ax::mojom::Action::kClearAccessibilityFocus;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
 }
@@ -1081,32 +1114,6 @@ void BrowserAccessibilityManager::OnSubtreeWillBeDeleted(ui::AXTree* tree,
     obj->OnSubtreeWillBeDeleted();
 }
 
-void BrowserAccessibilityManager::OnNodeWillBeReparented(ui::AXTree* tree,
-                                                         ui::AXNode* node) {
-  AXEventGenerator::OnNodeWillBeReparented(tree, node);
-  // BrowserAccessibility should probably ask the tree source for the AXNode via
-  // an id rather than weakly holding a pointer to a AXNode that might have been
-  // destroyed under the hood and re-created later on. Treat this as a delete to
-  // make things work.
-  if (id_wrapper_map_.find(node->id()) == id_wrapper_map_.end())
-    return;
-  GetFromAXNode(node)->Destroy();
-  id_wrapper_map_.erase(node->id());
-}
-
-void BrowserAccessibilityManager::OnSubtreeWillBeReparented(ui::AXTree* tree,
-                                                            ui::AXNode* node) {
-  AXEventGenerator::OnSubtreeWillBeReparented(tree, node);
-  // BrowserAccessibility should probably ask the tree source for the AXNode via
-  // an id rather than weakly holding a pointer to a AXNode that might have been
-  // destroyed under the hood and re-created later on. Treat this as a delete to
-  // make things work.
-  DCHECK(node);
-  BrowserAccessibility* obj = GetFromAXNode(node);
-  if (obj)
-    obj->OnSubtreeWillBeDeleted();
-}
-
 void BrowserAccessibilityManager::OnNodeCreated(ui::AXTree* tree,
                                                 ui::AXNode* node) {
   AXEventGenerator::OnNodeCreated(tree, node);
@@ -1119,13 +1126,13 @@ void BrowserAccessibilityManager::OnNodeCreated(ui::AXTree* tree,
 void BrowserAccessibilityManager::OnNodeReparented(ui::AXTree* tree,
                                                    ui::AXNode* node) {
   AXEventGenerator::OnNodeReparented(tree, node);
-  // BrowserAccessibility should probably ask the tree source for the AXNode via
-  // an id rather than weakly holding a pointer to a AXNode that might have been
-  // destroyed under the hood and re-created later on. Treat this as a create to
-  // make things work.
-  BrowserAccessibility* wrapper = factory_->Create();
+  BrowserAccessibility* wrapper = GetFromID(node->id());
+  if (!wrapper) {
+    wrapper = factory_->Create();
+    id_wrapper_map_[node->id()] = wrapper;
+  }
+
   wrapper->Init(this, node);
-  id_wrapper_map_[node->id()] = wrapper;
   wrapper->OnDataChanged();
 }
 
@@ -1255,7 +1262,7 @@ void BrowserAccessibilityManager::CacheHitTestResult(
 
   last_hover_ax_tree_id_ = hit_test_result->manager()->ax_tree_id();
   last_hover_node_id_ = hit_test_result->GetId();
-  last_hover_bounds_ = hit_test_result->GetScreenBoundsRect();
+  last_hover_bounds_ = hit_test_result->GetClippedScreenBoundsRect();
 }
 
 }  // namespace content

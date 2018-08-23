@@ -9,7 +9,6 @@
 
 #include "base/macros.h"
 #include "cc/raster/raster_buffer_provider.h"
-#include "cc/resources/layer_tree_resource_provider.h"
 #include "gpu/command_buffer/common/sync_token.h"
 
 namespace viz {
@@ -23,11 +22,11 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
  public:
   GpuRasterBufferProvider(viz::ContextProvider* compositor_context_provider,
                           viz::RasterContextProvider* worker_context_provider,
-                          LayerTreeResourceProvider* resource_provider,
-                          bool use_distance_field_text,
                           bool use_gpu_memory_buffer_resources,
                           int gpu_rasterization_msaa_sample_count,
-                          viz::ResourceFormat preferred_tile_format,
+                          viz::ResourceFormat tile_format,
+                          const gfx::Size& max_tile_size,
+                          bool unpremultiply_and_dither_low_bit_depth_tiles,
                           bool enable_oop_rasterization);
   ~GpuRasterBufferProvider() override;
 
@@ -36,10 +35,10 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
       const ResourcePool::InUsePoolResource& resource,
       uint64_t resource_content_id,
       uint64_t previous_content_id) override;
-  void OrderingBarrier() override;
   void Flush() override;
-  viz::ResourceFormat GetResourceFormat(bool must_support_alpha) const override;
-  bool IsResourceSwizzleRequired(bool must_support_alpha) const override;
+  viz::ResourceFormat GetResourceFormat() const override;
+  bool IsResourceSwizzleRequired() const override;
+  bool IsResourcePremultiplied() const override;
   bool CanPartialRasterIntoProvidedResource() const override;
   bool IsResourceReadyToDraw(
       const ResourcePool::InUsePoolResource& resource) const override;
@@ -64,7 +63,8 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
       const gfx::Rect& raster_dirty_rect,
       uint64_t new_content_id,
       const gfx::AxisTransform2d& transform,
-      const RasterSource::PlaybackSettings& playback_settings);
+      const RasterSource::PlaybackSettings& playback_settings,
+      const GURL& url);
 
  private:
   class GpuRasterBacking;
@@ -78,17 +78,13 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
     ~RasterBufferImpl() override;
 
     // Overridden from RasterBuffer:
-    void Playback(
-        const RasterSource* raster_source,
-        const gfx::Rect& raster_full_rect,
-        const gfx::Rect& raster_dirty_rect,
-        uint64_t new_content_id,
-        const gfx::AxisTransform2d& transform,
-        const RasterSource::PlaybackSettings& playback_settings) override;
-
-    void set_sync_token(const gpu::SyncToken& sync_token) {
-      before_raster_sync_token_ = sync_token;
-    }
+    void Playback(const RasterSource* raster_source,
+                  const gfx::Rect& raster_full_rect,
+                  const gfx::Rect& raster_dirty_rect,
+                  uint64_t new_content_id,
+                  const gfx::AxisTransform2d& transform,
+                  const RasterSource::PlaybackSettings& playback_settings,
+                  const GURL& url) override;
 
    private:
     // These fields may only be used on the compositor thread.
@@ -100,15 +96,12 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
     const viz::ResourceFormat resource_format_;
     const gfx::ColorSpace color_space_;
     const bool resource_has_previous_content_;
-    const gpu::SyncToken returned_sync_token_;
+    const gpu::SyncToken before_raster_sync_token_;
     const gpu::Mailbox mailbox_;
     const GLenum texture_target_;
     const bool texture_is_overlay_candidate_;
     // Set to true once allocation is done in the worker thread.
     bool texture_storage_allocated_;
-    // A SyncToken for the worker thread to consume before using the mailbox
-    // texture it is given.
-    gpu::SyncToken before_raster_sync_token_;
     // A SyncToken to be returned from the worker thread, and waited on before
     // using the rastered resource.
     gpu::SyncToken after_raster_sync_token_;
@@ -116,16 +109,16 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
     DISALLOW_COPY_AND_ASSIGN(RasterBufferImpl);
   };
 
+  bool ShouldUnpremultiplyAndDitherResource(viz::ResourceFormat format) const;
+
   viz::ContextProvider* const compositor_context_provider_;
   viz::RasterContextProvider* const worker_context_provider_;
-  LayerTreeResourceProvider* const resource_provider_;
-  const bool use_distance_field_text_;
   const bool use_gpu_memory_buffer_resources_;
   const int msaa_sample_count_;
-  const viz::ResourceFormat preferred_tile_format_;
+  const viz::ResourceFormat tile_format_;
+  const gfx::Size max_tile_size_;
+  const bool unpremultiply_and_dither_low_bit_depth_tiles_;
   const bool enable_oop_rasterization_;
-
-  std::set<RasterBufferImpl*> pending_raster_buffers_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuRasterBufferProvider);
 };

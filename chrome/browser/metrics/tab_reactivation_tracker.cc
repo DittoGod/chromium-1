@@ -4,7 +4,6 @@
 
 #include "chrome/browser/metrics/tab_reactivation_tracker.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "content/public/browser/web_contents_observer.h"
 
@@ -76,25 +75,23 @@ TabReactivationTracker::TabReactivationTracker(Delegate* delegate)
 
 TabReactivationTracker::~TabReactivationTracker() = default;
 
-void TabReactivationTracker::TabInsertedAt(TabStripModel* tab_strip_model,
-                                           content::WebContents* contents,
-                                           int index,
-                                           bool foreground) {}
+void TabReactivationTracker::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (change.type() == TabStripModelChange::kRemoved) {
+    for (const auto& delta : change.deltas()) {
+      if (delta.remove.will_be_deleted)
+        GetHelper(delta.remove.contents)->OnTabClosing();
+    }
+  }
 
-void TabReactivationTracker::TabClosingAt(TabStripModel* tab_strip_model,
-                                          content::WebContents* contents,
-                                          int index) {
-  GetHelper(contents)->OnTabClosing();
-}
-
-void TabReactivationTracker::ActiveTabChanged(
-    content::WebContents* old_contents,
-    content::WebContents* new_contents,
-    int index,
-    int reason) {
-  if (old_contents)
-    GetHelper(old_contents)->OnTabDeactivating();
-  GetHelper(new_contents)->OnTabActivating();
+  if (selection.active_tab_changed()) {
+    if (selection.old_contents)
+      GetHelper(selection.old_contents)->OnTabDeactivating();
+    if (selection.new_contents)
+      GetHelper(selection.new_contents)->OnTabActivating();
+  }
 }
 
 void TabReactivationTracker::NotifyTabDeactivating(
@@ -112,7 +109,7 @@ TabReactivationTracker::WebContentsHelper* TabReactivationTracker::GetHelper(
   // Make sure it exists.
   if (!base::ContainsKey(helper_map_, contents)) {
     helper_map_.insert(std::make_pair(
-        contents, base::MakeUnique<WebContentsHelper>(this, contents)));
+        contents, std::make_unique<WebContentsHelper>(this, contents)));
   }
 
   return helper_map_[contents].get();

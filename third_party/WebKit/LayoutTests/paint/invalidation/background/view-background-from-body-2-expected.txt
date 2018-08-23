@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#0000FF"
     },
     {
@@ -19,19 +20,9 @@
         {
           "object": "LayoutBlockFlow HTML",
           "rect": [50, 50, 700, 500],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "appeared"
     }
   ]
 }

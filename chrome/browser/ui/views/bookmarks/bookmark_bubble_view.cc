@@ -16,17 +16,16 @@
 #include "chrome/browser/ui/bookmarks/bookmark_editor.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/sync/sync_promo_ui.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/harmony/textfield_layout.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/sync/bubble_sync_promo_view.h"
+#include "chrome/browser/ui/views/textfield_layout.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/signin/core/browser/profile_management_switches.h"
-#include "components/signin/core/browser/signin_features.h"
+#include "components/signin/core/browser/signin_buildflags.h"
 #include "components/strings/grit/components_strings.h"
-#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/controls/button/md_text_button.h"
@@ -81,7 +80,6 @@ views::Widget* BookmarkBubbleView::ShowBubble(
   bubble_widget->Show();
   // Select the entire title textfield contents when the bubble is first shown.
   bookmark_bubble_->name_field_->SelectAll(true);
-  bookmark_bubble_->SetArrowPaintType(views::BubbleBorder::PAINT_TRANSPARENT);
 
   if (bookmark_bubble_->observer_) {
     BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
@@ -194,22 +192,25 @@ views::View* BookmarkBubbleView::CreateFootnoteView() {
   if (!SyncPromoUI::ShouldShowSyncPromo(profile_))
     return nullptr;
 
-  base::RecordAction(UserMetricsAction("Signin_Impression_FromBookmarkBubble"));
-
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
   if (AccountConsistencyModeManager::IsDiceEnabledForProfile(profile_)) {
     footnote_view_ = new DiceBubbleSyncPromoView(
-        profile_, delegate_.get(), IDS_BOOKMARK_DICE_PROMO_SIGNIN_MESSAGE,
-        IDS_BOOKMARK_DICE_PROMO_SYNC_MESSAGE);
+        profile_, delegate_.get(),
+        signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_BUBBLE,
+        IDS_BOOKMARK_DICE_PROMO_SIGNIN_MESSAGE,
+        IDS_BOOKMARK_DICE_PROMO_SYNC_MESSAGE,
+        false /* signin_button_prominent */);
   } else {
-    footnote_view_ =
-        new BubbleSyncPromoView(delegate_.get(), IDS_BOOKMARK_SYNC_PROMO_LINK,
-                                IDS_BOOKMARK_SYNC_PROMO_MESSAGE);
+    footnote_view_ = new BubbleSyncPromoView(
+        delegate_.get(),
+        signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_BUBBLE,
+        IDS_BOOKMARK_SYNC_PROMO_LINK, IDS_BOOKMARK_SYNC_PROMO_MESSAGE);
   }
 #else
-  footnote_view_ =
-      new BubbleSyncPromoView(delegate_.get(), IDS_BOOKMARK_SYNC_PROMO_LINK,
-                              IDS_BOOKMARK_SYNC_PROMO_MESSAGE);
+  footnote_view_ = new BubbleSyncPromoView(
+      delegate_.get(),
+      signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_BUBBLE,
+      IDS_BOOKMARK_SYNC_PROMO_LINK, IDS_BOOKMARK_SYNC_PROMO_MESSAGE);
 #endif
   return footnote_view_;
 }
@@ -258,13 +259,6 @@ const char* BookmarkBubbleView::GetClassName() const {
   return "BookmarkBubbleView";
 }
 
-void BookmarkBubbleView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  LocationBarBubbleDelegateView::GetAccessibleNodeData(node_data);
-  node_data->SetName(l10n_util::GetStringUTF8(
-      newly_bookmarked_ ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED
-                        : IDS_BOOKMARK_AX_BUBBLE_PAGE_BOOKMARK));
-}
-
 // views::ButtonListener -------------------------------------------------------
 
 void BookmarkBubbleView::ButtonPressed(views::Button* sender,
@@ -294,11 +288,9 @@ void BookmarkBubbleView::OnIOSPromotionFootnoteLinkClicked() {
 // views::BubbleDialogDelegateView ---------------------------------------------
 
 void BookmarkBubbleView::Init() {
-  using views::GridLayout;
-
   SetLayoutManager(std::make_unique<views::FillLayout>());
   bookmark_contents_view_ = new views::View();
-  GridLayout* layout = bookmark_contents_view_->SetLayoutManager(
+  views::GridLayout* layout = bookmark_contents_view_->SetLayoutManager(
       std::make_unique<views::GridLayout>(bookmark_contents_view_));
 
   constexpr int kColumnId = 0;

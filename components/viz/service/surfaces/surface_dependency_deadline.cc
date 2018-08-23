@@ -14,7 +14,7 @@ namespace viz {
 SurfaceDependencyDeadline::SurfaceDependencyDeadline(
     SurfaceDeadlineClient* client,
     BeginFrameSource* begin_frame_source,
-    base::TickClock* tick_clock)
+    const base::TickClock* tick_clock)
     : client_(client),
       begin_frame_source_(begin_frame_source),
       tick_clock_(tick_clock) {
@@ -34,33 +34,32 @@ bool SurfaceDependencyDeadline::Set(const FrameDeadline& frame_deadline) {
   start_time_ = frame_deadline.frame_start_time();
   deadline_ = start_time_ + frame_deadline.deadline_in_frames() *
                                 frame_deadline.frame_interval();
-  bool deadline_in_future = deadline_ > tick_clock_->NowTicks();
   begin_frame_source_->AddObserver(this);
-  return deadline_in_future;
+  return has_deadline();
 }
 
 base::Optional<base::TimeDelta> SurfaceDependencyDeadline::Cancel() {
   return CancelInternal(false);
 }
 
-bool SurfaceDependencyDeadline::InheritFrom(
+void SurfaceDependencyDeadline::InheritFrom(
     const SurfaceDependencyDeadline& other) {
   if (*this == other)
-    return false;
+    return;
 
-  DCHECK(has_deadline());
-
-  CancelInternal(false);
+  base::Optional<base::TimeDelta> duration = CancelInternal(false);
   last_begin_frame_args_ = other.last_begin_frame_args_;
   begin_frame_source_ = other.begin_frame_source_;
   deadline_ = other.deadline_;
-  if (deadline_)
+  if (deadline_) {
+    if (!duration)
+      start_time_ = tick_clock_->NowTicks();
     begin_frame_source_->AddObserver(this);
-  return true;
+  }
 }
 
 bool SurfaceDependencyDeadline::operator==(
-    const SurfaceDependencyDeadline& other) {
+    const SurfaceDependencyDeadline& other) const {
   return begin_frame_source_ == other.begin_frame_source_ &&
          deadline_ == other.deadline_;
 }

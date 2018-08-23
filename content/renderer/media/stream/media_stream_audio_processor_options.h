@@ -14,7 +14,7 @@
 #include "content/common/content_export.h"
 #include "content/public/common/media_stream_request.h"
 #include "media/base/audio_point.h"
-#include "third_party/WebKit/public/platform/WebMediaConstraints.h"
+#include "third_party/blink/public/platform/web_media_constraints.h"
 #include "third_party/webrtc/api/mediastreaminterface.h"
 #include "third_party/webrtc/media/base/mediachannel.h"
 #include "third_party/webrtc/modules/audio_processing/include/audio_processing.h"
@@ -22,7 +22,6 @@
 
 namespace webrtc {
 
-class EchoCancellation;
 class TypingDetection;
 
 }
@@ -33,20 +32,35 @@ using webrtc::AudioProcessing;
 
 // Simple struct with audio-processing properties.
 struct CONTENT_EXPORT AudioProcessingProperties {
+  enum class EchoCancellationType {
+    // Echo cancellation disabled.
+    kEchoCancellationDisabled,
+    // The WebRTC-provided AEC2 echo canceller.
+    kEchoCancellationAec2,
+    // The WebRTC-provided AEC3 echo canceller.
+    kEchoCancellationAec3,
+    // System echo canceller, for example an OS-provided or hardware echo
+    // canceller.
+    kEchoCancellationSystem
+  };
+
   // Creates an AudioProcessingProperties object with fields initialized to
   // their default values.
   AudioProcessingProperties();
   AudioProcessingProperties(const AudioProcessingProperties& other);
   AudioProcessingProperties& operator=(const AudioProcessingProperties& other);
-  AudioProcessingProperties(AudioProcessingProperties&& other);
-  AudioProcessingProperties& operator=(AudioProcessingProperties&& other);
-  ~AudioProcessingProperties();
 
   // Disables properties that are enabled by default.
   void DisableDefaultProperties();
 
-  bool enable_sw_echo_cancellation = true;
-  bool disable_hw_echo_cancellation = false;
+  // Returns whether echo cancellation is enabled.
+  bool EchoCancellationEnabled() const;
+
+  // Returns whether WebRTC-provided echo cancellation is enabled.
+  bool EchoCancellationIsWebRtcProvided() const;
+
+  EchoCancellationType echo_cancellation_type =
+      EchoCancellationType::kEchoCancellationAec2;
   bool disable_hw_noise_suppression = false;
   bool goog_audio_mirroring = false;
   bool goog_auto_gain_control = true;
@@ -59,50 +73,8 @@ struct CONTENT_EXPORT AudioProcessingProperties {
   bool goog_typing_noise_detection = true;
   bool goog_noise_suppression = true;
   bool goog_experimental_noise_suppression = true;
-  bool goog_beamforming = true;
   bool goog_highpass_filter = true;
   bool goog_experimental_auto_gain_control = true;
-  std::vector<media::Point> goog_array_geometry;
-};
-
-// A helper class to log echo information in general and Echo Cancellation
-// quality in particular.
-class CONTENT_EXPORT EchoInformation {
- public:
-  EchoInformation();
-  virtual ~EchoInformation();
-
-  // Updates stats, and reports delay metrics as UMA stats every 5 seconds.
-  // Must be called every time AudioProcessing::ProcessStream() is called.
-  void UpdateAecStats(webrtc::EchoCancellation* echo_cancellation);
-
-  // Reports AEC divergent filter metrics as UMA and resets the associated data.
-  void ReportAndResetAecDivergentFilterStats();
-
- private:
-  void UpdateAecDelayStats(webrtc::EchoCancellation* echo_cancellation);
-  void UpdateAecDivergentFilterStats(
-      webrtc::EchoCancellation* echo_cancellation);
-
-  // Counter to track 5 seconds of data in order to query a new metric from
-  // webrtc::EchoCancellation::GetEchoDelayMetrics().
-  int delay_stats_time_ms_;
-  bool echo_frames_received_;
-
-  // Counter to track 1 second of data in order to query a new divergent filter
-  // fraction metric from webrtc::EchoCancellation::GetMetrics().
-  int divergent_filter_stats_time_ms_;
-
-  // Total number of times we queried for the divergent filter fraction metric.
-  int num_divergent_filter_fraction_;
-
-  // Number of non-zero divergent filter fraction metrics.
-  int num_non_zero_divergent_filter_fraction_;
-
-  // Ensures that this class is accessed on the same thread.
-  base::ThreadChecker thread_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(EchoInformation);
 };
 
 // Enables the echo cancellation in |audio_processing|.

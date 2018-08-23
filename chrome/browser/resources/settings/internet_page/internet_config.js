@@ -40,21 +40,24 @@ Polymer({
     /**
      * The GUID when an existing network is being configured. This will be
      * empty when configuring a new network.
-     * @private
      */
     guid: String,
 
     /**
      * The type of network to be configured.
-     * @private {!chrome.networkingPrivate.NetworkType}
+     * @type {!chrome.networkingPrivate.NetworkType}
      */
     type: String,
 
     /**
      * The name of network (for display while the network details are fetched).
-     * @private
      */
     name: String,
+
+    /**
+     * Set to true to show the 'connect' button instead of 'save'.
+     */
+    showConnect: Boolean,
 
     /** @private */
     enableConnect_: Boolean,
@@ -69,6 +72,15 @@ Polymer({
      * @private {!chrome.networkingPrivate.NetworkProperties}
      */
     networkProperties_: Object,
+
+    /**
+     * Set by network-config when a configuration error occurs.
+     * @private
+     */
+    error_: {
+      type: String,
+      value: '',
+    },
   },
 
   open: function() {
@@ -94,6 +106,16 @@ Polymer({
   },
 
   /**
+   * @param {!Event} event
+   * @private
+   */
+  onClose_: function(event) {
+    this.close();
+    this.fire('networks-changed');
+    event.stopPropagation();
+  },
+
+  /**
    * @return {string}
    * @private
    */
@@ -106,12 +128,13 @@ Polymer({
   },
 
   /**
-   * @return {boolean}
+   * @return {string}
    * @private
    */
-  isConfigured_: function() {
-    const source = this.networkProperties_.Source;
-    return !!this.guid && !!source && source != CrOnc.Source.NONE;
+  getError_: function() {
+    if (this.i18nExists(this.error_))
+      return this.i18n(this.error_);
+    return this.i18n('networkErrorUnknown');
   },
 
   /** @private */
@@ -120,7 +143,12 @@ Polymer({
   },
 
   /** @private */
-  onSaveOrConnectTap_: function() {
-    this.$.networkConfig.saveOrConnect();
+  onSaveTap_: function() {
+    this.$.networkConfig.save();
+  },
+
+  /** @private */
+  onConnectTap_: function() {
+    this.$.networkConfig.connect();
   },
 });

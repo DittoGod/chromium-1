@@ -12,8 +12,9 @@
 #include "base/macros.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/public/browser/browser_message_filter.h"
-#include "extensions/features/features.h"
-#include "ppapi/features/features.h"
+#include "content/public/browser/browser_thread.h"
+#include "extensions/buildflags/buildflags.h"
+#include "ppapi/buildflags/buildflags.h"
 
 class GURL;
 class Profile;
@@ -105,15 +106,18 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
 
   const int render_process_id_;
 
-  // The Profile associated with our renderer process.  This should only be
+  // The Profile associated with our renderer process. This must only be
   // accessed on the UI thread!
   Profile* profile_;
   // The Predictor for the associated Profile. It is stored so that it can be
   // used on the IO thread.
   chrome_browser_net::Predictor* predictor_;
-  // The PreconnectManager for the associated Profile. It is stored so that it
-  // can be used on the IO thread.
-  predictors::PreconnectManager* preconnect_manager_;
+  // The PreconnectManager for the associated Profile. This must only be
+  // accessed on the UI thread.
+  base::WeakPtr<predictors::PreconnectManager> preconnect_manager_;
+  // Allows to check on the IO thread whether the PreconnectManager was
+  // initialized.
+  bool preconnect_manager_initialized_;
 
   // Used to look up permissions at database creation time.
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;

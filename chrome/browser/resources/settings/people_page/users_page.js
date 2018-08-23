@@ -34,8 +34,8 @@ Polymer({
 
   /** @override */
   created: function() {
-    chrome.usersPrivate.isCurrentUserOwner(isOwner => {
-      this.isOwner_ = isOwner;
+    chrome.usersPrivate.getCurrentUser(user => {
+      this.isOwner_ = user.isOwner;
     });
 
     chrome.usersPrivate.isWhitelistManaged(isWhitelistManaged => {
@@ -76,5 +76,10 @@ Polymer({
    */
   isEditingUsersDisabled_: function(isOwner, isWhitelistManaged, allowGuest) {
     return !isOwner || isWhitelistManaged || allowGuest;
-  }
+  },
+
+  /** @return {boolean} */
+  shouldHideModifiedByOwnerLabel_: function() {
+    return this.isWhitelistManaged_ || this.isOwner_;
+  },
 });

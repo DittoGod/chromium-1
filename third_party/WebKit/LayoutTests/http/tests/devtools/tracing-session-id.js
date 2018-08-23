@@ -10,26 +10,30 @@
   await TestRunner.loadHTML(`
       <p style="transform: translateZ(10px)"> <!-- Force compositing so we have SetLayerTreeHostId event as well -->
       </p>
+      <script>
+        function waitForRaf() {
+          return new Promise(f => requestAnimationFrame(f));
+        }
+      </script>
     `);
 
-  await PerformanceTestRunner.evaluateWithTimeline('(function() {})');
+  await PerformanceTestRunner.invokeAsyncWithTimeline('waitForRaf');
 
-  PerformanceTestRunner.tracingModel().sortedProcesses().forEach(function(process) {
-    process.sortedThreads().forEach(function(thread) {
-      thread.events().forEach(processEvent);
-    });
-  });
+  let frameId = '';
+  PerformanceTestRunner.tracingModel().sortedProcesses().forEach(process =>
+    process.sortedThreads().forEach(thread => thread.events().forEach(processEvent))
+  );
   TestRunner.completeTest();
 
   function processEvent(event) {
-    var metadataEvents = [
-      TimelineModel.TimelineModel.RecordType.SetLayerTreeId, TimelineModel.TimelineModel.RecordType.TracingStartedInPage
-    ];
-
-    if (!event.hasCategory(SDK.TracingModel.DevToolsMetadataEventCategory) || metadataEvents.indexOf(event.name) < 0)
+    if (!event.hasCategory(SDK.TracingModel.DevToolsMetadataEventCategory))
       return;
-
-    TestRunner.assertEquals(PerformanceTestRunner.timelineModel().sessionId(), event.args['data']['sessionId']);
-    TestRunner.addResult('Got DevTools metadata event: ' + event.name);
+    if (event.name === TimelineModel.TimelineModel.DevToolsMetadataEvent.TracingStartedInBrowser) {
+      TestRunner.addResult('Got DevTools metadata event: ' + event.name);
+      frameId = event.args['data']['frames'][0]['frame'];
+    } else if (event.name === TimelineModel.TimelineModel.RecordType.SetLayerTreeId) {
+      if (frameId === event.args['data']['frame'])
+        TestRunner.addResult('Got DevTools metadata event: ' + event.name);
+    }
   }
 })();

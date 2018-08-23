@@ -4,6 +4,13 @@
 
 #import "ios/chrome/browser/ui/tab_grid/tab_grid_adaptor.h"
 
+#import "ios/chrome/browser/tabs/tab_model.h"
+#import "ios/chrome/browser/ui/main/view_controller_swapping.h"
+#import "ios/chrome/browser/ui/tab_grid/tab_grid_paging.h"
+#import "ios/chrome/browser/ui/tab_grid/tab_grid_url_loader.h"
+
+#import "ios/web/public/navigation_manager.h"
+
 #import "base/logging.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -14,51 +21,87 @@
 // TabSwitcher properties.
 @synthesize delegate = _delegate;
 @synthesize animationDelegate = _animationDelegate;
-@synthesize dispatcher = _dispatcher;
 // Public properties
 @synthesize tabGridViewController = _tabGridViewController;
+@synthesize adaptedDispatcher = _adaptedDispatcher;
+@synthesize tabGridPager = _tabGridPager;
+@synthesize incognitoMediator = _incognitoMediator;
+@synthesize loader = _loader;
 
 #pragma mark - TabSwitcher
+
+- (id<ApplicationCommands, OmniboxFocuser, ToolbarCommands>)dispatcher {
+  return static_cast<id<ApplicationCommands, OmniboxFocuser, ToolbarCommands>>(
+      self.adaptedDispatcher);
+}
+
+- (void)setAnimationDelegate:
+    (id<TabSwitcherAnimationDelegate>)animationDelegate {
+  NOTREACHED()
+      << "The tab grid shouldn't need a tab switcher animation delegate.";
+  _animationDelegate = nil;
+}
 
 - (void)restoreInternalStateWithMainTabModel:(TabModel*)mainModel
                                  otrTabModel:(TabModel*)otrModel
                               activeTabModel:(TabModel*)activeModel {
-  // No-op.
+  // The only action here is to signal to the tab grid which panel should be
+  // active.
+  if (activeModel == otrModel) {
+    self.tabGridPager.activePage = TabGridPageIncognitoTabs;
+  } else {
+    self.tabGridPager.activePage = TabGridPageRegularTabs;
+  }
 }
 
 - (void)prepareForDisplayAtSize:(CGSize)size {
-  // No-op.
+  NOTREACHED();
 }
 
 - (void)showWithSelectedTabAnimation {
-  // No-op.
+  NOTREACHED();
 }
 
 - (UIViewController*)viewController {
   return self.tabGridViewController;
 }
 
-// Create a new tab in |targetModel| with the url |url| at |position|, using
-// page transition |transition|. Implementors are expected to also
-// perform an animation from the selected tab in the tab switcher to the
-// newly created tab in the content area. Objects adopting this protocol should
-// call the following delegate methods:
-//   |-tabSwitcher:dismissTransitionWillStartWithActiveModel:|
-//   |-tabSwitcherDismissTransitionDidEnd:|
-// to inform the delegate when this animation begins and ends.
 - (Tab*)dismissWithNewTabAnimationToModel:(TabModel*)targetModel
-                                  withURL:(const GURL&)url
+                                  withURL:(const GURL&)URL
                                   atIndex:(NSUInteger)position
                                transition:(ui::PageTransition)transition {
-  return nil;
+  NSUInteger tabIndex = position;
+  if (position > targetModel.count)
+    tabIndex = targetModel.count;
+
+  web::NavigationManager::WebLoadParams loadParams(URL);
+  loadParams.transition_type = transition;
+
+  // Create the new tab.
+  Tab* tab = [targetModel insertTabWithLoadParams:loadParams
+                                           opener:nil
+                                      openedByDOM:NO
+                                          atIndex:tabIndex
+                                     inBackground:NO];
+
+  // Tell the delegate to display the tab.
+  DCHECK(self.delegate);
+  [self.delegate tabSwitcher:self
+      shouldFinishWithActiveModel:targetModel
+                     focusOmnibox:NO];
+
+  return tab;
 }
 
-// Updates the OTR (Off The Record) tab model. Should only be called when both
-// the current OTR tab model and the new OTR tab model are either nil or contain
-// no tabs. This must be called after the otr tab model has been deleted because
-// the incognito browser state is deleted.
 - (void)setOtrTabModel:(TabModel*)otrModel {
-  // No-op
+  DCHECK(self.incognitoMediator);
+  self.incognitoMediator.tabModel = otrModel;
+  self.loader.incognitoWebStateList = otrModel.webStateList;
+  self.loader.incognitoBrowserState = otrModel.browserState;
+}
+
+- (void)setTransitionContext:(TabSwitcherTransitionContext*)transitionContext {
+  // No-op. Tab grid will not use this iPad TabSwitcher-specific mechanism.
 }
 
 @end

@@ -11,5 +11,9 @@ import java.lang.reflect.InvocationHandler;
 /**
  */
 public interface WebViewProviderFactoryBoundaryInterface {
-    /* SupportLibraryWebViewProvider */ InvocationHandler createWebView(WebView webview);
+    /* SupportLibraryWebViewChromium */ InvocationHandler createWebView(WebView webview);
+    /* SupportLibWebkitToCompatConverter */ InvocationHandler getWebkitToCompatConverter();
+    /* StaticsAdapter */ InvocationHandler getStatics();
+    String[] getSupportedFeatures();
+    /* SupportLibraryServiceWorkerController */ InvocationHandler getServiceWorkerController();
 }

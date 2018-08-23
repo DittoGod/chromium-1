@@ -31,7 +31,10 @@
 #include "components/sync/protocol/sync.pb.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
-#include "net/url_request/test_url_fetcher_factory.h"
+#include "net/test/embedded_test_server/default_handlers.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/http_request.h"
+#include "net/test/embedded_test_server/http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -58,10 +61,14 @@ syncer::SyncDataList GetAllSyncDataNoLimit(
 
 static std::unique_ptr<KeyedService> BuildSpellcheckService(
     content::BrowserContext* profile) {
-  return base::MakeUnique<SpellcheckService>(static_cast<Profile*>(profile));
+  return std::make_unique<SpellcheckService>(static_cast<Profile*>(profile));
 }
 
 class SpellcheckCustomDictionaryTest : public testing::Test {
+ public:
+  SpellcheckCustomDictionaryTest()
+      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP) {}
+
  protected:
   void SetUp() override {
     // Use SetTestingFactoryAndUse to force creation and initialization.
@@ -110,7 +117,6 @@ class SpellcheckCustomDictionaryTest : public testing::Test {
   content::TestBrowserThreadBundle thread_bundle_;
 
   TestingProfile profile_;
-  net::TestURLFetcherFactory fetcher_factory_;
 };
 
 // An implementation of SyncErrorFactory that does not upload the error message
@@ -471,6 +477,24 @@ TEST_F(SpellcheckCustomDictionaryTest, MergeDataAndStartSyncing) {
 }
 
 TEST_F(SpellcheckCustomDictionaryTest, SyncBeforeLoadDoesNotDuplicateWords) {
+  // Test triggers network requests since it indirectly instantiates
+  // SpellcheckHunspellDictionary's.
+  // Install a mock server to avoid sending random network request to
+  // localhost.
+  net::EmbeddedTestServer embedded_test_server;
+  embedded_test_server.RegisterRequestHandler(
+      base::BindRepeating([](const net::test_server::HttpRequest& request) {
+        // Mock implementation to hang the request.
+        std::unique_ptr<net::test_server::HttpResponse> response;
+        return response;
+      }));
+  net::test_server::RegisterDefaultHandlers(&embedded_test_server);
+  ASSERT_TRUE(embedded_test_server.Start());
+
+  // Forcibly set a hanging URL.
+  GURL url = embedded_test_server.GetURL("/hang");
+  SpellcheckHunspellDictionary::SetDownloadURLForTesting(url);
+
   SpellcheckCustomDictionary* custom_dictionary =
       SpellcheckServiceFactory::GetForContext(&profile_)->GetCustomDictionary();
 
@@ -902,7 +926,7 @@ TEST_F(SpellcheckCustomDictionaryTest, LoadDuplicatesAfterSync) {
   EXPECT_TRUE(custom_dictionary->IsSyncing());
 
   OnLoaded(*custom_dictionary,
-           base::MakeUnique<std::set<std::string>>(change.to_add()));
+           std::make_unique<std::set<std::string>>(change.to_add()));
   EXPECT_EQ(0, error_counter);
   EXPECT_TRUE(custom_dictionary->IsSyncing());
 

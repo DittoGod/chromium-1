@@ -13,7 +13,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "content/browser/media/session/audio_focus_delegate.h"
 #include "content/browser/media/session/media_session_service_impl.h"
@@ -24,6 +24,7 @@
 #include "content/public/test/content_browser_test.h"
 #include "content/shell/browser/shell.h"
 #include "media/base/media_content_type.h"
+#include "services/media_session/public/mojom/audio_focus.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 using content::WebContents;
@@ -35,6 +36,8 @@ using content::MediaSessionPlayerObserver;
 using content::MediaSessionUmaHelper;
 using content::MockMediaSessionPlayerObserver;
 
+using AudioFocusType = media_session::mojom::AudioFocusType;
+
 using ::testing::Eq;
 using ::testing::Expectation;
 using ::testing::NiceMock;
@@ -44,6 +47,7 @@ namespace {
 
 const double kDefaultVolumeMultiplier = 1.0;
 const double kDuckingVolumeMultiplier = 0.2;
+const double kDifferentDuckingVolumeMultiplier = 0.018;
 
 class MockAudioFocusDelegate : public AudioFocusDelegate {
  public:
@@ -51,8 +55,7 @@ class MockAudioFocusDelegate : public AudioFocusDelegate {
     ON_CALL(*this, RequestAudioFocus(_)).WillByDefault(::testing::Return(true));
   }
 
-  MOCK_METHOD1(RequestAudioFocus,
-               bool(content::AudioFocusManager::AudioFocusType));
+  MOCK_METHOD1(RequestAudioFocus, bool(AudioFocusType));
   MOCK_METHOD0(AbandonAudioFocus, void());
 };
 
@@ -120,7 +123,7 @@ class MediaSessionImplBrowserTest : public content::ContentBrowserTest {
 
   bool IsActive() { return media_session_->IsActive(); }
 
-  content::AudioFocusManager::AudioFocusType GetSessionAudioFocusType() {
+  AudioFocusType GetSessionAudioFocusType() {
     return media_session_->audio_focus_type();
   }
 
@@ -314,8 +317,52 @@ IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest,
   EXPECT_EQ(kDefaultVolumeMultiplier, player_observer->GetVolumeMultiplier(2));
 }
 
+IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest,
+                       DuckingUsesConfiguredMultiplier) {
+  auto player_observer = std::make_unique<MockMediaSessionPlayerObserver>();
+
+  StartNewPlayer(player_observer.get(), media::MediaContentType::Persistent);
+  StartNewPlayer(player_observer.get(), media::MediaContentType::Persistent);
+  media_session_->SetDuckingVolumeMultiplier(kDifferentDuckingVolumeMultiplier);
+  SystemStartDucking();
+  EXPECT_EQ(kDifferentDuckingVolumeMultiplier,
+            player_observer->GetVolumeMultiplier(0));
+  EXPECT_EQ(kDifferentDuckingVolumeMultiplier,
+            player_observer->GetVolumeMultiplier(1));
+  SystemStopDucking();
+  EXPECT_EQ(kDefaultVolumeMultiplier, player_observer->GetVolumeMultiplier(0));
+  EXPECT_EQ(kDefaultVolumeMultiplier, player_observer->GetVolumeMultiplier(1));
+}
+
 IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest, AudioFocusInitialState) {
   EXPECT_FALSE(IsActive());
+}
+
+IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest,
+                       AddPlayerOnSuspendedFocusUnducks) {
+  auto player_observer = std::make_unique<MockMediaSessionPlayerObserver>();
+  StartNewPlayer(player_observer.get(), media::MediaContentType::Persistent);
+
+  UISuspend();
+  EXPECT_FALSE(IsActive());
+
+  SystemStartDucking();
+  EXPECT_EQ(kDuckingVolumeMultiplier, player_observer->GetVolumeMultiplier(0));
+
+  EXPECT_TRUE(
+      AddPlayer(player_observer.get(), 0, media::MediaContentType::Persistent));
+  EXPECT_EQ(kDefaultVolumeMultiplier, player_observer->GetVolumeMultiplier(0));
+}
+
+IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest,
+                       CanRequestFocusBeforePlayerCreation) {
+  auto player_observer = std::make_unique<MockMediaSessionPlayerObserver>();
+
+  media_session_->RequestSystemAudioFocus(AudioFocusType::kGain);
+  EXPECT_TRUE(IsActive());
+
+  StartNewPlayer(player_observer.get(), media::MediaContentType::Persistent);
+  EXPECT_TRUE(IsActive());
 }
 
 IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest, StartPlayerGivesFocus) {
@@ -496,23 +543,19 @@ IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest, AudioFocusType) {
 
   // Starting a player with a given type should set the session to that type.
   StartNewPlayer(player_observer.get(), media::MediaContentType::Transient);
-  EXPECT_EQ(content::AudioFocusManager::AudioFocusType::GainTransientMayDuck,
-            GetSessionAudioFocusType());
+  EXPECT_EQ(AudioFocusType::kGainTransientMayDuck, GetSessionAudioFocusType());
 
   // Adding a player of the same type should have no effect on the type.
   StartNewPlayer(player_observer.get(), media::MediaContentType::Transient);
-  EXPECT_EQ(content::AudioFocusManager::AudioFocusType::GainTransientMayDuck,
-            GetSessionAudioFocusType());
+  EXPECT_EQ(AudioFocusType::kGainTransientMayDuck, GetSessionAudioFocusType());
 
   // Adding a player of Content type should override the current type.
   StartNewPlayer(player_observer.get(), media::MediaContentType::Persistent);
-  EXPECT_EQ(content::AudioFocusManager::AudioFocusType::Gain,
-            GetSessionAudioFocusType());
+  EXPECT_EQ(AudioFocusType::kGain, GetSessionAudioFocusType());
 
   // Adding a player of the Transient type should have no effect on the type.
   StartNewPlayer(player_observer.get(), media::MediaContentType::Transient);
-  EXPECT_EQ(content::AudioFocusManager::AudioFocusType::Gain,
-            GetSessionAudioFocusType());
+  EXPECT_EQ(AudioFocusType::kGain, GetSessionAudioFocusType());
 
   EXPECT_TRUE(player_observer->IsPlaying(0));
   EXPECT_TRUE(player_observer->IsPlaying(1));
@@ -526,8 +569,7 @@ IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest, AudioFocusType) {
   EXPECT_FALSE(player_observer->IsPlaying(2));
   EXPECT_FALSE(player_observer->IsPlaying(3));
 
-  EXPECT_EQ(content::AudioFocusManager::AudioFocusType::Gain,
-            GetSessionAudioFocusType());
+  EXPECT_EQ(AudioFocusType::kGain, GetSessionAudioFocusType());
 
   SystemResume();
 
@@ -536,8 +578,7 @@ IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest, AudioFocusType) {
   EXPECT_TRUE(player_observer->IsPlaying(2));
   EXPECT_TRUE(player_observer->IsPlaying(3));
 
-  EXPECT_EQ(content::AudioFocusManager::AudioFocusType::Gain,
-            GetSessionAudioFocusType());
+  EXPECT_EQ(AudioFocusType::kGain, GetSessionAudioFocusType());
 }
 
 IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest, ControlsShowForContent) {
@@ -1029,13 +1070,11 @@ IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest, ResumeSuspendFromSystem) {
 IN_PROC_BROWSER_TEST_F(MediaSessionImplBrowserTest, OneShotTakesGainFocus) {
   auto player_observer = std::make_unique<MockMediaSessionPlayerObserver>();
 
-  EXPECT_CALL(
-      *mock_audio_focus_delegate(),
-      RequestAudioFocus(content::AudioFocusManager::AudioFocusType::Gain))
+  EXPECT_CALL(*mock_audio_focus_delegate(),
+              RequestAudioFocus(AudioFocusType::kGain))
       .Times(1);
   EXPECT_CALL(*mock_audio_focus_delegate(),
-              RequestAudioFocus(::testing::Ne(
-                  content::AudioFocusManager::AudioFocusType::Gain)))
+              RequestAudioFocus(::testing::Ne(AudioFocusType::kGain)))
       .Times(0);
   StartNewPlayer(player_observer.get(), media::MediaContentType::OneShot);
   StartNewPlayer(player_observer.get(), media::MediaContentType::Transient);

@@ -13,7 +13,6 @@
 #include "base/android/jni_string.h"
 #include "base/command_line.h"
 #include "base/format_macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/browser/android/resource_mapper.h"
@@ -21,6 +20,7 @@
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/autofill/validation_rules_storage_factory.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
@@ -37,11 +37,12 @@
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/common/autofill_constants.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/PersonalDataManager_jni.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/libaddressinput/chromium/chrome_metadata_source.h"
 #include "third_party/libaddressinput/chromium/chrome_storage_impl.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -316,7 +317,8 @@ PersonalDataManagerAndroid::PersonalDataManagerAndroid(JNIEnv* env, jobject obj)
           ProfileManager::GetActiveUserProfile())),
       subkey_requester_(std::make_unique<ChromeMetadataSource>(
                             I18N_ADDRESS_VALIDATION_DATA_URL,
-                            g_browser_process->system_request_context()),
+                            g_browser_process->system_network_context_manager()
+                                ->GetSharedURLLoaderFactory()),
                         ValidationRulesStorageFactory::CreateStorage()) {
   personal_data_manager_->AddObserver(this);
 }
@@ -473,9 +475,11 @@ PersonalDataManagerAndroid::GetCreditCardGUIDsForSettings(
 base::android::ScopedJavaLocalRef<jobjectArray>
 PersonalDataManagerAndroid::GetCreditCardGUIDsToSuggest(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& unused_obj) {
-  return GetCreditCardGUIDs(env,
-                            personal_data_manager_->GetCreditCardsToSuggest());
+    const base::android::JavaParamRef<jobject>& unused_obj,
+    bool include_server_cards) {
+  return GetCreditCardGUIDs(
+      env,
+      personal_data_manager_->GetCreditCardsToSuggest(include_server_cards));
 }
 
 ScopedJavaLocalRef<jobject> PersonalDataManagerAndroid::GetCreditCardByGUID(
@@ -761,6 +765,12 @@ void PersonalDataManagerAndroid::CancelPendingGetSubKeys(
   subkey_requester_.CancelPendingGetSubKeys();
 }
 
+void PersonalDataManagerAndroid::SetSyncServiceForTesting(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& unused_obj) {
+  personal_data_manager_->SetSyncingForTest(true);
+}
+
 ScopedJavaLocalRef<jobjectArray> PersonalDataManagerAndroid::GetProfileGUIDs(
     JNIEnv* env,
     const std::vector<AutofillProfile*>& profiles) {
@@ -850,7 +860,7 @@ PersonalDataManagerAndroid::GetShippingAddressLabelForPaymentRequest(
 static jboolean JNI_PersonalDataManager_IsAutofillEnabled(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz) {
-  return GetPrefs()->GetBoolean(autofill::prefs::kAutofillEnabled);
+  return prefs::IsAutofillEnabled(GetPrefs());
 }
 
 // Enables or disables the Autofill feature.
@@ -858,21 +868,21 @@ static void JNI_PersonalDataManager_SetAutofillEnabled(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     jboolean enable) {
-  GetPrefs()->SetBoolean(autofill::prefs::kAutofillEnabled, enable);
+  prefs::SetAutofillEnabled(GetPrefs(), enable);
 }
 
 // Returns whether the Autofill feature is managed.
 static jboolean JNI_PersonalDataManager_IsAutofillManaged(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz) {
-  return GetPrefs()->IsManagedPreference(autofill::prefs::kAutofillEnabled);
+  return prefs::IsAutofillManaged(GetPrefs());
 }
 
 // Returns whether the Payments integration feature is enabled.
 static jboolean JNI_PersonalDataManager_IsPaymentsIntegrationEnabled(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz) {
-  return GetPrefs()->GetBoolean(autofill::prefs::kAutofillWalletImportEnabled);
+  return prefs::IsPaymentsIntegrationEnabled(GetPrefs());
 }
 
 // Enables or disables the Payments integration feature.
@@ -880,7 +890,7 @@ static void JNI_PersonalDataManager_SetPaymentsIntegrationEnabled(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     jboolean enable) {
-  GetPrefs()->SetBoolean(autofill::prefs::kAutofillWalletImportEnabled, enable);
+  prefs::SetPaymentsIntegrationEnabled(GetPrefs(), enable);
 }
 
 // Returns an ISO 3166-1-alpha-2 country code for a |jcountry_name| using

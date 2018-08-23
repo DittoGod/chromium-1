@@ -4,18 +4,16 @@
 
 #include "chrome/browser/android/oom_intervention/oom_intervention_tab_helper.h"
 
-#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
+#include "chrome/browser/android/oom_intervention/oom_intervention_config.h"
 #include "chrome/browser/android/oom_intervention/oom_intervention_decider.h"
-#include "chrome/browser/ui/android/infobars/near_oom_infobar.h"
-#include "chrome/common/chrome_features.h"
+#include "chrome/browser/ui/android/infobars/near_oom_reduction_infobar.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(OomInterventionTabHelper);
+#include "third_party/blink/public/common/oom_intervention/oom_intervention_types.h"
 
 namespace {
 
@@ -57,27 +55,11 @@ void RecordInterventionStateOnCrash(bool accepted) {
       "Memory.Experimental.OomIntervention.InterventionStateOnCrash", accepted);
 }
 
-// Field trial parameter names.
-const char kRendererPauseParamName[] = "pause_renderer";
-const char kShouldDetectInRenderer[] = "detect_in_renderer";
-
-bool RendererPauseIsEnabled() {
-  static bool enabled = base::GetFieldTrialParamByFeatureAsBool(
-      features::kOomIntervention, kRendererPauseParamName, false);
-  return enabled;
-}
-
-bool ShouldDetectInRenderer() {
-  static bool enabled = base::GetFieldTrialParamByFeatureAsBool(
-      features::kOomIntervention, kShouldDetectInRenderer, true);
-  return enabled;
-}
-
 }  // namespace
 
 // static
 bool OomInterventionTabHelper::IsEnabled() {
-  return NearOomMonitor::GetInstance() != nullptr;
+  return OomInterventionConfig::GetInstance()->is_intervention_enabled();
 }
 
 OomInterventionTabHelper::OomInterventionTabHelper(
@@ -86,15 +68,18 @@ OomInterventionTabHelper::OomInterventionTabHelper(
       decider_(OomInterventionDecider::GetForBrowserContext(
           web_contents->GetBrowserContext())),
       binding_(this),
+      scoped_observer_(this),
       weak_ptr_factory_(this) {
-  OutOfMemoryReporter::FromWebContents(web_contents)->AddObserver(this);
+  scoped_observer_.Add(crash_reporter::CrashMetricsReporter::GetInstance());
 }
 
 OomInterventionTabHelper::~OomInterventionTabHelper() = default;
 
-void OomInterventionTabHelper::OnHighMemoryUsage(bool intervention_triggered) {
-  if (intervention_triggered) {
-    NearOomInfoBar::Show(web_contents(), this);
+void OomInterventionTabHelper::OnHighMemoryUsage() {
+  auto* config = OomInterventionConfig::GetInstance();
+  if (config->is_renderer_pause_enabled() ||
+      config->is_navigate_ads_enabled()) {
+    NearOomReductionInfoBar::Show(web_contents(), this);
     intervention_state_ = InterventionState::UI_SHOWN;
   }
   near_oom_detected_time_ = base::TimeTicks::Now();
@@ -108,7 +93,7 @@ void OomInterventionTabHelper::AcceptIntervention() {
 
 void OomInterventionTabHelper::DeclineIntervention() {
   RecordInterventionUserDecision(false);
-  intervention_.reset();
+  ResetInterfaces();
   intervention_state_ = InterventionState::DECLINED;
 
   if (decider_) {
@@ -118,14 +103,22 @@ void OomInterventionTabHelper::DeclineIntervention() {
   }
 }
 
+void OomInterventionTabHelper::DeclineInterventionWithReload() {
+  web_contents()->GetController().Reload(content::ReloadType::NORMAL, true);
+  DeclineIntervention();
+}
+
+void OomInterventionTabHelper::DeclineInterventionSticky() {
+  NOTREACHED();
+}
+
 void OomInterventionTabHelper::WebContentsDestroyed() {
-  OutOfMemoryReporter::FromWebContents(web_contents())->RemoveObserver(this);
   StopMonitoring();
 }
 
 void OomInterventionTabHelper::RenderProcessGone(
     base::TerminationStatus status) {
-  intervention_.reset();
+  ResetInterfaces();
 
   // Skip background process termination.
   if (!IsLastVisibleWebContents(web_contents())) {
@@ -152,9 +145,14 @@ void OomInterventionTabHelper::RenderProcessGone(
 
 void OomInterventionTabHelper::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
-  // Filter out sub-frame's navigation.
-  if (!navigation_handle->IsInMainFrame())
+  // Filter out sub-frame's navigation or if the navigation happens without
+  // changing document.
+  if (!navigation_handle->IsInMainFrame() ||
+      navigation_handle->IsSameDocument()) {
     return;
+  }
+
+  last_navigation_timestamp_ = base::TimeTicks::Now();
 
   // Filter out the first navigation.
   if (!navigation_started_) {
@@ -162,12 +160,7 @@ void OomInterventionTabHelper::DidStartNavigation(
     return;
   }
 
-  // Filter out a navigation if the navigation happens without changing
-  // document.
-  if (navigation_handle->IsSameDocument())
-    return;
-
-  intervention_.reset();
+  ResetInterfaces();
 
   // Filter out background navigation.
   if (!IsLastVisibleWebContents(navigation_handle->GetWebContents())) {
@@ -205,9 +198,18 @@ void OomInterventionTabHelper::OnVisibilityChanged(
   }
 }
 
-void OomInterventionTabHelper::OnForegroundOOMDetected(
-    const GURL& url,
-    ukm::SourceId source_id) {
+void OomInterventionTabHelper::OnCrashDumpProcessed(
+    int rph_id,
+    const crash_reporter::CrashMetricsReporter::ReportedCrashTypeSet&
+        reported_counts) {
+  if (rph_id != web_contents()->GetMainFrame()->GetProcess()->GetID())
+    return;
+  if (!reported_counts.count(
+          crash_reporter::CrashMetricsReporter::ProcessedCrashCounts::
+              kRendererForegroundVisibleOom)) {
+    return;
+  }
+
   DCHECK(IsLastVisibleWebContents(web_contents()));
   if (near_oom_detected_time_) {
     base::TimeDelta elapsed_time =
@@ -229,6 +231,16 @@ void OomInterventionTabHelper::OnForegroundOOMDetected(
         NearOomDetectionEndReason::OOM_PROTECTED_CRASH);
   }
 
+  base::TimeDelta time_since_last_navigation;
+  if (!last_navigation_timestamp_.is_null()) {
+    time_since_last_navigation =
+        base::TimeTicks::Now() - last_navigation_timestamp_;
+  }
+  UMA_HISTOGRAM_COUNTS(
+      "Memory.Experimental.OomIntervention."
+      "RendererTimeSinceLastNavigationAtOOM",
+      time_since_last_navigation.InSeconds());
+
   if (decider_) {
     DCHECK(!web_contents()->GetBrowserContext()->IsOffTheRecord());
     const std::string& host = web_contents()->GetVisibleURL().host();
@@ -246,9 +258,12 @@ void OomInterventionTabHelper::StartMonitoringIfNeeded() {
   if (near_oom_detected_time_)
     return;
 
-  if (ShouldDetectInRenderer()) {
+  auto* config = OomInterventionConfig::GetInstance();
+  if (config->should_detect_in_renderer()) {
+    if (binding_.is_bound())
+      return;
     StartDetectionInRenderer();
-  } else {
+  } else if (config->is_swap_monitor_enabled()) {
     subscription_ = NearOomMonitor::GetInstance()->RegisterCallback(
         base::BindRepeating(&OomInterventionTabHelper::OnNearOomDetected,
                             base::Unretained(this)));
@@ -256,19 +271,25 @@ void OomInterventionTabHelper::StartMonitoringIfNeeded() {
 }
 
 void OomInterventionTabHelper::StopMonitoring() {
-  if (ShouldDetectInRenderer()) {
-    intervention_.reset();
+  if (OomInterventionConfig::GetInstance()->should_detect_in_renderer()) {
+    ResetInterfaces();
   } else {
     subscription_.reset();
   }
 }
 
 void OomInterventionTabHelper::StartDetectionInRenderer() {
-  bool trigger_intervention = RendererPauseIsEnabled();
-  if (trigger_intervention && decider_) {
+  auto* config = OomInterventionConfig::GetInstance();
+  bool renderer_pause_enabled = config->is_renderer_pause_enabled();
+  bool navigate_ads_enabled = config->is_navigate_ads_enabled();
+
+  if ((renderer_pause_enabled || navigate_ads_enabled) && decider_) {
     DCHECK(!web_contents()->GetBrowserContext()->IsOffTheRecord());
     const std::string& host = web_contents()->GetVisibleURL().host();
-    trigger_intervention = decider_->CanTriggerIntervention(host);
+    if (!decider_->CanTriggerIntervention(host)) {
+      renderer_pause_enabled = false;
+      navigate_ads_enabled = false;
+    }
   }
 
   content::RenderFrameHost* main_frame = web_contents()->GetMainFrame();
@@ -277,13 +298,17 @@ void OomInterventionTabHelper::StartDetectionInRenderer() {
   DCHECK(render_process_host);
   content::BindInterface(render_process_host,
                          mojo::MakeRequest(&intervention_));
+  DCHECK(!binding_.is_bound());
   blink::mojom::OomInterventionHostPtr host;
   binding_.Bind(mojo::MakeRequest(&host));
-  intervention_->StartDetection(std::move(host), trigger_intervention);
+  blink::mojom::DetectionArgsPtr detection_args =
+      config->GetRendererOomDetectionArgs();
+  intervention_->StartDetection(std::move(host), std::move(detection_args),
+                                renderer_pause_enabled, navigate_ads_enabled);
 }
 
 void OomInterventionTabHelper::OnNearOomDetected() {
-  DCHECK(!ShouldDetectInRenderer());
+  DCHECK(!OomInterventionConfig::GetInstance()->should_detect_in_renderer());
   DCHECK_EQ(web_contents()->GetVisibility(), content::Visibility::VISIBLE);
   DCHECK(!near_oom_detected_time_);
   subscription_.reset();
@@ -300,7 +325,7 @@ void OomInterventionTabHelper::OnNearOomDetected() {
 void OomInterventionTabHelper::
     OnDetectionWindowElapsedWithoutHighMemoryUsage() {
   ResetInterventionState();
-  intervention_.reset();
+  ResetInterfaces();
   StartMonitoringIfNeeded();
 }
 
@@ -308,4 +333,10 @@ void OomInterventionTabHelper::ResetInterventionState() {
   near_oom_detected_time_.reset();
   intervention_state_ = InterventionState::NOT_TRIGGERED;
   renderer_detection_timer_.AbandonAndStop();
+}
+
+void OomInterventionTabHelper::ResetInterfaces() {
+  intervention_.reset();
+  if (binding_.is_bound())
+    binding_.Close();
 }

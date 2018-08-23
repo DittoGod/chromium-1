@@ -9,6 +9,7 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#import "components/prefs/ios/pref_observer_bridge.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
@@ -16,10 +17,9 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "ios/chrome/browser/mailto/features.h"
-#import "ios/chrome/browser/prefs/pref_observer_bridge.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_detail_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/settings/block_popups_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/cells/settings_detail_item.h"
 #import "ios/chrome/browser/ui/settings/compose_email_handler_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 #import "ios/chrome/browser/ui/settings/translate_collection_view_controller.h"
@@ -66,9 +66,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
   MailtoHandlerManager* _mailtoHandlerManager;
 
   // Updatable Items
-  CollectionViewDetailItem* _blockPopupsDetailItem;
-  CollectionViewDetailItem* _translateDetailItem;
-  CollectionViewDetailItem* _composeEmailDetailItem;
+  SettingsDetailItem* _blockPopupsDetailItem;
+  SettingsDetailItem* _translateDetailItem;
+  SettingsDetailItem* _composeEmailDetailItem;
 }
 
 // Returns the value for the default setting with ID |settingID|.
@@ -122,10 +122,6 @@ typedef NS_ENUM(NSInteger, ItemType) {
   return self;
 }
 
-- (void)dealloc {
-  [_disablePopupsSetting setObserver:nil];
-}
-
 - (void)loadModel {
   [super loadModel];
 
@@ -139,9 +135,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
   if (base::FeatureList::IsEnabled(kMailtoHandledWithGoogleUI)) {
     MailtoHandlerProvider* provider =
         ios::GetChromeBrowserProvider()->GetMailtoHandlerProvider();
-    UIViewController* settingsController =
-        provider->MailtoHandlerSettingsController();
-    if (settingsController) {
+    NSString* settingsTitle = provider->MailtoHandlerSettingsTitle();
+    if (settingsTitle) {
       [model addItem:[self composeEmailItem]
           toSectionWithIdentifier:SectionIdentifierSettings];
     }
@@ -152,8 +147,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
 }
 
 - (CollectionViewItem*)blockPopupsItem {
-  _blockPopupsDetailItem = [[CollectionViewDetailItem alloc]
-      initWithType:ItemTypeSettingsBlockPopups];
+  _blockPopupsDetailItem =
+      [[SettingsDetailItem alloc] initWithType:ItemTypeSettingsBlockPopups];
   NSString* subtitle = [_disablePopupsSetting value]
                            ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
                            : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
@@ -167,7 +162,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 - (CollectionViewItem*)translateItem {
   _translateDetailItem =
-      [[CollectionViewDetailItem alloc] initWithType:ItemTypeSettingsTranslate];
+      [[SettingsDetailItem alloc] initWithType:ItemTypeSettingsTranslate];
   BOOL enabled =
       browserState_->GetPrefs()->GetBoolean(prefs::kOfferTranslateEnabled);
   NSString* subtitle = enabled ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
@@ -181,11 +176,20 @@ typedef NS_ENUM(NSInteger, ItemType) {
 }
 
 - (CollectionViewItem*)composeEmailItem {
-  _composeEmailDetailItem = [[CollectionViewDetailItem alloc]
-      initWithType:ItemTypeSettingsComposeEmail];
-  _composeEmailDetailItem.text =
-      l10n_util::GetNSString(IDS_IOS_COMPOSE_EMAIL_SETTING);
-  if (!base::FeatureList::IsEnabled(kMailtoHandledWithGoogleUI)) {
+  _composeEmailDetailItem =
+      [[SettingsDetailItem alloc] initWithType:ItemTypeSettingsComposeEmail];
+  if (base::FeatureList::IsEnabled(kMailtoHandledWithGoogleUI)) {
+    // Use the handler's preferred title string for the compose email item.
+    MailtoHandlerProvider* provider =
+        ios::GetChromeBrowserProvider()->GetMailtoHandlerProvider();
+    NSString* settingsTitle = provider->MailtoHandlerSettingsTitle();
+    DCHECK([settingsTitle length]);
+    _composeEmailDetailItem.text = settingsTitle;
+  } else {
+    // Use the default Chrome string when mailto handling with Google UI is not
+    // available.
+    _composeEmailDetailItem.text =
+        l10n_util::GetNSString(IDS_IOS_COMPOSE_EMAIL_SETTING);
     // Displaying the selected app name is only supported in the Chrome
     // implementation of mailto content settings.
     // The Google UI version of mailto handling does not expose the name of the

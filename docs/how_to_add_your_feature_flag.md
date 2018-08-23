@@ -22,11 +22,11 @@ to see
 [[1](https://chromium-review.googlesource.com/c/554510/8/content/common/service_worker/service_worker_utils.cc#153)]
 3. how to wire the base::Feature to WebRuntimeFeatures
 [[1](https://chromium-review.googlesource.com/c/554510/8/content/child/runtime_features.cc)]
-[[2](https://chromium-review.googlesource.com/c/554510/8/third_party/WebKit/public/platform/WebRuntimeFeatures.h)]
-[[3](https://chromium-review.googlesource.com/c/554510/third_party/WebKit/Source/platform/exported/WebRuntimeFeatures.cpp)]
-[[4](https://chromium-review.googlesource.com/c/554510/8/third_party/WebKit/Source/platform/runtime_enabled_features.json5)]
+[[2](https://chromium-review.googlesource.com/c/554510/8/third_party/blink/public/platform/web_runtime_features.h)]
+[[3](https://chromium-review.googlesource.com/c/554510/third_party/blink/Source/platform/exported/web_runtime_features.cc)]
+[[4](https://chromium-review.googlesource.com/c/554510/8/third_party/blink/renderer/platform/runtime_enabled_features.json5)]
 4. how to use it in blink
-[[1](https://chromium-review.googlesource.com/c/554510/8/third_party/WebKit/Source/core/workers/WorkerThread.cpp)]
+[[1](https://chromium-review.googlesource.com/c/554510/8/third_party/blnk/renderere/core/workers/worker_thread.cc)]
 
 Also, this patch added a virtual test for running layout tests with the flag.
 When you add a flag, you can consider to use that.
@@ -44,7 +44,7 @@ __flag_descriptions.cc__ and __flag_descriptions.h__. After that, try running th
 
 ```bash
 # Build unit_tests
-ninja -C out/Default unit_tests
+autoninja -C out/Default unit_tests
 # Run AboutFlagsHistogramTest.CheckHistograms
 ./out/Default/unit_tests --gtest_filter=AboutFlagsHistogramTest.CheckHistograms
 ```

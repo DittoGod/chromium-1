@@ -22,6 +22,10 @@ class Transform;
 
 namespace aura {
 
+namespace test {
+class WindowOcclusionTrackerTestApi;
+}
+
 // Notifies tracked Windows when their occlusion state change.
 //
 // To start tracking the occlusion state of a Window, call
@@ -54,6 +58,8 @@ class AURA_EXPORT WindowOcclusionTracker : public ui::LayerAnimationObserver,
   static void Track(Window* window);
 
  private:
+  friend class test::WindowOcclusionTrackerTestApi;
+
   struct RootWindowState {
     // Number of Windows whose occlusion state is tracked under this root
     // Window.
@@ -65,6 +71,8 @@ class AURA_EXPORT WindowOcclusionTracker : public ui::LayerAnimationObserver,
 
   WindowOcclusionTracker();
   ~WindowOcclusionTracker() override;
+
+  static WindowOcclusionTracker* GetInstance();
 
   // Recomputes the occlusion state of tracked windows under roots marked as
   // dirty in |root_windows_| if there are no active
@@ -91,13 +99,14 @@ class AURA_EXPORT WindowOcclusionTracker : public ui::LayerAnimationObserver,
   // |animated_windows_|, adds |window| to |animated_windows_| and returns true.
   bool MaybeObserveAnimatedWindow(Window* window);
 
-  // Calls SetOccluded(|is_occluded|) on |window| and its descendants if they
-  // are in |tracked_windows_|.
+  // Calls SetOccluded() with |is_occluded| as argument for |window| and its
+  // descendants.
   void SetWindowAndDescendantsAreOccluded(Window* window, bool is_occluded);
 
-  // Updates the occlusion state of |window| in |tracked_windows_|. No-op if
-  // |window| is not in |tracked_windows_|.
-  void SetOccluded(Window* window, bool occluded);
+  // Updates the occlusion state of |window| in |tracked_windows_|, based on
+  // |is_occluded| and window->IsVisible(). No-op if |window| is not in
+  // |tracked_windows_|.
+  void SetOccluded(Window* window, bool is_occluded);
 
   // Returns true if |window| is in |tracked_windows_|.
   bool WindowIsTracked(Window* window) const;
@@ -189,9 +198,13 @@ class AURA_EXPORT WindowOcclusionTracker : public ui::LayerAnimationObserver,
   // Root Windows of Windows in |tracked_windows_|.
   base::flat_map<Window*, RootWindowState> root_windows_;
 
+  // Number of times that occlusion has been recomputed in this process. We keep
+  // track of this for tests.
+  int num_times_occlusion_recomputed_ = 0;
+
   // Number of times that the current call to MaybeComputeOcclusion() has
   // recomputed occlusion states. Always 0 when not in MaybeComputeOcclusion().
-  int num_times_occlusion_recomputed_ = 0;
+  int num_times_occlusion_recomputed_in_current_step_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(WindowOcclusionTracker);
 };

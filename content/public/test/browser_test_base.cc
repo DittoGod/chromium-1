@@ -14,20 +14,21 @@
 #include "base/i18n/icu_util.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
 #include "base/test/test_timeouts.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/tracing/tracing_controller_impl.h"
 #include "content/public/app/content_main.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/network_service_instance.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/service_manager_connection.h"
@@ -36,6 +37,7 @@
 #include "content/public/test/test_launcher.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/content_browser_sanity_checker.h"
+#include "gpu/config/gpu_switches.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -54,10 +56,6 @@
 #include "base/process/process_handle.h"
 #endif
 
-#if defined(OS_MACOSX)
-#include "base/mac/foundation_util.h"
-#endif
-
 #if defined(USE_AURA)
 #include "content/browser/compositor/image_transport_factory.h"
 #include "ui/aura/test/event_generator_delegate_aura.h"  // nogncheck
@@ -66,7 +64,7 @@
 namespace content {
 namespace {
 
-#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
+#if defined(OS_POSIX)
 // On SIGSEGV or SIGTERM (sent by the runner on timeouts), dump a stack trace
 // (to make debugging easier) and also exit with a known error code (so that
 // the test framework considers this a failure -- http://crbug.com/57578).
@@ -87,7 +85,7 @@ void DumpStackTraceSignalHandler(int signal) {
   }
   _exit(128 + signal);
 }
-#endif  // defined(OS_POSIX) && !defined(OS_FUCHSIA)
+#endif  // defined(OS_POSIX)
 
 void RunTaskOnRendererThread(const base::Closure& task,
                              const base::Closure& quit_task) {
@@ -101,6 +99,24 @@ void TraceStopTracingComplete(const base::Closure& quit,
   quit.Run();
 }
 
+// See SetInitialWebContents comment for more information.
+class InitialNavigationObserver : public WebContentsObserver {
+ public:
+  InitialNavigationObserver(WebContents* web_contents,
+                            base::OnceClosure callback)
+      : WebContentsObserver(web_contents), callback_(std::move(callback)) {}
+  // WebContentsObserver implementation:
+  void DidStartNavigation(NavigationHandle* navigation_handle) override {
+    if (callback_)
+      std::move(callback_).Run();
+  }
+
+ private:
+  base::OnceClosure callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(InitialNavigationObserver);
+};
+
 }  // namespace
 
 extern int BrowserMain(const MainFunctionParams&);
@@ -112,10 +128,6 @@ BrowserTestBase::BrowserTestBase()
       use_software_compositing_(false),
       set_up_called_(false),
       disable_io_checks_(false) {
-#if defined(OS_MACOSX)
-  base::mac::SetOverrideAmIBundled(true);
-#endif
-
   ui::test::EnableTestConfigForPlatformWindows();
 
 #if defined(OS_POSIX)
@@ -128,13 +140,6 @@ BrowserTestBase::BrowserTestBase()
   base::i18n::AllowMultipleInitializeCallsForTesting();
 
   embedded_test_server_ = std::make_unique<net::EmbeddedTestServer>();
-
-  // SequencedWorkerPool is enabled by default in tests (see
-  // base::TestSuite::Initialize). In browser tests, disable it and expect it
-  // to be re-enabled as part of BrowserMainLoop::PreCreateThreads().
-  // TODO(fdoray): Remove this once the SequencedWorkerPool to TaskScheduler
-  // redirection experiment concludes https://crbug.com/622400.
-  base::SequencedWorkerPool::DisableForProcessForTesting();
 }
 
 BrowserTestBase::~BrowserTestBase() {
@@ -166,7 +171,8 @@ void BrowserTestBase::SetUp() {
       base::Int64ToString(TestTimeouts::action_max_timeout().InSeconds()));
 
   // The tests assume that file:// URIs can freely access other file:// URIs.
-  command_line->AppendSwitch(switches::kAllowFileAccessFromFiles);
+  if (AllowFileAccessFromFiles())
+    command_line->AppendSwitch(switches::kAllowFileAccessFromFiles);
 
   command_line->AppendSwitch(switches::kDomAutomationController);
 
@@ -269,6 +275,12 @@ void BrowserTestBase::SetUp() {
                                     disabled_features);
   }
 
+  // Always disable the unsandbox GPU process for DX12 and Vulkan Info
+  // collection to avoid interference. This GPU process is launched 15
+  // seconds after chrome starts.
+  command_line->AppendSwitch(
+      switches::kDisableGpuProcessForDX12VulkanInfoCollection);
+
   // The current global field trial list contains any trials that were activated
   // prior to main browser startup. That global field trial list is about to be
   // destroyed below, and will be recreated during the browser_tests browser
@@ -300,6 +312,7 @@ void BrowserTestBase::SetUp() {
   MainFunctionParams params(*command_line);
   params.ui_task = ui_task.release();
   params.created_main_parts_closure = created_main_parts_closure.release();
+  base::TaskScheduler::Create("Browser");
   // TODO(phajdan.jr): Check return code, http://crbug.com/374738 .
   BrowserMain(params);
 #else
@@ -314,14 +327,40 @@ void BrowserTestBase::SetUp() {
 void BrowserTestBase::TearDown() {
 }
 
+bool BrowserTestBase::AllowFileAccessFromFiles() const {
+  return true;
+}
+
+void BrowserTestBase::SimulateNetworkServiceCrash() {
+  CHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
+  CHECK(!IsNetworkServiceRunningInProcess())
+      << "Can't crash the network service if it's running in-process!";
+  network::mojom::NetworkServiceTestPtr network_service_test;
+  ServiceManagerConnection::GetForProcess()->GetConnector()->BindInterface(
+      mojom::kNetworkServiceName, &network_service_test);
+
+  base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
+  network_service_test.set_connection_error_handler(run_loop.QuitClosure());
+
+  network_service_test->SimulateCrash();
+  run_loop.Run();
+
+  // Make sure the cached NetworkServicePtr receives error notification.
+  FlushNetworkServiceInstanceForTesting();
+
+  // Need to re-initialize the network process.
+  initialized_network_process_ = false;
+  InitializeNetworkProcess();
+}
+
 void BrowserTestBase::ProxyRunTestOnMainThreadLoop() {
-#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
+#if defined(OS_POSIX)
   g_browser_process_pid = base::GetCurrentProcId();
   signal(SIGSEGV, DumpStackTraceSignalHandler);
 
   if (handle_sigterm_)
     signal(SIGTERM, DumpStackTraceSignalHandler);
-#endif  // defined(OS_POSIX) && !defined(OS_FUCHSIA)
+#endif  // defined(OS_POSIX)
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableTracing)) {
@@ -338,10 +377,24 @@ void BrowserTestBase::ProxyRunTestOnMainThreadLoop() {
     // This can be called from a posted task. Allow nested tasks here, because
     // otherwise the test body will have to do it in order to use RunLoop for
     // waiting.
-    base::MessageLoop::ScopedNestableTaskAllower allow(
-        base::MessageLoop::current());
+    base::MessageLoopCurrent::ScopedNestableTaskAllower allow;
     PreRunTestOnMainThread();
+    std::unique_ptr<InitialNavigationObserver> initial_navigation_observer;
+    if (initial_web_contents_ &&
+        base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+      // Some tests may add host_resolver() rules in their SetUpOnMainThread
+      // method and navigate inside of it. This is a best effort to catch that
+      // and sync the host_resolver() rules to the network process in that case,
+      // to avoid navigations silently failing. This won't catch all cases, i.e.
+      // if the test creates a new window or tab and navigates that.
+      initial_navigation_observer = std::make_unique<InitialNavigationObserver>(
+          initial_web_contents_,
+          base::BindOnce(&BrowserTestBase::InitializeNetworkProcess,
+                         base::Unretained(this)));
+    }
+    initial_web_contents_ = nullptr;
     SetUpOnMainThread();
+    initial_navigation_observer.reset();
 
     // Tests would have added their host_resolver() rules by now, so copy them
     // to the network process if it's in use.
@@ -414,22 +467,24 @@ bool BrowserTestBase::UsingSoftwareGL() const {
          gl::GetGLImplementationName(gl::GetSoftwareGLImplementation());
 }
 
+void BrowserTestBase::SetInitialWebContents(WebContents* web_contents) {
+  DCHECK(!initial_web_contents_);
+  initial_web_contents_ = web_contents;
+}
+
 void BrowserTestBase::InitializeNetworkProcess() {
-  const testing::TestInfo* const test_info =
-      testing::UnitTest::GetInstance()->current_test_info();
-  bool network_service =
-      base::FeatureList::IsEnabled(network::features::kNetworkService);
-  // ProcessTransferAfterError is the only browser test which needs to modify
-  // the host rules (when not using the network service).
-  if (network_service ||
-      std::string(test_info->name()) != "ProcessTransferAfterError") {
-    host_resolver()->DisableModifications();
-  }
+  if (initialized_network_process_)
+    return;
+
+  initialized_network_process_ = true;
+  host_resolver()->DisableModifications();
 
   // Send the host resolver rules to the network service if it's in use. No need
   // to do this if it's running in the browser process though.
-  if (!network_service || IsNetworkServiceRunningInProcess())
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService) ||
+      IsNetworkServiceRunningInProcess()) {
     return;
+  }
 
   net::RuleBasedHostResolverProc::RuleList rules = host_resolver()->GetRules();
   std::vector<network::mojom::RulePtr> mojo_rules;
@@ -437,6 +492,20 @@ void BrowserTestBase::InitializeNetworkProcess() {
     // For now, this covers all the rules used in content's tests.
     // TODO(jam: expand this when we try to make browser_tests and
     // components_browsertests work.
+    if (rule.resolver_type ==
+        net::RuleBasedHostResolverProc::Rule::kResolverTypeFail) {
+      // The host "wpad" is added automatically in TestHostResolver, so we don't
+      // need to send it to NetworkServiceTest.
+      if (rule.host_pattern != "wpad") {
+        network::mojom::RulePtr mojo_rule = network::mojom::Rule::New();
+        mojo_rule->resolver_type =
+            network::mojom::ResolverType::kResolverTypeFail;
+        mojo_rule->host_pattern = rule.host_pattern;
+        mojo_rules.push_back(std::move(mojo_rule));
+      }
+      continue;
+    }
+
     if ((rule.resolver_type !=
              net::RuleBasedHostResolverProc::Rule::kResolverTypeSystem &&
          rule.resolver_type !=
@@ -445,6 +514,14 @@ void BrowserTestBase::InitializeNetworkProcess() {
         !!rule.latency_ms || rule.replacement.empty())
       continue;
     network::mojom::RulePtr mojo_rule = network::mojom::Rule::New();
+    if (rule.resolver_type ==
+        net::RuleBasedHostResolverProc::Rule::kResolverTypeSystem) {
+      mojo_rule->resolver_type =
+          network::mojom::ResolverType::kResolverTypeSystem;
+    } else {
+      mojo_rule->resolver_type =
+          network::mojom::ResolverType::kResolverTypeIPLiteral;
+    }
     mojo_rule->host_pattern = rule.host_pattern;
     mojo_rule->replacement = rule.replacement;
     mojo_rules.push_back(std::move(mojo_rule));
@@ -456,8 +533,15 @@ void BrowserTestBase::InitializeNetworkProcess() {
   network::mojom::NetworkServiceTestPtr network_service_test;
   ServiceManagerConnection::GetForProcess()->GetConnector()->BindInterface(
       mojom::kNetworkServiceName, &network_service_test);
-  mojo::SyncCallRestrictions::ScopedAllowSyncCall allow_sync_call;
-  network_service_test->AddRules(std::move(mojo_rules));
+
+  // Allow nested tasks so that the mojo reply is dispatched.
+  base::MessageLoopCurrent::ScopedNestableTaskAllower allow;
+  // Send the DNS rules to network service process. Android needs the RunLoop
+  // to dispatch a Java callback that makes network process to enter native
+  // code.
+  base::RunLoop loop;
+  network_service_test->AddRules(std::move(mojo_rules), loop.QuitClosure());
+  loop.Run();
 }
 
 }  // namespace content

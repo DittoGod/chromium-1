@@ -5,7 +5,7 @@
 #ifndef CONTENT_COMMON_SINGLE_REQUEST_URL_LOADER_FACTORY_H_
 #define CONTENT_COMMON_SINGLE_REQUEST_URL_LOADER_FACTORY_H_
 
-#include "content/public/common/shared_url_loader_factory.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #include "base/memory/ref_counted.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
@@ -15,10 +15,11 @@ namespace content {
 // An implementation of SharedURLLoaderFactory which handles only a single
 // request. It's an error to call CreateLoaderAndStart() more than a total of
 // one time across this object or any of its clones.
-class SingleRequestURLLoaderFactory : public SharedURLLoaderFactory {
+class SingleRequestURLLoaderFactory : public network::SharedURLLoaderFactory {
  public:
   using RequestHandler =
-      base::OnceCallback<void(network::mojom::URLLoaderRequest,
+      base::OnceCallback<void(const network::ResourceRequest& resource_request,
+                              network::mojom::URLLoaderRequest,
                               network::mojom::URLLoaderClientPtr)>;
 
   explicit SingleRequestURLLoaderFactory(RequestHandler handler);
@@ -32,7 +33,8 @@ class SingleRequestURLLoaderFactory : public SharedURLLoaderFactory {
                             network::mojom::URLLoaderClientPtr client,
                             const net::MutableNetworkTrafficAnnotationTag&
                                 traffic_annotation) override;
-  std::unique_ptr<SharedURLLoaderFactoryInfo> Clone() override;
+  void Clone(network::mojom::URLLoaderFactoryRequest request) override;
+  std::unique_ptr<network::SharedURLLoaderFactoryInfo> Clone() override;
 
  private:
   class FactoryInfo;

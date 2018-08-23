@@ -1,4 +1,7 @@
 This is a testharness.js-based test.
+PASS Partial interface Navigator: original interface defined
+PASS Partial interface Window: original interface defined
+PASS Partial interface Gamepad: original interface defined
 FAIL Window interface: attribute onvrdisplayconnect assert_own_property: The global object must have a property "onvrdisplayconnect" expected property "onvrdisplayconnect" missing
 FAIL Window interface: attribute onvrdisplaydisconnect assert_own_property: The global object must have a property "onvrdisplaydisconnect" expected property "onvrdisplaydisconnect" missing
 FAIL Window interface: attribute onvrdisplayactivate assert_own_property: The global object must have a property "onvrdisplayactivate" expected property "onvrdisplayactivate" missing
@@ -9,13 +12,13 @@ FAIL Window interface: attribute onvrdisplaypresentchange assert_own_property: T
 PASS Navigator interface: operation getVRDisplays()
 FAIL Navigator interface: attribute activeVRDisplays assert_true: The prototype object must have a property "activeVRDisplays" expected true got false
 FAIL Navigator interface: attribute vrEnabled assert_true: The prototype object must have a property "vrEnabled" expected true got false
-FAIL HTMLIFrameElement interface: attribute allowvr assert_true: The prototype object must have a property "allowvr" expected true got false
 PASS Gamepad interface: attribute displayId
 PASS VRDisplay interface: existence and properties of interface object
 PASS VRDisplay interface object length
 PASS VRDisplay interface object name
 PASS VRDisplay interface: existence and properties of interface prototype object
 PASS VRDisplay interface: existence and properties of interface prototype object's "constructor" property
+PASS VRDisplay interface: existence and properties of interface prototype object's @@unscopables property
 PASS VRDisplay interface: attribute isPresenting
 PASS VRDisplay interface: attribute capabilities
 PASS VRDisplay interface: attribute stageParameters
@@ -36,6 +39,7 @@ PASS VRDisplayCapabilities interface object length
 PASS VRDisplayCapabilities interface object name
 PASS VRDisplayCapabilities interface: existence and properties of interface prototype object
 PASS VRDisplayCapabilities interface: existence and properties of interface prototype object's "constructor" property
+PASS VRDisplayCapabilities interface: existence and properties of interface prototype object's @@unscopables property
 PASS VRDisplayCapabilities interface: attribute hasPosition
 PASS VRDisplayCapabilities interface: attribute hasExternalDisplay
 PASS VRDisplayCapabilities interface: attribute canPresent
@@ -45,6 +49,7 @@ PASS VRPose interface object length
 PASS VRPose interface object name
 PASS VRPose interface: existence and properties of interface prototype object
 PASS VRPose interface: existence and properties of interface prototype object's "constructor" property
+PASS VRPose interface: existence and properties of interface prototype object's @@unscopables property
 PASS VRPose interface: attribute position
 PASS VRPose interface: attribute linearVelocity
 PASS VRPose interface: attribute linearAcceleration
@@ -56,6 +61,7 @@ PASS VRFrameData interface object length
 PASS VRFrameData interface object name
 PASS VRFrameData interface: existence and properties of interface prototype object
 PASS VRFrameData interface: existence and properties of interface prototype object's "constructor" property
+PASS VRFrameData interface: existence and properties of interface prototype object's @@unscopables property
 PASS VRFrameData interface: attribute leftProjectionMatrix
 PASS VRFrameData interface: attribute leftViewMatrix
 PASS VRFrameData interface: attribute rightProjectionMatrix
@@ -66,6 +72,7 @@ PASS VREyeParameters interface object length
 PASS VREyeParameters interface object name
 PASS VREyeParameters interface: existence and properties of interface prototype object
 PASS VREyeParameters interface: existence and properties of interface prototype object's "constructor" property
+PASS VREyeParameters interface: existence and properties of interface prototype object's @@unscopables property
 PASS VREyeParameters interface: attribute offset
 PASS VREyeParameters interface: attribute renderWidth
 PASS VREyeParameters interface: attribute renderHeight
@@ -74,6 +81,7 @@ PASS VRStageParameters interface object length
 PASS VRStageParameters interface object name
 PASS VRStageParameters interface: existence and properties of interface prototype object
 PASS VRStageParameters interface: existence and properties of interface prototype object's "constructor" property
+PASS VRStageParameters interface: existence and properties of interface prototype object's @@unscopables property
 PASS VRStageParameters interface: attribute sittingToStandingTransform
 PASS VRStageParameters interface: attribute sizeX
 PASS VRStageParameters interface: attribute sizeZ
@@ -82,6 +90,7 @@ FAIL VRDisplayEvent interface object length assert_equals: wrong value for VRDis
 PASS VRDisplayEvent interface object name
 PASS VRDisplayEvent interface: existence and properties of interface prototype object
 PASS VRDisplayEvent interface: existence and properties of interface prototype object's "constructor" property
+PASS VRDisplayEvent interface: existence and properties of interface prototype object's @@unscopables property
 PASS VRDisplayEvent interface: attribute display
 PASS VRDisplayEvent interface: attribute reason
 Harness: the test ran to completion.

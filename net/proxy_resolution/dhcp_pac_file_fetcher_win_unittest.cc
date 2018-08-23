@@ -10,12 +10,13 @@
 #include "base/bind_helpers.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/timer/elapsed_timer.h"
-#include "net/base/completion_callback.h"
 #include "net/proxy_resolution/dhcp_pac_file_adapter_fetcher_win.h"
 #include "net/test/gtest_util.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -27,7 +28,7 @@ namespace net {
 
 namespace {
 
-TEST(DhcpProxyScriptFetcherWin, AdapterNamesAndPacURLFromDhcp) {
+TEST(DhcpPacFileFetcherWin, AdapterNamesAndPacURLFromDhcp) {
   // This tests our core Win32 implementation without any of the wrappers
   // we layer on top to achieve asynchronous and parallel operations.
   //
@@ -36,12 +37,9 @@ TEST(DhcpProxyScriptFetcherWin, AdapterNamesAndPacURLFromDhcp) {
   // is no crash and no error returned, but does not assert on the number
   // of interfaces or the information returned via DHCP.
   std::set<std::string> adapter_names;
-  DhcpProxyScriptFetcherWin::GetCandidateAdapterNames(&adapter_names);
-  for (std::set<std::string>::const_iterator it = adapter_names.begin();
-       it != adapter_names.end();
-       ++it) {
-    const std::string& adapter_name = *it;
-    DhcpProxyScriptAdapterFetcher::GetPacURLFromDhcp(adapter_name);
+  DhcpPacFileFetcherWin::GetCandidateAdapterNames(&adapter_names, nullptr);
+  for (const std::string& adapter_name : adapter_names) {
+    DhcpPacFileAdapterFetcher::GetPacURLFromDhcp(adapter_name);
   }
 }
 
@@ -50,7 +48,7 @@ class RealFetchTester {
  public:
   RealFetchTester()
       : context_(new TestURLRequestContext),
-        fetcher_(new DhcpProxyScriptFetcherWin(context_.get())),
+        fetcher_(new DhcpPacFileFetcherWin(context_.get())),
         finished_(false),
         on_completion_is_error_(false) {
     // Make sure the test ends.
@@ -61,7 +59,8 @@ class RealFetchTester {
   void RunTest() {
     int result = fetcher_->Fetch(
         &pac_text_,
-        base::Bind(&RealFetchTester::OnCompletion, base::Unretained(this)));
+        base::Bind(&RealFetchTester::OnCompletion, base::Unretained(this)),
+        NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
     if (result != ERR_IO_PENDING)
       finished_ = true;
   }
@@ -106,15 +105,15 @@ class RealFetchTester {
   // Attempts to give worker threads time to finish.  This is currently
   // very simplistic as completion (via completion callback or cancellation)
   // immediately "detaches" any worker threads, so the best we can do is give
-  // them a little time.  If we start running into Valgrind leaks, we can
+  // them a little time.  If we start running into memory leaks, we can
   // do something a bit more clever to track worker threads even when the
-  // DhcpProxyScriptFetcherWin state machine has finished.
+  // DhcpPacFileFetcherWin state machine has finished.
   void FinishTestAllowCleanup() {
     base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(30));
   }
 
   std::unique_ptr<URLRequestContext> context_;
-  std::unique_ptr<DhcpProxyScriptFetcherWin> fetcher_;
+  std::unique_ptr<DhcpPacFileFetcherWin> fetcher_;
   bool finished_;
   base::string16 pac_text_;
   base::OneShotTimer timeout_;
@@ -122,7 +121,9 @@ class RealFetchTester {
   bool on_completion_is_error_;
 };
 
-TEST(DhcpProxyScriptFetcherWin, RealFetch) {
+TEST(DhcpPacFileFetcherWin, RealFetch) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   // This tests a call to Fetch() with no stubbing out of dependencies.
   //
   // We don't make assumptions about the environment this unit test is
@@ -138,27 +139,26 @@ TEST(DhcpProxyScriptFetcherWin, RealFetch) {
   fetcher.FinishTestAllowCleanup();
 }
 
-TEST(DhcpProxyScriptFetcherWin, RealFetchWithCancel) {
+TEST(DhcpPacFileFetcherWin, RealFetchWithCancel) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   // Does a Fetch() with an immediate cancel.  As before, just
   // exercises the code without stubbing out dependencies.
   RealFetchTester fetcher;
   fetcher.RunTestWithCancel();
   base::RunLoop().RunUntilIdle();
 
-  // Attempt to avoid Valgrind leak reports in case worker thread is
+  // Attempt to avoid memory leak reports in case worker thread is
   // still running.
   fetcher.FinishTestAllowCleanup();
 }
 
 // For RealFetchWithDeferredCancel, below.
-class DelayingDhcpProxyScriptAdapterFetcher
-    : public DhcpProxyScriptAdapterFetcher {
+class DelayingDhcpPacFileAdapterFetcher : public DhcpPacFileAdapterFetcher {
  public:
-  DelayingDhcpProxyScriptAdapterFetcher(
-      URLRequestContext* url_request_context,
-      scoped_refptr<base::TaskRunner> task_runner)
-      : DhcpProxyScriptAdapterFetcher(url_request_context, task_runner) {
-  }
+  DelayingDhcpPacFileAdapterFetcher(URLRequestContext* url_request_context,
+                                    scoped_refptr<base::TaskRunner> task_runner)
+      : DhcpPacFileAdapterFetcher(url_request_context, task_runner) {}
 
   class DelayingDhcpQuery : public DhcpQuery {
    public:
@@ -180,28 +180,27 @@ class DelayingDhcpProxyScriptAdapterFetcher
 };
 
 // For RealFetchWithDeferredCancel, below.
-class DelayingDhcpProxyScriptFetcherWin
-    : public DhcpProxyScriptFetcherWin {
+class DelayingDhcpPacFileFetcherWin : public DhcpPacFileFetcherWin {
  public:
-  explicit DelayingDhcpProxyScriptFetcherWin(
-      URLRequestContext* context)
-      : DhcpProxyScriptFetcherWin(context) {
-  }
+  explicit DelayingDhcpPacFileFetcherWin(URLRequestContext* context)
+      : DhcpPacFileFetcherWin(context) {}
 
-  DhcpProxyScriptAdapterFetcher* ImplCreateAdapterFetcher() override {
-    return new DelayingDhcpProxyScriptAdapterFetcher(url_request_context(),
-                                                     GetTaskRunner());
+  DhcpPacFileAdapterFetcher* ImplCreateAdapterFetcher() override {
+    return new DelayingDhcpPacFileAdapterFetcher(url_request_context(),
+                                                 GetTaskRunner());
   }
 };
 
-TEST(DhcpProxyScriptFetcherWin, RealFetchWithDeferredCancel) {
+TEST(DhcpPacFileFetcherWin, RealFetchWithDeferredCancel) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   // Does a Fetch() with a slightly delayed cancel.  As before, just
   // exercises the code without stubbing out dependencies, but
   // introduces a guaranteed 20 ms delay on the worker threads so that
   // the cancel is called before they complete.
   RealFetchTester fetcher;
   fetcher.fetcher_.reset(
-      new DelayingDhcpProxyScriptFetcherWin(fetcher.context_.get()));
+      new DelayingDhcpPacFileFetcherWin(fetcher.context_.get()));
   fetcher.on_completion_is_error_ = true;
   fetcher.RunTestWithDeferredCancel();
   fetcher.WaitUntilDone();
@@ -210,23 +209,22 @@ TEST(DhcpProxyScriptFetcherWin, RealFetchWithDeferredCancel) {
 // The remaining tests are to exercise our state machine in various
 // situations, with actual network access fully stubbed out.
 
-class DummyDhcpProxyScriptAdapterFetcher
-    : public DhcpProxyScriptAdapterFetcher {
+class DummyDhcpPacFileAdapterFetcher : public DhcpPacFileAdapterFetcher {
  public:
-  DummyDhcpProxyScriptAdapterFetcher(URLRequestContext* context,
-                                     scoped_refptr<base::TaskRunner> runner)
-      : DhcpProxyScriptAdapterFetcher(context, runner),
+  DummyDhcpPacFileAdapterFetcher(URLRequestContext* context,
+                                 scoped_refptr<base::TaskRunner> runner)
+      : DhcpPacFileAdapterFetcher(context, runner),
         did_finish_(false),
         result_(OK),
         pac_script_(L"bingo"),
-        fetch_delay_ms_(1) {
-  }
+        fetch_delay_ms_(1) {}
 
   void Fetch(const std::string& adapter_name,
-             const CompletionCallback& callback) override {
-    callback_ = callback;
+             CompletionOnceCallback callback,
+             const NetworkTrafficAnnotationTag traffic_annotation) override {
+    callback_ = std::move(callback);
     timer_.Start(FROM_HERE, base::TimeDelta::FromMilliseconds(fetch_delay_ms_),
-                 this, &DummyDhcpProxyScriptAdapterFetcher::OnTimer);
+                 this, &DummyDhcpPacFileAdapterFetcher::OnTimer);
   }
 
   void Cancel() override {
@@ -245,9 +243,7 @@ class DummyDhcpProxyScriptAdapterFetcher
     return pac_script_;
   }
 
-  void OnTimer() {
-    callback_.Run(result_);
-  }
+  void OnTimer() { std::move(callback_).Run(result_); }
 
   void Configure(bool did_finish,
                  int result,
@@ -264,11 +260,11 @@ class DummyDhcpProxyScriptAdapterFetcher
   int result_;
   base::string16 pac_script_;
   int fetch_delay_ms_;
-  CompletionCallback callback_;
+  CompletionOnceCallback callback_;
   base::OneShotTimer timer_;
 };
 
-class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
+class MockDhcpPacFileFetcherWin : public DhcpPacFileFetcherWin {
  public:
   class MockAdapterQuery : public AdapterQuery {
    public:
@@ -276,9 +272,10 @@ class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
     }
 
     bool ImplGetCandidateAdapterNames(
-        std::set<std::string>* adapter_names) override {
-      adapter_names->insert(
-          mock_adapter_names_.begin(), mock_adapter_names_.end());
+        std::set<std::string>* adapter_names,
+        DhcpAdapterNamesLoggingInfo* logging) override {
+      adapter_names->insert(mock_adapter_names_.begin(),
+                            mock_adapter_names_.end());
       return true;
     }
 
@@ -288,8 +285,8 @@ class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
     ~MockAdapterQuery() override {}
   };
 
-  MockDhcpProxyScriptFetcherWin(URLRequestContext* context)
-      : DhcpProxyScriptFetcherWin(context),
+  MockDhcpPacFileFetcherWin(URLRequestContext* context)
+      : DhcpPacFileFetcherWin(context),
         num_fetchers_created_(0),
         worker_finished_event_(
             base::WaitableEvent::ResetPolicy::MANUAL,
@@ -297,15 +294,15 @@ class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
     ResetTestState();
   }
 
-  ~MockDhcpProxyScriptFetcherWin() override { ResetTestState(); }
+  ~MockDhcpPacFileFetcherWin() override { ResetTestState(); }
 
-  using DhcpProxyScriptFetcherWin::GetTaskRunner;
+  using DhcpPacFileFetcherWin::GetTaskRunner;
 
   // Adds a fetcher object to the queue of fetchers used by
   // |ImplCreateAdapterFetcher()|, and its name to the list of adapters
   // returned by ImplGetCandidateAdapterNames.
   void PushBackAdapter(const std::string& adapter_name,
-                       DhcpProxyScriptAdapterFetcher* fetcher) {
+                       DhcpPacFileAdapterFetcher* fetcher) {
     adapter_query_->mock_adapter_names_.push_back(adapter_name);
     adapter_fetchers_.push_back(fetcher);
   }
@@ -315,15 +312,15 @@ class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
                                    int result,
                                    base::string16 pac_script,
                                    base::TimeDelta fetch_delay) {
-    std::unique_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
-        new DummyDhcpProxyScriptAdapterFetcher(url_request_context(),
-                                               GetTaskRunner()));
+    std::unique_ptr<DummyDhcpPacFileAdapterFetcher> adapter_fetcher(
+        new DummyDhcpPacFileAdapterFetcher(url_request_context(),
+                                           GetTaskRunner()));
     adapter_fetcher->Configure(
         did_finish, result, pac_script, fetch_delay.InMilliseconds());
     PushBackAdapter(adapter_name, adapter_fetcher.release());
   }
 
-  DhcpProxyScriptAdapterFetcher* ImplCreateAdapterFetcher() override {
+  DhcpPacFileAdapterFetcher* ImplCreateAdapterFetcher() override {
     ++num_fetchers_created_;
     return adapter_fetchers_[next_adapter_fetcher_index_++];
   }
@@ -343,8 +340,8 @@ class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
 
   void ResetTestState() {
     // Delete any adapter fetcher objects we didn't hand out.
-    std::vector<DhcpProxyScriptAdapterFetcher*>::const_iterator it
-        = adapter_fetchers_.begin();
+    std::vector<DhcpPacFileAdapterFetcher*>::const_iterator it =
+        adapter_fetchers_.begin();
     for (; it != adapter_fetchers_.end(); ++it) {
       if (num_fetchers_created_-- <= 0) {
         delete (*it);
@@ -367,7 +364,7 @@ class MockDhcpProxyScriptFetcherWin : public DhcpProxyScriptFetcherWin {
   // Ownership gets transferred to the implementation class via
   // ImplCreateAdapterFetcher, but any objects not handed out are
   // deleted on destruction.
-  std::vector<DhcpProxyScriptAdapterFetcher*> adapter_fetchers_;
+  std::vector<DhcpPacFileAdapterFetcher*> adapter_fetchers_;
 
   scoped_refptr<MockAdapterQuery> adapter_query_;
 
@@ -388,14 +385,16 @@ class FetcherClient {
   void RunTest() {
     int result = fetcher_.Fetch(
         &pac_text_,
-        base::Bind(&FetcherClient::OnCompletion, base::Unretained(this)));
+        base::Bind(&FetcherClient::OnCompletion, base::Unretained(this)),
+        NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
     ASSERT_THAT(result, IsError(ERR_IO_PENDING));
   }
 
   int RunTestThatMayFailSync() {
     int result = fetcher_.Fetch(
         &pac_text_,
-        base::Bind(&FetcherClient::OnCompletion, base::Unretained(this)));
+        base::Bind(&FetcherClient::OnCompletion, base::Unretained(this)),
+        NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
     if (result != ERR_IO_PENDING)
       result_ = result;
     return result;
@@ -433,7 +432,7 @@ class FetcherClient {
   }
 
   std::unique_ptr<URLRequestContext> context_;
-  MockDhcpProxyScriptFetcherWin fetcher_;
+  MockDhcpPacFileFetcherWin fetcher_;
   bool finished_;
   int result_;
   base::string16 pac_text_;
@@ -443,9 +442,8 @@ class FetcherClient {
 // the ReuseFetcher test at the bottom.
 void TestNormalCaseURLConfiguredOneAdapter(FetcherClient* client) {
   TestURLRequestContext context;
-  std::unique_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
-      new DummyDhcpProxyScriptAdapterFetcher(&context,
-                                             client->GetTaskRunner()));
+  std::unique_ptr<DummyDhcpPacFileAdapterFetcher> adapter_fetcher(
+      new DummyDhcpPacFileAdapterFetcher(&context, client->GetTaskRunner()));
   adapter_fetcher->Configure(true, OK, L"bingo", 1);
   client->fetcher_.PushBackAdapter("a", adapter_fetcher.release());
   client->RunTest();
@@ -454,7 +452,9 @@ void TestNormalCaseURLConfiguredOneAdapter(FetcherClient* client) {
   ASSERT_EQ(L"bingo", client->pac_text_);
 }
 
-TEST(DhcpProxyScriptFetcherWin, NormalCaseURLConfiguredOneAdapter) {
+TEST(DhcpPacFileFetcherWin, NormalCaseURLConfiguredOneAdapter) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestNormalCaseURLConfiguredOneAdapter(&client);
 }
@@ -473,7 +473,9 @@ void TestNormalCaseURLConfiguredMultipleAdapters(FetcherClient* client) {
   ASSERT_EQ(L"bingo", client->pac_text_);
 }
 
-TEST(DhcpProxyScriptFetcherWin, NormalCaseURLConfiguredMultipleAdapters) {
+TEST(DhcpPacFileFetcherWin, NormalCaseURLConfiguredMultipleAdapters) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestNormalCaseURLConfiguredMultipleAdapters(&client);
 }
@@ -495,8 +497,10 @@ void TestNormalCaseURLConfiguredMultipleAdaptersWithTimeout(
   ASSERT_EQ(L"rocko", client->pac_text_);
 }
 
-TEST(DhcpProxyScriptFetcherWin,
+TEST(DhcpPacFileFetcherWin,
      NormalCaseURLConfiguredMultipleAdaptersWithTimeout) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestNormalCaseURLConfiguredMultipleAdaptersWithTimeout(&client);
 }
@@ -524,8 +528,10 @@ void TestFailureCaseURLConfiguredMultipleAdaptersWithTimeout(
   ASSERT_EQ(L"", client->pac_text_);
 }
 
-TEST(DhcpProxyScriptFetcherWin,
+TEST(DhcpPacFileFetcherWin,
      FailureCaseURLConfiguredMultipleAdaptersWithTimeout) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestFailureCaseURLConfiguredMultipleAdaptersWithTimeout(&client);
 }
@@ -549,7 +555,9 @@ void TestFailureCaseNoURLConfigured(FetcherClient* client) {
   ASSERT_EQ(L"", client->pac_text_);
 }
 
-TEST(DhcpProxyScriptFetcherWin, FailureCaseNoURLConfigured) {
+TEST(DhcpPacFileFetcherWin, FailureCaseNoURLConfigured) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestFailureCaseNoURLConfigured(&client);
 }
@@ -562,7 +570,9 @@ void TestFailureCaseNoDhcpAdapters(FetcherClient* client) {
   ASSERT_EQ(0, client->fetcher_.num_fetchers_created_);
 }
 
-TEST(DhcpProxyScriptFetcherWin, FailureCaseNoDhcpAdapters) {
+TEST(DhcpPacFileFetcherWin, FailureCaseNoDhcpAdapters) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestFailureCaseNoDhcpAdapters(&client);
 }
@@ -597,16 +607,17 @@ void TestShortCircuitLessPreferredAdapters(FetcherClient* client) {
             timer.Elapsed());
 }
 
-TEST(DhcpProxyScriptFetcherWin, ShortCircuitLessPreferredAdapters) {
+TEST(DhcpPacFileFetcherWin, ShortCircuitLessPreferredAdapters) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestShortCircuitLessPreferredAdapters(&client);
 }
 
 void TestImmediateCancel(FetcherClient* client) {
   TestURLRequestContext context;
-  std::unique_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
-      new DummyDhcpProxyScriptAdapterFetcher(&context,
-                                             client->GetTaskRunner()));
+  std::unique_ptr<DummyDhcpPacFileAdapterFetcher> adapter_fetcher(
+      new DummyDhcpPacFileAdapterFetcher(&context, client->GetTaskRunner()));
   adapter_fetcher->Configure(true, OK, L"bingo", 1);
   client->fetcher_.PushBackAdapter("a", adapter_fetcher.release());
   client->RunTest();
@@ -617,15 +628,19 @@ void TestImmediateCancel(FetcherClient* client) {
 
 // Regression test to check that when we cancel immediately, no
 // adapter fetchers get created.
-TEST(DhcpProxyScriptFetcherWin, ImmediateCancel) {
+TEST(DhcpPacFileFetcherWin, ImmediateCancel) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestImmediateCancel(&client);
 }
 
-TEST(DhcpProxyScriptFetcherWin, ReuseFetcher) {
+TEST(DhcpPacFileFetcherWin, ReuseFetcher) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
 
-  // The ProxyScriptFetcher interface stipulates that only a single
+  // The PacFileFetcher interface stipulates that only a single
   // |Fetch()| may be in flight at once, but allows reuse, so test
   // that the state transitions correctly from done to start in all
   // cases we're testing.
@@ -644,9 +659,7 @@ TEST(DhcpProxyScriptFetcherWin, ReuseFetcher) {
   test_functions.push_back(TestShortCircuitLessPreferredAdapters);
   test_functions.push_back(TestImmediateCancel);
 
-  std::random_shuffle(test_functions.begin(),
-                      test_functions.end(),
-                      base::RandGenerator);
+  base::RandomShuffle(test_functions.begin(), test_functions.end());
   for (TestVector::const_iterator it = test_functions.begin();
        it != test_functions.end();
        ++it) {
@@ -659,11 +672,13 @@ TEST(DhcpProxyScriptFetcherWin, ReuseFetcher) {
   (*test_functions.begin())(&client);
 }
 
-TEST(DhcpProxyScriptFetcherWin, OnShutdown) {
+TEST(DhcpPacFileFetcherWin, OnShutdown) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   FetcherClient client;
   TestURLRequestContext context;
-  std::unique_ptr<DummyDhcpProxyScriptAdapterFetcher> adapter_fetcher(
-      new DummyDhcpProxyScriptAdapterFetcher(&context, client.GetTaskRunner()));
+  std::unique_ptr<DummyDhcpPacFileAdapterFetcher> adapter_fetcher(
+      new DummyDhcpPacFileAdapterFetcher(&context, client.GetTaskRunner()));
   adapter_fetcher->Configure(true, OK, L"bingo", 1);
   client.fetcher_.PushBackAdapter("a", adapter_fetcher.release());
   client.RunTest();

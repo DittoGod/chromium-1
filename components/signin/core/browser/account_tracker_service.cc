@@ -13,14 +13,14 @@
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "components/signin/core/browser/signin_client.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/browser/signin_pref_names.h"
 
@@ -35,6 +35,8 @@ const char kAccountGivenNamePath[] = "given_name";
 const char kAccountLocalePath[] = "locale";
 const char kAccountPictureURLPath[] = "picture_url";
 const char kAccountChildAccountStatusPath[] = "is_child_account";
+const char kAdvancedProtectionAccountStatusPath[] =
+    "is_under_advanced_protection";
 
 // TODO(M48): Remove deprecated preference migration.
 const char kAccountServiceFlagsPath[] = "service_flags";
@@ -101,8 +103,7 @@ const char AccountTrackerService::kNoPictureURLFound[] = "NO_PICTURE_URL";
 const char AccountTrackerService::kAccountsFolder[] = "Accounts";
 const char AccountTrackerService::kAvatarImagesFolder[] = "Avatar Images";
 
-AccountTrackerService::AccountTrackerService()
-    : signin_client_(nullptr), weak_factory_(this) {}
+AccountTrackerService::AccountTrackerService() : weak_factory_(this) {}
 
 AccountTrackerService::~AccountTrackerService() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -116,13 +117,13 @@ void AccountTrackerService::RegisterPrefs(
                                 AccountTrackerService::MIGRATION_NOT_STARTED);
 }
 
-void AccountTrackerService::Initialize(SigninClient* signin_client,
-                                       const base::FilePath& user_data_dir) {
-  DCHECK(signin_client);
-  DCHECK(!signin_client_);
-  signin_client_ = signin_client;
+void AccountTrackerService::Initialize(PrefService* pref_service,
+                                       base::FilePath user_data_dir) {
+  DCHECK(pref_service);
+  DCHECK(!pref_service_);
+  pref_service_ = pref_service;
   LoadFromPrefs();
-  user_data_dir_ = user_data_dir;
+  user_data_dir_ = std::move(user_data_dir);
   if (!user_data_dir_.empty()) {
     // |image_storage_task_runner_| is a sequenced runner because we want to
     // avoid read and write operations to the same file at the same time.
@@ -134,7 +135,7 @@ void AccountTrackerService::Initialize(SigninClient* signin_client,
 }
 
 void AccountTrackerService::Shutdown() {
-  signin_client_ = nullptr;
+  pref_service_ = nullptr;
   accounts_.clear();
 }
 
@@ -209,12 +210,11 @@ gfx::Image AccountTrackerService::GetAccountImage(
 
 AccountTrackerService::AccountIdMigrationState
 AccountTrackerService::GetMigrationState() const {
-  return GetMigrationState(signin_client_->GetPrefs());
+  return GetMigrationState(pref_service_);
 }
 
 void AccountTrackerService::SetMigrationState(AccountIdMigrationState state) {
-  signin_client_->GetPrefs()->SetInteger(prefs::kAccountIdMigrationState,
-                                         state);
+  pref_service_->SetInteger(prefs::kAccountIdMigrationState, state);
 }
 
 void AccountTrackerService::SetMigrationDone() {
@@ -334,6 +334,19 @@ void AccountTrackerService::SetIsChildAccount(const std::string& account_id,
   SaveToPrefs(state);
 }
 
+void AccountTrackerService::SetIsAdvancedProtectionAccount(
+    const std::string& account_id,
+    const bool& is_under_advanced_protection) {
+  DCHECK(base::ContainsKey(accounts_, account_id));
+  AccountState& state = accounts_[account_id];
+  if (state.info.is_under_advanced_protection == is_under_advanced_protection)
+    return;
+  state.info.is_under_advanced_protection = is_under_advanced_protection;
+  if (!state.info.gaia.empty())
+    NotifyAccountUpdated(state);
+  SaveToPrefs(state);
+}
+
 bool AccountTrackerService::IsMigratable() const {
 #if !defined(OS_CHROMEOS)
   for (std::map<std::string, AccountState>::const_iterator it =
@@ -398,6 +411,7 @@ void AccountTrackerService::OnAccountImageLoaded(const std::string& account_id,
   if (base::ContainsKey(accounts_, account_id) &&
       accounts_[account_id].image.IsEmpty()) {
     accounts_[account_id].image = image;
+    NotifyAccountImageUpdated(account_id, image);
   }
 }
 
@@ -433,8 +447,7 @@ void AccountTrackerService::RemoveAccountImageFromDisk(
 }
 
 void AccountTrackerService::LoadFromPrefs() {
-  const base::ListValue* list =
-      signin_client_->GetPrefs()->GetList(kAccountInfoPref);
+  const base::ListValue* list = pref_service_->GetList(kAccountInfoPref);
   std::set<std::string> to_remove;
   bool contains_deprecated_service_flags = false;
   for (size_t i = 0; i < list->GetSize(); ++i) {
@@ -487,6 +500,13 @@ void AccountTrackerService::LoadFromPrefs() {
         if (dict->GetBoolean(kAccountChildAccountStatusPath, &is_child_account))
           state.info.is_child_account = is_child_account;
 
+        bool is_under_advanced_protection = false;
+        if (dict->GetBoolean(kAdvancedProtectionAccountStatusPath,
+                             &is_under_advanced_protection)) {
+          state.info.is_under_advanced_protection =
+              is_under_advanced_protection;
+        }
+
         if (!state.info.gaia.empty())
           NotifyAccountUpdated(state);
       }
@@ -494,7 +514,7 @@ void AccountTrackerService::LoadFromPrefs() {
   }
 
   if (contains_deprecated_service_flags)
-    RemoveDeprecatedServiceFlags(signin_client_->GetPrefs());
+    RemoveDeprecatedServiceFlags(pref_service_);
 
   // Remove any obsolete prefs.
   for (auto account_id : to_remove) {
@@ -517,12 +537,12 @@ void AccountTrackerService::LoadFromPrefs() {
 }
 
 void AccountTrackerService::SaveToPrefs(const AccountState& state) {
-  if (!signin_client_->GetPrefs())
+  if (!pref_service_)
     return;
 
   base::DictionaryValue* dict = nullptr;
   base::string16 account_id_16 = base::UTF8ToUTF16(state.info.account_id);
-  ListPrefUpdate update(signin_client_->GetPrefs(), kAccountInfoPref);
+  ListPrefUpdate update(pref_service_, kAccountInfoPref);
   for (size_t i = 0; i < update->GetSize(); ++i, dict = nullptr) {
     if (update->GetDictionary(i, &dict)) {
       base::string16 value;
@@ -547,14 +567,16 @@ void AccountTrackerService::SaveToPrefs(const AccountState& state) {
   dict->SetString(kAccountLocalePath, state.info.locale);
   dict->SetString(kAccountPictureURLPath, state.info.picture_url);
   dict->SetBoolean(kAccountChildAccountStatusPath, state.info.is_child_account);
+  dict->SetBoolean(kAdvancedProtectionAccountStatusPath,
+                   state.info.is_under_advanced_protection);
 }
 
 void AccountTrackerService::RemoveFromPrefs(const AccountState& state) {
-  if (!signin_client_->GetPrefs())
+  if (!pref_service_)
     return;
 
   base::string16 account_id_16 = base::UTF8ToUTF16(state.info.account_id);
-  ListPrefUpdate update(signin_client_->GetPrefs(), kAccountInfoPref);
+  ListPrefUpdate update(pref_service_, kAccountInfoPref);
   for(size_t i = 0; i < update->GetSize(); ++i) {
     base::DictionaryValue* dict = nullptr;
     if (update->GetDictionary(i, &dict)) {
@@ -570,7 +592,7 @@ void AccountTrackerService::RemoveFromPrefs(const AccountState& state) {
 std::string AccountTrackerService::PickAccountIdForAccount(
     const std::string& gaia,
     const std::string& email) const {
-  return PickAccountIdForAccount(signin_client_->GetPrefs(), gaia, email);
+  return PickAccountIdForAccount(pref_service_, gaia, email);
 }
 
 // static

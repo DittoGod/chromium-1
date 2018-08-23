@@ -19,9 +19,10 @@
 #include "chromeos/dbus/fake_cryptohome_client.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
 #include "chromeos/dbus/power_policy_controller.h"
+#include "chromeos/dbus/util/account_identifier_operators.h"
 #include "chromeos/login/auth/key.h"
 #include "chromeos/login/auth/user_context.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/test/test_web_ui.h"
@@ -69,9 +70,7 @@ class TestEncryptionMigrationScreenHandler
     SetFreeDiskSpaceFetcherForTesting(base::BindRepeating(
         &TestEncryptionMigrationScreenHandler::FreeDiskSpaceFetcher,
         base::Unretained(this)));
-    auto tick_clock = std::make_unique<base::SimpleTestTickClock>();
-    testing_tick_clock_ = tick_clock.get();
-    SetTickClockForTesting(std::move(tick_clock));
+    SetTickClockForTesting(&testing_tick_clock_);
   }
 
   // Sets the testing WebUI.
@@ -87,7 +86,7 @@ class TestEncryptionMigrationScreenHandler
   // Returns the SimpleTestTickClock used to simulate time elapsed during
   // migration.
   base::SimpleTestTickClock* testing_tick_clock() {
-    return testing_tick_clock_;
+    return &testing_tick_clock_;
   }
 
   FakeWakeLock* fake_wake_lock() { return &fake_wake_lock_; }
@@ -102,9 +101,8 @@ class TestEncryptionMigrationScreenHandler
 
   FakeWakeLock fake_wake_lock_;
 
-  // Non-owned pointer. Tick clock used to simulate time elapsed during
-  // migration. This is actually owned by the base class.
-  base::SimpleTestTickClock* testing_tick_clock_;
+  // Tick clock used to simulate time elapsed during migration.
+  base::SimpleTestTickClock testing_tick_clock_;
 
   int64_t free_disk_space_;
 };
@@ -233,7 +231,8 @@ TEST_F(EncryptionMigrationScreenHandlerTest, MinimalMigration) {
       encryption_migration_screen_handler_->fake_wake_lock()->HasWakeLock());
   EXPECT_TRUE(fake_cryptohome_client_->to_migrate_from_ecryptfs());
   EXPECT_TRUE(fake_cryptohome_client_->minimal_migration());
-  EXPECT_EQ(cryptohome::Identification(user_context_.GetAccountId()),
+  EXPECT_EQ(cryptohome::CreateAccountIdentifierFromAccountId(
+                user_context_.GetAccountId()),
             fake_cryptohome_client_->get_id_for_disk_migrated_to_dircrypto());
   EXPECT_EQ(
       user_context_.GetKey()->GetSecret(),
@@ -257,7 +256,8 @@ TEST_F(EncryptionMigrationScreenHandlerTest, ResumeMinimalMigration) {
   EXPECT_TRUE(continue_login_callback_called_);
   EXPECT_TRUE(fake_cryptohome_client_->to_migrate_from_ecryptfs());
   EXPECT_TRUE(fake_cryptohome_client_->minimal_migration());
-  EXPECT_EQ(cryptohome::Identification(user_context_.GetAccountId()),
+  EXPECT_EQ(cryptohome::CreateAccountIdentifierFromAccountId(
+                user_context_.GetAccountId()),
             fake_cryptohome_client_->get_id_for_disk_migrated_to_dircrypto());
   EXPECT_EQ(
       user_context_.GetKey()->GetSecret(),
@@ -283,7 +283,8 @@ TEST_F(EncryptionMigrationScreenHandlerTest, MinimalMigrationSlow) {
   EXPECT_TRUE(restart_login_callback_called_);
   EXPECT_TRUE(fake_cryptohome_client_->to_migrate_from_ecryptfs());
   EXPECT_TRUE(fake_cryptohome_client_->minimal_migration());
-  EXPECT_EQ(cryptohome::Identification(user_context_.GetAccountId()),
+  EXPECT_EQ(cryptohome::CreateAccountIdentifierFromAccountId(
+                user_context_.GetAccountId()),
             fake_cryptohome_client_->get_id_for_disk_migrated_to_dircrypto());
   EXPECT_EQ(
       user_context_.GetKey()->GetSecret(),
@@ -298,10 +299,6 @@ TEST_F(EncryptionMigrationScreenHandlerTest, MinimalMigrationFails) {
 
   scoped_task_environment_.RunUntilIdle();
 
-  EXPECT_CALL(
-      *mock_async_method_caller_,
-      AsyncRemove(cryptohome::Identification(user_context_.GetAccountId()),
-                  _ /* callback */));
   encryption_migration_screen_handler_->testing_tick_clock()->Advance(
       base::TimeDelta::FromMinutes(1));
   fake_cryptohome_client_->NotifyDircryptoMigrationProgress(
@@ -311,7 +308,8 @@ TEST_F(EncryptionMigrationScreenHandlerTest, MinimalMigrationFails) {
   Mock::VerifyAndClearExpectations(mock_async_method_caller_);
   EXPECT_TRUE(fake_cryptohome_client_->to_migrate_from_ecryptfs());
   EXPECT_TRUE(fake_cryptohome_client_->minimal_migration());
-  EXPECT_EQ(cryptohome::Identification(user_context_.GetAccountId()),
+  EXPECT_EQ(cryptohome::CreateAccountIdentifierFromAccountId(
+                user_context_.GetAccountId()),
             fake_cryptohome_client_->get_id_for_disk_migrated_to_dircrypto());
   EXPECT_EQ(
       user_context_.GetKey()->GetSecret(),

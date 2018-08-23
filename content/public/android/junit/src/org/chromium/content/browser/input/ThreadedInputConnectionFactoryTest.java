@@ -37,6 +37,7 @@ import org.robolectric.shadows.ShadowLooper;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
+import org.chromium.content_public.browser.InputMethodManagerWrapper;
 
 import java.util.concurrent.Callable;
 
@@ -126,7 +127,7 @@ public class ThreadedInputConnectionFactoryTest {
         mImeAdapter = Mockito.mock(ImeAdapterImpl.class);
         mInputMethodManager = Mockito.mock(InputMethodManager.class);
 
-        mFactory = new TestFactory(new InputMethodManagerWrapper(mContext));
+        mFactory = new TestFactory(new InputMethodManagerWrapperImpl(mContext));
         mFactory.onWindowFocusChanged(true);
         mImeHandler = mFactory.getHandler();
         mImeShadowLooper = (ShadowLooper) Shadow.extract(mImeHandler.getLooper());
@@ -149,12 +150,13 @@ public class ThreadedInputConnectionFactoryTest {
                         mContainerView, mImeAdapter, 1, 0, 0, 0, 0, mEditorInfo);
             }
         };
-        when(mProxyView.onCreateInputConnection(any(EditorInfo.class))).thenAnswer(
-                new Answer<InputConnection>() {
-                    @Override
-                    public InputConnection answer(InvocationOnMock invocation) throws Throwable {
-                        return ThreadUtils.runOnUiThreadBlockingNoException(callable);
-                    }
+        when(mProxyView.onCreateInputConnection(any(EditorInfo.class)))
+                .thenAnswer((InvocationOnMock invocation) -> {
+                    mFactory.setTriggerDelayedOnCreateInputConnection(false);
+                    InputConnection connection =
+                            ThreadUtils.runOnUiThreadBlockingNoException(callable);
+                    mFactory.setTriggerDelayedOnCreateInputConnection(true);
+                    return connection;
                 });
 
         when(mInputMethodManager.isActive(mContainerView)).thenAnswer(new Answer<Boolean>() {

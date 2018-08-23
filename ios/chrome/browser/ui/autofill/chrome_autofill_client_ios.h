@@ -21,7 +21,6 @@
 #include "components/password_manager/core/browser/password_generation_manager.h"
 #include "components/prefs/pref_service.h"
 #include "components/sync/driver/sync_service.h"
-#include "google_apis/gaia/identity_provider.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/web/public/web_state/web_state.h"
 
@@ -37,8 +36,7 @@ class ChromeAutofillClientIOS : public AutofillClient {
       web::WebState* web_state,
       infobars::InfoBarManager* infobar_manager,
       id<AutofillClientIOSBridge> bridge,
-      password_manager::PasswordGenerationManager* password_generation_manager,
-      std::unique_ptr<IdentityProvider> identity_provider);
+      password_manager::PasswordGenerationManager* password_generation_manager);
   ~ChromeAutofillClientIOS() override;
 
   // Sets a weak reference to the view controller used to present UI.
@@ -48,22 +46,30 @@ class ChromeAutofillClientIOS : public AutofillClient {
   PersonalDataManager* GetPersonalDataManager() override;
   PrefService* GetPrefs() override;
   syncer::SyncService* GetSyncService() override;
-  IdentityProvider* GetIdentityProvider() override;
+  identity::IdentityManager* GetIdentityManager() override;
   ukm::UkmRecorder* GetUkmRecorder() override;
+  ukm::SourceId GetUkmSourceId() override;
   AddressNormalizer* GetAddressNormalizer() override;
-  SaveCardBubbleController* GetSaveCardBubbleController() override;
-  void ShowAutofillSettings() override;
+  security_state::SecurityLevel GetSecurityLevelForUmaHistograms() override;
+  void ShowAutofillSettings(bool show_credit_card_settings) override;
   void ShowUnmaskPrompt(const CreditCard& card,
                         UnmaskCardReason reason,
                         base::WeakPtr<CardUnmaskDelegate> delegate) override;
   void OnUnmaskVerificationResult(PaymentsRpcResult result) override;
+  void ShowLocalCardMigrationDialog(
+      base::OnceClosure show_migration_dialog_closure) override;
+  void ConfirmMigrateLocalCardToCloud(
+      std::vector<MigratableCreditCard>& migratable_credit_cards,
+      base::OnceClosure start_migrating_cards_closure) override;
+  void ConfirmSaveAutofillProfile(const AutofillProfile& profile,
+                                  base::OnceClosure callback) override;
   void ConfirmSaveCreditCardLocally(const CreditCard& card,
                                     const base::Closure& callback) override;
   void ConfirmSaveCreditCardToCloud(
       const CreditCard& card,
       std::unique_ptr<base::DictionaryValue> legal_message,
-      bool should_cvc_be_requested,
-      const base::Closure& callback) override;
+      bool should_request_name_from_user,
+      base::OnceCallback<void(const base::string16&)> callback) override;
   void ConfirmCreditCardFillAssist(const CreditCard& card,
                                    const base::Closure& callback) override;
   void LoadRiskData(
@@ -74,6 +80,7 @@ class ChromeAutofillClientIOS : public AutofillClient {
       const gfx::RectF& element_bounds,
       base::i18n::TextDirection text_direction,
       const std::vector<Suggestion>& suggestions,
+      bool /*unused_autoselect_first_suggestion*/,
       base::WeakPtr<AutofillPopupDelegate> delegate) override;
   void HideAutofillPopup() override;
   bool IsAutocompleteEnabled() override;
@@ -90,14 +97,16 @@ class ChromeAutofillClientIOS : public AutofillClient {
   bool IsContextSecure() override;
   bool ShouldShowSigninPromo() override;
   bool IsAutofillSupported() override;
+  bool AreServerCardsSupported() override;
   void ExecuteCommand(int id) override;
 
  private:
   PrefService* pref_service_;
+  syncer::SyncService* sync_service_;
   PersonalDataManager* personal_data_manager_;
   web::WebState* web_state_;
   __weak id<AutofillClientIOSBridge> bridge_;
-  std::unique_ptr<IdentityProvider> identity_provider_;
+  identity::IdentityManager* identity_manager_;
   scoped_refptr<AutofillWebDataService> autofill_web_data_service_;
   infobars::InfoBarManager* infobar_manager_;
   password_manager::PasswordGenerationManager* password_generation_manager_;

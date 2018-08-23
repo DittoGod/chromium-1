@@ -21,6 +21,7 @@
 #include "content/shell/app/shell_main_delegate.h"
 #include "content/shell/common/shell_switches.h"
 #include "media/base/media_switches.h"
+#include "services/catalog/catalog.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/base/ui_features.h"
@@ -38,6 +39,10 @@
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/common/shell_content_client.h"
 #include "ui/base/ui_base_paths.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "content/test/content_browsertests_catalog_source.h"
 #endif
 
 namespace content {
@@ -88,6 +93,11 @@ class ContentBrowserTestSuite : public ContentTestSuiteBase {
     InitializeMojo();
 #endif
 
+#if defined(OS_CHROMEOS)
+    catalog::Catalog::SetDefaultCatalogManifest(
+        content::CreateContentBrowserTestsCatalog());
+#endif
+
     ContentTestSuiteBase::Initialize();
   }
 
@@ -119,7 +129,7 @@ class ContentTestLauncherDelegate : public TestLauncherDelegate {
 
  protected:
   ContentMainDelegate* CreateContentMainDelegate() override {
-    return new ShellMainDelegate();
+    return new ShellMainDelegate(true);
   }
 
  private:

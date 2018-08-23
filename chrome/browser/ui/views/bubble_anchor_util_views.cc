@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/views/bubble_anchor_util_views.h"
 
 #include "build/build_config.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/views/frame/app_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
@@ -16,16 +16,22 @@
 
 namespace bubble_anchor_util {
 
-views::View* GetPageInfoAnchorView(Browser* browser) {
+views::View* GetPageInfoAnchorView(Browser* browser, Anchor anchor) {
 #if defined(OS_MACOSX)
   if (views_mode_controller::IsViewsBrowserCocoa())
     return nullptr;
 #endif
-  if (!browser->SupportsWindowFeature(Browser::FEATURE_LOCATIONBAR))
-    return nullptr;  // Fall back to GetAnchorPoint().
-
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
-  return browser_view->GetLocationBarView()->GetSecurityBubbleAnchorView();
+
+  if (anchor == kLocationBar && browser_view->GetLocationBarView()->IsDrawn())
+    return browser_view->GetLocationBarView()->GetSecurityBubbleAnchorView();
+  // Fall back to menu button if no location bar present.
+
+  views::View* app_menu_button =
+      browser_view->toolbar_button_provider()->GetAppMenuButton();
+  if (app_menu_button && app_menu_button->IsDrawn())
+    return app_menu_button;
+  return nullptr;
 }
 
 gfx::Rect GetPageInfoAnchorRect(Browser* browser) {
@@ -33,8 +39,8 @@ gfx::Rect GetPageInfoAnchorRect(Browser* browser) {
   if (views_mode_controller::IsViewsBrowserCocoa())
     return GetPageInfoAnchorRectCocoa(browser);
 #endif
-  // GetPageInfoAnchorView() should be preferred when there is a location bar.
-  DCHECK(!browser->SupportsWindowFeature(Browser::FEATURE_LOCATIONBAR));
+  // GetPageInfoAnchorView() should be preferred if available.
+  DCHECK_EQ(GetPageInfoAnchorView(browser), nullptr);
 
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
   // Get position in view (taking RTL UI into account).

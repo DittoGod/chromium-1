@@ -14,7 +14,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "gin/array_buffer.h"
 #include "gin/modules/console.h"
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
          it != args.end(); ++it) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
-          base::Bind(gin::Run, runner.GetWeakPtr(), base::FilePath(*it)));
+          base::BindOnce(gin::Run, runner.GetWeakPtr(), base::FilePath(*it)));
     }
 
     base::RunLoop().RunUntilIdle();

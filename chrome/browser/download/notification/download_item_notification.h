@@ -24,7 +24,8 @@ namespace message_center {
 class Notification;
 }
 
-class DownloadItemNotification : public ImageDecoder::ImageRequest {
+class DownloadItemNotification : public ImageDecoder::ImageRequest,
+                                 public message_center::NotificationObserver {
  public:
   explicit DownloadItemNotification(download::DownloadItem* item);
   ~DownloadItemNotification() override;
@@ -35,10 +36,10 @@ class DownloadItemNotification : public ImageDecoder::ImageRequest {
   // Disables popup by setting low priority.
   void DisablePopup();
 
-  // Called back from the NotificationDelegate.
-  void OnNotificationClose();
-  void OnNotificationClick();
-  void OnNotificationButtonClick(int button_index);
+  // NotificationObserver:
+  void Close(bool by_user) override;
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override;
 
  private:
   friend class test::DownloadItemNotificationTest;
@@ -55,7 +56,7 @@ class DownloadItemNotification : public ImageDecoder::ImageRequest {
 
   void CloseNotification();
   void Update();
-  void UpdateNotificationData(bool display, bool bump_priority);
+  void UpdateNotificationData(bool display, bool force_pop_up);
   SkColor GetNotificationIconColor();
 
   // Set preview image of the notification. Must be called on IO thread.

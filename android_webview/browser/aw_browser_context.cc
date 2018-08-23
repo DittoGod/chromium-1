@@ -22,8 +22,8 @@
 #include "base/bind.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
+#include "base/task/post_task.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/metrics/metrics_service.h"
 #include "components/policy/core/browser/browser_policy_connector_base.h"
 #include "components/policy/core/browser/configuration_policy_pref_store.h"
@@ -42,7 +42,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "net/proxy_resolution/proxy_config_service_android.h"
-#include "net/proxy_resolution/proxy_service.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 
 using base::FilePath;
 using content::BrowserThread;
@@ -75,17 +75,16 @@ void HandleReadError(PersistentPrefStore::PrefReadError error) {
 
 AwBrowserContext* g_browser_context = NULL;
 
-std::unique_ptr<net::ProxyConfigService> CreateProxyConfigService() {
-  std::unique_ptr<net::ProxyConfigService> config_service =
-      net::ProxyResolutionService::CreateSystemProxyConfigService(
-          BrowserThread::GetTaskRunnerForThread(BrowserThread::IO));
+std::unique_ptr<net::ProxyConfigServiceAndroid> CreateProxyConfigService() {
+  std::unique_ptr<net::ProxyConfigServiceAndroid> config_service_android =
+      std::make_unique<net::ProxyConfigServiceAndroid>(
+          BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
+          base::ThreadTaskRunnerHandle::Get());
 
   // TODO(csharrison) Architect the wrapper better so we don't need a cast for
   // android ProxyConfigServices.
-  net::ProxyConfigServiceAndroid* android_config_service =
-      static_cast<net::ProxyConfigServiceAndroid*>(config_service.get());
-  android_config_service->set_exclude_pac_url(true);
-  return config_service;
+  config_service_android->set_exclude_pac_url(true);
+  return config_service_android;
 }
 
 std::unique_ptr<AwSafeBrowsingWhitelistManager>
@@ -93,11 +92,19 @@ CreateSafeBrowsingWhitelistManager() {
   // Should not be called until the end of PreMainMessageLoopRun,
   scoped_refptr<base::SequencedTaskRunner> background_task_runner =
       base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND});
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT});
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
       BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
   return std::make_unique<AwSafeBrowsingWhitelistManager>(
       background_task_runner, io_task_runner);
+}
+
+base::FilePath GetCacheDirForAw() {
+  FilePath cache_path;
+  base::PathService::Get(base::DIR_CACHE, &cache_path);
+  cache_path =
+      cache_path.Append(FILE_PATH_LITERAL("org.chromium.android_webview"));
+  return cache_path;
 }
 
 }  // namespace
@@ -133,10 +140,7 @@ AwBrowserContext* AwBrowserContext::FromWebContents(
 }
 
 void AwBrowserContext::PreMainMessageLoopRun(net::NetLog* net_log) {
-  FilePath cache_path;
-  PathService::Get(base::DIR_CACHE, &cache_path);
-  cache_path =
-      cache_path.Append(FILE_PATH_LITERAL("org.chromium.android_webview"));
+  FilePath cache_path = GetCacheDirForAw();
 
   browser_policy_connector_.reset(new AwBrowserPolicyConnector());
 
@@ -148,7 +152,7 @@ void AwBrowserContext::PreMainMessageLoopRun(net::NetLog* net_log) {
 
   scoped_refptr<base::SequencedTaskRunner> db_task_runner =
       base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   visitedlink_master_.reset(
       new visitedlink::VisitedLinkMaster(this, this, false));
@@ -168,8 +172,8 @@ void AwBrowserContext::PreMainMessageLoopRun(net::NetLog* net_log) {
       new web_restrictions::WebRestrictionsClient());
   pref_change_registrar_.Add(
       prefs::kWebRestrictionsAuthority,
-      base::Bind(&AwBrowserContext::OnWebRestrictionsAuthorityChanged,
-                 base::Unretained(this)));
+      base::BindRepeating(&AwBrowserContext::OnWebRestrictionsAuthorityChanged,
+                          base::Unretained(this)));
   web_restriction_provider_->SetAuthority(
       user_pref_service_->GetString(prefs::kWebRestrictionsAuthority));
 
@@ -179,7 +183,9 @@ void AwBrowserContext::PreMainMessageLoopRun(net::NetLog* net_log) {
       new safe_browsing::RemoteSafeBrowsingDatabaseManager();
   safe_browsing_trigger_manager_ =
       std::make_unique<safe_browsing::TriggerManager>(
-          safe_browsing_ui_manager_.get());
+          safe_browsing_ui_manager_.get(),
+          /*referrer_chain_provider=*/nullptr,
+          /*local_state_prefs=*/nullptr);
   safe_browsing_whitelist_manager_ = CreateSafeBrowsingWhitelistManager();
 
   content::WebUIControllerFactory::RegisterFactory(
@@ -218,7 +224,12 @@ void AwBrowserContext::InitUserPrefService() {
   // We only use the autocomplete feature of Autofill, which is controlled via
   // the manager_delegate. We don't use the rest of Autofill, which is why it is
   // hardcoded as disabled here.
-  pref_registry->RegisterBooleanPref(autofill::prefs::kAutofillEnabled, false);
+  // TODO(crbug.com/873740): The following also disables autocomplete.
+  // Investigate what the intended behavior is.
+  pref_registry->RegisterBooleanPref(autofill::prefs::kAutofillProfileEnabled,
+                                     false);
+  pref_registry->RegisterBooleanPref(
+      autofill::prefs::kAutofillCreditCardEnabled, false);
   policy::URLBlacklistManager::RegisterProfilePrefs(pref_registry);
 
   pref_registry->RegisterStringPref(prefs::kWebRestrictionsAuthority,
@@ -237,7 +248,8 @@ void AwBrowserContext::InitUserPrefService() {
           browser_policy_connector_->GetPolicyService(),
           browser_policy_connector_->GetHandlerList(),
           policy::POLICY_LEVEL_MANDATORY));
-  pref_service_factory.set_read_error_callback(base::Bind(&HandleReadError));
+  pref_service_factory.set_read_error_callback(
+      base::BindRepeating(&HandleReadError));
   user_pref_service_ = pref_service_factory.Create(pref_registry);
   pref_change_registrar_.Init(user_pref_service_.get());
 
@@ -246,6 +258,10 @@ void AwBrowserContext::InitUserPrefService() {
 
 base::FilePath AwBrowserContext::GetPath() const {
   return context_storage_path_;
+}
+
+base::FilePath AwBrowserContext::GetCachePath() const {
+  return GetCacheDirForAw();
 }
 
 bool AwBrowserContext::IsOffTheRecord() const {
@@ -292,7 +308,8 @@ content::SSLHostStateDelegate* AwBrowserContext::GetSSLHostStateDelegate() {
   return ssl_host_state_delegate_.get();
 }
 
-content::PermissionManager* AwBrowserContext::GetPermissionManager() {
+content::PermissionControllerDelegate*
+AwBrowserContext::GetPermissionControllerDelegate() {
   if (!permission_manager_.get())
     permission_manager_.reset(new AwPermissionManager());
   return permission_manager_.get();
@@ -358,7 +375,6 @@ AwBrowserContext::GetWebRestrictionProvider() {
 }
 
 AwSafeBrowsingUIManager* AwBrowserContext::GetSafeBrowsingUIManager() const {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
   return safe_browsing_ui_manager_.get();
 }
 
@@ -369,7 +385,7 @@ AwBrowserContext::GetSafeBrowsingDBManager() {
     // V4ProtocolConfig is not used. Just create one with empty values..
     safe_browsing::V4ProtocolConfig config("", false, "", "");
     safe_browsing_db_manager_->StartOnIOThread(
-        url_request_context_getter_.get(), config);
+        safe_browsing_ui_manager_->GetURLLoaderFactoryOnIOThread(), config);
     safe_browsing_db_manager_started_ = true;
   }
   return safe_browsing_db_manager_.get();

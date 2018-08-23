@@ -12,7 +12,8 @@
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "content/public/common/appcache_info.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -21,7 +22,7 @@ struct CONTENT_EXPORT AppCacheInfoCollection
     : public base::RefCountedThreadSafe<AppCacheInfoCollection> {
   AppCacheInfoCollection();
 
-  std::map<GURL, AppCacheInfoVector> infos_by_origin;
+  std::map<url::Origin, AppCacheInfoVector> infos_by_origin;
 
  private:
   friend class base::RefCountedThreadSafe<AppCacheInfoCollection>;
@@ -45,7 +46,7 @@ class CONTENT_EXPORT AppCacheService {
   // subresource loads for pages associated with a deleted group
   // will fail. This method always completes asynchronously.
   virtual void DeleteAppCacheGroup(const GURL& manifest_url,
-                                   const net::CompletionCallback& callback) = 0;
+                                   net::CompletionOnceCallback callback) = 0;
 
  protected:
   virtual ~AppCacheService() {}

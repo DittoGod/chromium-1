@@ -32,7 +32,7 @@ class MediaStreamDeviceObserverTest : public ::testing::Test {
       observer_->AddStream(label, device);
     }
 
-    quit_closure.Run();
+    std::move(quit_closure).Run();
   }
 
  protected:
@@ -60,7 +60,7 @@ TEST_F(MediaStreamDeviceObserverTest, GetNonScreenCaptureDevices) {
   // OpenDevice request 2
   base::RunLoop run_loop2;
   mock_dispatcher_host_.OpenDevice(
-      kRequestId2, "screen_capture", MEDIA_DESKTOP_VIDEO_CAPTURE,
+      kRequestId2, "screen_capture", MEDIA_GUM_DESKTOP_VIDEO_CAPTURE,
       base::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
                      base::Unretained(this), run_loop2.QuitClosure()));
   run_loop2.Run();

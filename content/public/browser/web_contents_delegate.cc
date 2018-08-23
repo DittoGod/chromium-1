@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "build/build_config.h"
+#include "components/viz/common/surfaces/surface_id.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/security_style_explanations.h"
@@ -31,10 +32,6 @@ WebContents* WebContentsDelegate::OpenURLFromTab(WebContents* source,
 bool WebContentsDelegate::ShouldTransferNavigation(
     bool is_main_frame_navigation) {
   return true;
-}
-
-bool WebContentsDelegate::IsPopupOrPanel(const WebContents* source) const {
-  return false;
 }
 
 bool WebContentsDelegate::CanOverscrollContent() const { return false; }
@@ -164,15 +161,15 @@ content::ColorChooser* WebContentsDelegate::OpenColorChooser(
 void WebContentsDelegate::RequestMediaAccessPermission(
     WebContents* web_contents,
     const MediaStreamRequest& request,
-    const MediaResponseCallback& callback) {
+    MediaResponseCallback callback) {
   LOG(ERROR) << "WebContentsDelegate::RequestMediaAccessPermission: "
              << "Not supported.";
-  callback.Run(MediaStreamDevices(), MEDIA_DEVICE_NOT_SUPPORTED,
-               std::unique_ptr<MediaStreamUI>());
+  std::move(callback).Run(MediaStreamDevices(), MEDIA_DEVICE_NOT_SUPPORTED,
+                          std::unique_ptr<MediaStreamUI>());
 }
 
 bool WebContentsDelegate::CheckMediaAccessPermission(
-    WebContents* web_contents,
+    RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     MediaStreamType type) {
   LOG(ERROR) << "WebContentsDelegate::CheckMediaAccessPermission: "
@@ -187,11 +184,6 @@ std::string WebContentsDelegate::GetDefaultMediaDeviceID(
 }
 
 #if defined(OS_ANDROID)
-base::android::ScopedJavaLocalRef<jobject>
-WebContentsDelegate::GetContentVideoViewEmbedder() {
-  return base::android::ScopedJavaLocalRef<jobject>();
-}
-
 bool WebContentsDelegate::ShouldBlockMediaRequest(const GURL& url) {
   return false;
 }
@@ -267,5 +259,12 @@ int WebContentsDelegate::GetBottomControlsHeight() const {
 bool WebContentsDelegate::DoBrowserControlsShrinkBlinkSize() const {
   return false;
 }
+
+gfx::Size WebContentsDelegate::EnterPictureInPicture(const viz::SurfaceId&,
+                                                     const gfx::Size&) {
+  return gfx::Size();
+}
+
+void WebContentsDelegate::ExitPictureInPicture() {}
 
 }  // namespace content

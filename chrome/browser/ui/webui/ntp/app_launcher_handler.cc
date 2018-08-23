@@ -41,11 +41,11 @@
 #include "chrome/browser/ui/webui/extensions/extension_basic_info.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_metrics.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/web_application_info.h"
@@ -101,7 +101,8 @@ AppLauncherHandler::AppInstallInfo::AppInstallInfo() {}
 
 AppLauncherHandler::AppInstallInfo::~AppInstallInfo() {}
 
-AppLauncherHandler::AppLauncherHandler(ExtensionService* extension_service)
+AppLauncherHandler::AppLauncherHandler(
+    extensions::ExtensionService* extension_service)
     : extension_service_(extension_service),
       ignore_changes_(false),
       attempted_bookmark_app_install_(false),
@@ -111,10 +112,9 @@ AppLauncherHandler::~AppLauncherHandler() {
   ExtensionRegistry::Get(Profile::FromWebUI(web_ui()))->RemoveObserver(this);
 }
 
-void AppLauncherHandler::CreateAppInfo(
-    const Extension* extension,
-    ExtensionService* service,
-    base::DictionaryValue* value) {
+void AppLauncherHandler::CreateAppInfo(const Extension* extension,
+                                       extensions::ExtensionService* service,
+                                       base::DictionaryValue* value) {
   // The items which are to be written into |value| are also described in
   // chrome/browser/resources/ntp4/page_list_view.js in @typedef for AppInfo.
   // Please update it whenever you add or remove any keys here.
@@ -223,39 +223,46 @@ void AppLauncherHandler::RegisterMessages() {
   registrar_.Add(this, chrome::NOTIFICATION_APP_INSTALLED_TO_NTP,
       content::Source<WebContents>(web_ui()->GetWebContents()));
 
-  web_ui()->RegisterMessageCallback("getApps",
-      base::Bind(&AppLauncherHandler::HandleGetApps,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("launchApp",
-      base::Bind(&AppLauncherHandler::HandleLaunchApp,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("setLaunchType",
-      base::Bind(&AppLauncherHandler::HandleSetLaunchType,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("uninstallApp",
-      base::Bind(&AppLauncherHandler::HandleUninstallApp,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("createAppShortcut",
-      base::Bind(&AppLauncherHandler::HandleCreateAppShortcut,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("showAppInfo",
-      base::Bind(&AppLauncherHandler::HandleShowAppInfo,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("reorderApps",
-      base::Bind(&AppLauncherHandler::HandleReorderApps,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("setPageIndex",
-      base::Bind(&AppLauncherHandler::HandleSetPageIndex,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("saveAppPageName",
-      base::Bind(&AppLauncherHandler::HandleSaveAppPageName,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("generateAppForLink",
-      base::Bind(&AppLauncherHandler::HandleGenerateAppForLink,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("pageSelected",
-      base::Bind(&AppLauncherHandler::HandlePageSelected,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getApps", base::BindRepeating(&AppLauncherHandler::HandleGetApps,
+                                     base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "launchApp", base::BindRepeating(&AppLauncherHandler::HandleLaunchApp,
+                                       base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "setLaunchType",
+      base::BindRepeating(&AppLauncherHandler::HandleSetLaunchType,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "uninstallApp",
+      base::BindRepeating(&AppLauncherHandler::HandleUninstallApp,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "createAppShortcut",
+      base::BindRepeating(&AppLauncherHandler::HandleCreateAppShortcut,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "showAppInfo", base::BindRepeating(&AppLauncherHandler::HandleShowAppInfo,
+                                         base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "reorderApps", base::BindRepeating(&AppLauncherHandler::HandleReorderApps,
+                                         base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "setPageIndex",
+      base::BindRepeating(&AppLauncherHandler::HandleSetPageIndex,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "saveAppPageName",
+      base::BindRepeating(&AppLauncherHandler::HandleSaveAppPageName,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "generateAppForLink",
+      base::BindRepeating(&AppLauncherHandler::HandleGenerateAppForLink,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "pageSelected",
+      base::BindRepeating(&AppLauncherHandler::HandlePageSelected,
+                          base::Unretained(this)));
 }
 
 void AppLauncherHandler::Observe(int type,
@@ -816,7 +823,7 @@ void AppLauncherHandler::ExtensionEnableFlowAborted(bool user_initiated) {
       extension_service_->GetExtensionById(extension_id_prompting_, true);
   std::string histogram_name = user_initiated ? "ReEnableCancel"
                                               : "ReEnableAbort";
-  ExtensionService::RecordPermissionMessagesHistogram(
+  extensions::ExtensionService::RecordPermissionMessagesHistogram(
       extension, histogram_name.c_str());
 
   extension_enable_flow_.reset();

@@ -8,14 +8,21 @@
 #include <memory>
 #include <utility>
 
+#include "ash/message_center/ash_message_center_lock_screen_controller.h"
 #include "ash/message_center/message_center_button_bar.h"
 #include "ash/message_center/message_center_style.h"
 #include "ash/message_center/message_list_view.h"
+#include "ash/public/cpp/ash_features.h"
+#include "ash/public/cpp/ash_pref_names.h"
+#include "ash/session/session_controller.h"
+#include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "components/prefs/pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/fake_message_center.h"
 #include "ui/message_center/notification_list.h"
@@ -30,7 +37,6 @@ namespace ash {
 
 using message_center::FakeMessageCenter;
 using message_center::MessageCenter;
-using message_center::UiController;
 using message_center::MessageView;
 using message_center::Notification;
 using message_center::NotificationList;
@@ -42,6 +48,12 @@ namespace {
 
 const char* kNotificationId1 = "notification id 1";
 const char* kNotificationId2 = "notification id 2";
+
+// Plain button bar height (56)
+const int kLockedMessageCenterViewHeight = 56;
+
+// Plain button bar height (56) + Empty view (96)
+const int kEmptyMessageCenterViewHeight = 152;
 
 /* Types **********************************************************************/
 
@@ -119,10 +131,7 @@ class FakeMessageCenterImpl : public FakeMessageCenter {
 // in it, hence MockMessageCenterView.
 class MockMessageCenterView : public MessageCenterView {
  public:
-  MockMessageCenterView(MessageCenter* message_center,
-                        UiController* ui_controller,
-                        int max_height,
-                        bool initially_settings_visible);
+  MockMessageCenterView(MessageCenter* message_center, int max_height);
 
   bool SetRepositionTarget() override;
 
@@ -133,13 +142,8 @@ class MockMessageCenterView : public MessageCenterView {
 };
 
 MockMessageCenterView::MockMessageCenterView(MessageCenter* message_center,
-                                             UiController* ui_controller,
-                                             int max_height,
-                                             bool initially_settings_visible)
-    : MessageCenterView(message_center,
-                        ui_controller,
-                        max_height,
-                        initially_settings_visible) {}
+                                             int max_height)
+    : MessageCenterView(message_center, max_height) {}
 
 // Always say that the current reposition session is still active, by
 // returning true. Normally the reposition session is set based on where the
@@ -158,6 +162,7 @@ void MockMessageCenterView::PreferredSizeChanged() {
 /* Test fixture ***************************************************************/
 
 class MessageCenterViewTest : public AshTestBase,
+                              public testing::WithParamInterface<bool>,
                               public MockNotificationView::Test,
                               views::BoundsAnimatorObserver {
  public:
@@ -203,6 +208,8 @@ class MessageCenterViewTest : public AshTestBase,
 
   void WaitForAnimationToFinish();
 
+  void SetLockScreenNotificationsEnabled();
+
  private:
   views::View* MakeParent(views::View* child1, views::View* child2);
 
@@ -215,6 +222,8 @@ class MessageCenterViewTest : public AshTestBase,
 
   std::unique_ptr<base::RunLoop> run_loop_;
 
+  base::test::ScopedFeatureList scoped_feature_list_;
+
   DISALLOW_COPY_AND_ASSIGN(MessageCenterViewTest);
 };
 
@@ -224,6 +233,7 @@ MessageCenterViewTest::~MessageCenterViewTest() = default;
 
 void MessageCenterViewTest::SetUp() {
   AshTestBase::SetUp();
+
   MessageCenterView::disable_animation_for_testing = true;
   message_center_.reset(new FakeMessageCenterImpl());
 
@@ -250,7 +260,7 @@ void MessageCenterViewTest::SetUp() {
 
   // Then create a new MockMessageCenterView with that single notification.
   message_center_view_.reset(
-      new MockMessageCenterView(message_center_.get(), NULL, 600, false));
+      new MockMessageCenterView(message_center_.get(), 600));
   GetMessageCenterView()->SetBounds(0, 0, 380, 100);
   message_center_view_->SetNotifications(notifications);
   message_center_view_->set_owned_by_client();
@@ -259,6 +269,7 @@ void MessageCenterViewTest::SetUp() {
   views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.bounds = gfx::Rect(50, 50, 650, 650);
+  params.context = CurrentContext();
   widget_->Init(params);
   views::View* root = widget_->GetRootView();
   root->AddChildView(message_center_view_.get());
@@ -394,10 +405,21 @@ void MessageCenterViewTest::RemoveDefaultNotifications() {
 }
 
 void MessageCenterViewTest::WaitForAnimationToFinish() {
-  if (GetAnimator()->IsAnimating()) {
+  while (GetAnimator()->IsAnimating()) {
     run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
   }
+}
+
+void MessageCenterViewTest::SetLockScreenNotificationsEnabled() {
+  scoped_feature_list_.InitAndEnableFeature(features::kLockScreenNotifications);
+
+  PrefService* user_prefs =
+      Shell::Get()->session_controller()->GetActivePrefService();
+  user_prefs->SetString(prefs::kMessageCenterLockScreenMode,
+                        prefs::kMessageCenterLockScreenModeShow);
+
+  ASSERT_TRUE(AshMessageCenterLockScreenController::IsEnabled());
 }
 
 /* Unit tests *****************************************************************/
@@ -834,17 +856,67 @@ TEST_F(MessageCenterViewTest, CheckModeWithLockingAndUnlocking) {
   EXPECT_EQ(Mode::NO_NOTIFICATIONS, GetMessageCenterViewInternalMode());
 }
 
+TEST_F(MessageCenterViewTest,
+       CheckModeWithLockingAndUnlockingWithLockScreenNotificationEnabled) {
+  SetLockScreenNotificationsEnabled();
+
+  // Check the initial state.
+  EXPECT_EQ(Mode::NOTIFICATIONS, GetMessageCenterViewInternalMode());
+
+  // Lock!
+  SetLockedState(true);
+  EXPECT_EQ(Mode::NOTIFICATIONS, GetMessageCenterViewInternalMode());
+
+  // Unlock!
+  SetLockedState(false);
+  EXPECT_EQ(Mode::NOTIFICATIONS, GetMessageCenterViewInternalMode());
+
+  // Remove all existing notifications.
+  RemoveDefaultNotifications();
+  EXPECT_EQ(Mode::NO_NOTIFICATIONS, GetMessageCenterViewInternalMode());
+
+  // Lock!
+  SetLockedState(true);
+  EXPECT_EQ(Mode::NO_NOTIFICATIONS, GetMessageCenterViewInternalMode());
+
+  // Unlock!
+  SetLockedState(false);
+  EXPECT_EQ(Mode::NO_NOTIFICATIONS, GetMessageCenterViewInternalMode());
+}
+
 TEST_F(MessageCenterViewTest, CheckModeWithRemovingNotificationDuringLock) {
   // Check the initial state.
   EXPECT_EQ(Mode::NOTIFICATIONS, GetMessageCenterViewInternalMode());
 
   // Lock!
   SetLockedState(true);
-
   EXPECT_EQ(Mode::LOCKED, GetMessageCenterViewInternalMode());
 
   // Remove all existing notifications.
   RemoveDefaultNotifications();
+  EXPECT_EQ(Mode::LOCKED, GetMessageCenterViewInternalMode());
+
+  // Unlock!
+  SetLockedState(false);
+
+  EXPECT_EQ(Mode::NO_NOTIFICATIONS, GetMessageCenterViewInternalMode());
+}
+
+TEST_F(
+    MessageCenterViewTest,
+    CheckModeWithRemovingNotificationDuringLockWithLockScreenNotificationEnabled) {
+  SetLockScreenNotificationsEnabled();
+
+  // Check the initial state.
+  EXPECT_EQ(Mode::NOTIFICATIONS, GetMessageCenterViewInternalMode());
+
+  // Lock!
+  SetLockedState(true);
+  EXPECT_EQ(Mode::NOTIFICATIONS, GetMessageCenterViewInternalMode());
+
+  // Remove all existing notifications.
+  RemoveDefaultNotifications();
+  EXPECT_EQ(Mode::NO_NOTIFICATIONS, GetMessageCenterViewInternalMode());
 
   // Unlock!
   SetLockedState(false);
@@ -853,21 +925,18 @@ TEST_F(MessageCenterViewTest, CheckModeWithRemovingNotificationDuringLock) {
 }
 
 TEST_F(MessageCenterViewTest, LockScreen) {
-  // Plain button bar height (56)
-  const int kLockedMessageCenterViewHeight = 56;
-
   EXPECT_TRUE(GetNotificationView(kNotificationId1)->IsDrawn());
   EXPECT_TRUE(GetNotificationView(kNotificationId2)->IsDrawn());
 
   views::Button* close_button = GetButtonBar()->GetCloseAllButtonForTest();
-  ASSERT_NE(nullptr, close_button);
+  ASSERT_TRUE(close_button);
   views::Button* quiet_mode_button =
       GetButtonBar()->GetQuietModeButtonForTest();
-  ASSERT_NE(nullptr, quiet_mode_button);
+  ASSERT_TRUE(quiet_mode_button);
   views::Button* settings_button = GetButtonBar()->GetSettingsButtonForTest();
-  ASSERT_NE(nullptr, settings_button);
+  ASSERT_TRUE(settings_button);
   views::Button* collapse_button = GetButtonBar()->GetCollapseButtonForTest();
-  ASSERT_NE(nullptr, collapse_button);
+  ASSERT_TRUE(collapse_button);
 
   EXPECT_TRUE(close_button->visible());
   EXPECT_TRUE(quiet_mode_button->visible());
@@ -915,6 +984,7 @@ TEST_F(MessageCenterViewTest, LockScreen) {
 
   GetMessageCenterView()->SizeToPreferredSize();
   EXPECT_NE(kLockedMessageCenterViewHeight, GetMessageCenterView()->height());
+  EXPECT_NE(kEmptyMessageCenterViewHeight, GetMessageCenterView()->height());
 
   EXPECT_TRUE(close_button->visible());
   EXPECT_TRUE(quiet_mode_button->visible());
@@ -934,10 +1004,93 @@ TEST_F(MessageCenterViewTest, LockScreen) {
   EXPECT_FALSE(collapse_button->visible());
 }
 
-TEST_F(MessageCenterViewTest, NoNotification) {
-  // Plain button bar height (56) + Empty view (96)
-  const int kEmptyMessageCenterViewHeight = 152;
+TEST_F(MessageCenterViewTest, LockScreenWithLockScreenNotificationEnabled) {
+  SetLockScreenNotificationsEnabled();
 
+  EXPECT_TRUE(GetNotificationView(kNotificationId1)->IsDrawn());
+  EXPECT_TRUE(GetNotificationView(kNotificationId2)->IsDrawn());
+
+  views::Button* close_button = GetButtonBar()->GetCloseAllButtonForTest();
+  ASSERT_TRUE(close_button);
+  views::Button* quiet_mode_button =
+      GetButtonBar()->GetQuietModeButtonForTest();
+  ASSERT_TRUE(quiet_mode_button);
+  views::Button* settings_button = GetButtonBar()->GetSettingsButtonForTest();
+  ASSERT_TRUE(settings_button);
+  views::Button* collapse_button = GetButtonBar()->GetCollapseButtonForTest();
+  ASSERT_TRUE(collapse_button);
+
+  EXPECT_TRUE(close_button->visible());
+  EXPECT_TRUE(quiet_mode_button->visible());
+  EXPECT_TRUE(settings_button->visible());
+
+  // Lock!
+  SetLockedState(true);
+
+  EXPECT_TRUE(GetNotificationView(kNotificationId1)->IsDrawn());
+  EXPECT_TRUE(GetNotificationView(kNotificationId2)->IsDrawn());
+
+  GetMessageCenterView()->SizeToPreferredSize();
+  EXPECT_NE(kLockedMessageCenterViewHeight, GetMessageCenterView()->height());
+  EXPECT_NE(kEmptyMessageCenterViewHeight, GetMessageCenterView()->height());
+
+  RemoveNotification(kNotificationId1, false);
+
+  GetMessageCenterView()->SizeToPreferredSize();
+  EXPECT_NE(kLockedMessageCenterViewHeight, GetMessageCenterView()->height());
+  EXPECT_NE(kEmptyMessageCenterViewHeight, GetMessageCenterView()->height());
+
+  RemoveNotification(kNotificationId2, false);
+
+  GetMessageCenterView()->SizeToPreferredSize();
+  EXPECT_EQ(kEmptyMessageCenterViewHeight, GetMessageCenterView()->height());
+
+  AddNotification(std::make_unique<Notification>(
+      NOTIFICATION_TYPE_SIMPLE, std::string(kNotificationId1),
+      base::UTF8ToUTF16("title1"), base::UTF8ToUTF16("message"), gfx::Image(),
+      base::UTF8ToUTF16("display source"), GURL(),
+      NotifierId(NotifierId::APPLICATION, "extension_id"),
+      message_center::RichNotificationData(), nullptr));
+  EXPECT_TRUE(GetNotificationView(kNotificationId1)->IsDrawn());
+
+  GetMessageCenterView()->SizeToPreferredSize();
+  EXPECT_NE(kLockedMessageCenterViewHeight, GetMessageCenterView()->height());
+  EXPECT_NE(kEmptyMessageCenterViewHeight, GetMessageCenterView()->height());
+
+  EXPECT_TRUE(close_button->visible());
+  EXPECT_TRUE(quiet_mode_button->visible());
+  EXPECT_FALSE(settings_button->visible());
+  EXPECT_FALSE(collapse_button->visible());
+
+  // Unlock!
+  SetLockedState(false);
+
+  EXPECT_TRUE(GetNotificationView(kNotificationId1)->IsDrawn());
+
+  GetMessageCenterView()->SizeToPreferredSize();
+  EXPECT_NE(kLockedMessageCenterViewHeight, GetMessageCenterView()->height());
+  EXPECT_NE(kEmptyMessageCenterViewHeight, GetMessageCenterView()->height());
+
+  EXPECT_TRUE(close_button->visible());
+  EXPECT_TRUE(quiet_mode_button->visible());
+  EXPECT_TRUE(settings_button->visible());
+
+  // Lock!
+  SetLockedState(true);
+
+  EXPECT_TRUE(GetNotificationView(kNotificationId1)->IsDrawn());
+
+  GetMessageCenterView()->SizeToPreferredSize();
+  EXPECT_NE(kLockedMessageCenterViewHeight, GetMessageCenterView()->height());
+  EXPECT_NE(kEmptyMessageCenterViewHeight, GetMessageCenterView()->height());
+
+  EXPECT_TRUE(close_button->visible());
+  EXPECT_TRUE(quiet_mode_button->visible());
+  EXPECT_FALSE(settings_button->visible());
+  EXPECT_FALSE(collapse_button->visible());
+}
+
+TEST_F(MessageCenterViewTest, NoNotification) {
   GetMessageCenterView()->SizeToPreferredSize();
   EXPECT_NE(kEmptyMessageCenterViewHeight, GetMessageCenterView()->height());
   RemoveNotification(kNotificationId1, false);

@@ -38,6 +38,15 @@ Polymer({
 
   properties: {
     /**
+     * Reflects property set in password_prompt_dialog.js.
+     * @type {?Object}
+     */
+    setModes: {
+      type: Object,
+      notify: true,
+    },
+
+    /**
      * The current PIN keyboard value.
      * @private
      */
@@ -164,7 +173,7 @@ Polymer({
         additionalInformation = requirements.minLength.toString();
         break;
       case MessageType.TOO_LONG:
-        additionalInformation = requirements.maxLength.toString();
+        additionalInformation = (requirements.maxLength + 1).toString();
         break;
       case MessageType.TOO_WEAK:
       case MessageType.MISMATCH:
@@ -254,6 +263,8 @@ Polymer({
         this.quickUnlockPrivate_.checkCredential(
             chrome.quickUnlockPrivate.QuickUnlockMode.PIN,
             this.pinKeyboardValue_, this.processPinProblems_.bind(this));
+      } else {
+        this.enableSubmit_ = false;
       }
       return;
     }
@@ -265,6 +276,8 @@ Polymer({
   /** @private */
   onPinSubmit_: function() {
     if (!this.isConfirmStep_) {
+      if (!this.enableSubmit_)
+        return;
       this.initialPin_ = this.pinKeyboardValue_;
       this.pinKeyboardValue_ = '';
       this.isConfirmStep_ = true;
@@ -294,6 +307,7 @@ Polymer({
         this.$.dialog.close();
     }
 
+    assert(this.setModes);
     this.setModes.call(
         null, [chrome.quickUnlockPrivate.QuickUnlockMode.PIN],
         [this.pinKeyboardValue_], onSetModesCompleted.bind(this));

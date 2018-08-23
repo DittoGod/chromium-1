@@ -8,6 +8,8 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_util.h"
@@ -16,11 +18,11 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/services/filesystem/public/interfaces/types.mojom.h"
 #include "storage/browser/blob/shareable_file_reference.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_file_util.h"
@@ -71,7 +73,7 @@ class FileSystemOperationImplTest
     quota_manager_ =
         new MockQuotaManager(false /* is_incognito */, base_dir,
                              base::ThreadTaskRunnerHandle::Get().get(),
-                             NULL /* special storage policy */);
+                             nullptr /* special storage policy */);
     quota_manager_proxy_ = new MockQuotaManagerProxy(
         quota_manager(), base::ThreadTaskRunnerHandle::Get().get());
     sandbox_file_system_.SetUp(base_dir, quota_manager_proxy_.get());
@@ -83,8 +85,8 @@ class FileSystemOperationImplTest
   void TearDown() override {
     // Let the client go away before dropping a ref of the quota manager proxy.
     quota_manager_proxy()->SimulateQuotaManagerDestroyed();
-    quota_manager_ = NULL;
-    quota_manager_proxy_ = NULL;
+    quota_manager_ = nullptr;
+    quota_manager_proxy_ = nullptr;
     sandbox_file_system_.TearDown();
   }
 
@@ -94,7 +96,7 @@ class FileSystemOperationImplTest
 
   const base::File::Info& info() const { return info_; }
   const base::FilePath& path() const { return path_; }
-  const std::vector<storage::DirectoryEntry>& entries() const {
+  const std::vector<filesystem::mojom::DirectoryEntry>& entries() const {
     return entries_;
   }
 
@@ -201,10 +203,8 @@ class FileSystemOperationImplTest
   FileSystemOperation::SnapshotFileCallback RecordSnapshotFileCallback(
       const base::Closure& closure,
       base::File::Error* status) {
-    return base::Bind(&FileSystemOperationImplTest::DidCreateSnapshotFile,
-                      weak_factory_.GetWeakPtr(),
-                      closure,
-                      status);
+    return base::BindOnce(&FileSystemOperationImplTest::DidCreateSnapshotFile,
+                          weak_factory_.GetWeakPtr(), closure, status);
   }
 
   void DidFinish(const base::Closure& closure,
@@ -217,7 +217,7 @@ class FileSystemOperationImplTest
   void DidReadDirectory(base::RepeatingClosure closure,
                         base::File::Error* status,
                         base::File::Error actual,
-                        std::vector<storage::DirectoryEntry> entries,
+                        std::vector<filesystem::mojom::DirectoryEntry> entries,
                         bool /* has_more */) {
     entries_ = std::move(entries);
     *status = actual;
@@ -263,7 +263,7 @@ class FileSystemOperationImplTest
 
   int64_t ComputePathCost(const FileSystemURL& url) {
     int64_t base_usage;
-    GetUsageAndQuota(&base_usage, NULL);
+    GetUsageAndQuota(&base_usage, nullptr);
 
     AsyncFileTestHelper::CreateFile(
         sandbox_file_system_.file_system_context(), url);
@@ -272,13 +272,13 @@ class FileSystemOperationImplTest
     change_observer()->ResetCount();
 
     int64_t total_usage;
-    GetUsageAndQuota(&total_usage, NULL);
+    GetUsageAndQuota(&total_usage, nullptr);
     return total_usage - base_usage;
   }
 
   void GrantQuotaForCurrentUsage() {
     int64_t usage;
-    GetUsageAndQuota(&usage, NULL);
+    GetUsageAndQuota(&usage, nullptr);
     quota_manager()->SetQuota(sandbox_file_system_.origin(),
                               sandbox_file_system_.storage_type(),
                               usage);
@@ -286,13 +286,13 @@ class FileSystemOperationImplTest
 
   int64_t GetUsage() {
     int64_t usage = 0;
-    GetUsageAndQuota(&usage, NULL);
+    GetUsageAndQuota(&usage, nullptr);
     return usage;
   }
 
   void AddQuota(int64_t quota_delta) {
     int64_t quota;
-    GetUsageAndQuota(NULL, &quota);
+    GetUsageAndQuota(nullptr, &quota);
     quota_manager()->SetQuota(sandbox_file_system_.origin(),
                               sandbox_file_system_.storage_type(),
                               quota + quota_delta);
@@ -477,7 +477,7 @@ class FileSystemOperationImplTest
   // For post-operation status.
   base::File::Info info_;
   base::FilePath path_;
-  std::vector<storage::DirectoryEntry> entries_;
+  std::vector<filesystem::mojom::DirectoryEntry> entries_;
   scoped_refptr<ShareableFileReference> shareable_file_ref_;
 
   storage::MockFileChangeObserver change_observer_;
@@ -832,7 +832,7 @@ TEST_F(FileSystemOperationImplTest, TestCopyInForeignFileSuccess) {
   FileSystemURL dest_dir(CreateDirectory("dest"));
 
   int64_t before_usage;
-  GetUsageAndQuota(&before_usage, NULL);
+  GetUsageAndQuota(&before_usage, nullptr);
 
   // Check that the file copied and corresponding usage increased.
   EXPECT_EQ(
@@ -842,7 +842,7 @@ TEST_F(FileSystemOperationImplTest, TestCopyInForeignFileSuccess) {
   EXPECT_EQ(1, change_observer()->create_file_count());
   EXPECT_TRUE(FileExists("dest/file"));
   int64_t after_usage;
-  GetUsageAndQuota(&after_usage, NULL);
+  GetUsageAndQuota(&after_usage, nullptr);
   EXPECT_GT(after_usage, before_usage);
 
   // Compare contents of src and copied file.
@@ -1019,10 +1019,10 @@ TEST_F(FileSystemOperationImplTest, TestReadDirSuccess) {
   EXPECT_EQ(2u, entries().size());
 
   for (size_t i = 0; i < entries().size(); ++i) {
-    if (entries()[i].is_directory)
-      EXPECT_EQ(FILE_PATH_LITERAL("child_dir"), entries()[i].name);
+    if (entries()[i].type == filesystem::mojom::FsFileType::DIRECTORY)
+      EXPECT_EQ(FILE_PATH_LITERAL("child_dir"), entries()[i].name.value());
     else
-      EXPECT_EQ(FILE_PATH_LITERAL("child_file"), entries()[i].name);
+      EXPECT_EQ(FILE_PATH_LITERAL("child_file"), entries()[i].name.value());
   }
   EXPECT_EQ(1, quota_manager_proxy()->notify_storage_accessed_count());
   EXPECT_TRUE(change_observer()->HasNoChange());
@@ -1204,7 +1204,7 @@ TEST_F(FileSystemOperationImplTest, TestCreateSnapshotFile) {
 
   // The FileSystemOpration implementation does not create a
   // shareable file reference.
-  EXPECT_EQ(NULL, shareable_file_ref());
+  EXPECT_EQ(nullptr, shareable_file_ref());
 }
 
 TEST_F(FileSystemOperationImplTest,

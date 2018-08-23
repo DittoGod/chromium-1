@@ -8,11 +8,11 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
-#include "chrome/browser/ui/webui/print_preview/printer_capabilities.h"
+#include "chrome/browser/ui/webui/print_preview/print_preview_utils.h"
+#include "components/printing/common/printer_capabilities.h"
 #include "content/public/browser/browser_thread.h"
 #include "printing/backend/print_backend.h"
 
@@ -46,7 +46,8 @@ std::unique_ptr<base::DictionaryValue> FetchCapabilitiesAsync(
     return nullptr;
   }
 
-  return printing::GetSettingsOnBlockingPool(device_name, basic_info);
+  return printing::GetSettingsOnBlockingPool(device_name, basic_info,
+                                             print_backend);
 }
 
 std::string GetDefaultPrinterAsync() {
@@ -73,7 +74,7 @@ void LocalPrinterHandlerDefault::GetDefaultPrinter(DefaultPrinterCallback cb) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&GetDefaultPrinterAsync), std::move(cb));
 }
 
@@ -84,7 +85,7 @@ void LocalPrinterHandlerDefault::StartGetPrinters(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&EnumeratePrintersAsync),
       base::BindOnce(&printing::ConvertPrinterListForCallback, callback,
                      std::move(done_callback)));
@@ -96,7 +97,7 @@ void LocalPrinterHandlerDefault::StartGetCapability(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&FetchCapabilitiesAsync, device_name), std::move(cb));
 }
 
@@ -106,7 +107,7 @@ void LocalPrinterHandlerDefault::StartPrint(
     const base::string16& job_title,
     const std::string& ticket_json,
     const gfx::Size& page_size,
-    const scoped_refptr<base::RefCountedBytes>& print_data,
+    const scoped_refptr<base::RefCountedMemory>& print_data,
     PrintCallback callback) {
   printing::StartLocalPrint(ticket_json, print_data, preview_web_contents_,
                             std::move(callback));

@@ -20,8 +20,8 @@ PendingStateUpdater::~PendingStateUpdater() {}
 void PendingStateUpdater::UpdateRequestsOnLossOfNetwork() {
   requests_pending_another_download_ = false;
   request_coordinator_->GetAllRequests(
-      base::Bind(&PendingStateUpdater::SetPendingStatesAndNotifyChanged,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&PendingStateUpdater::NotifyChangedPendingStates,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void PendingStateUpdater::UpdateRequestsOnRequestPicked(
@@ -33,13 +33,13 @@ void PendingStateUpdater::UpdateRequestsOnRequestPicked(
 
   // All available requests expect for the picked request changed to waiting
   // for another download to complete.
-  requests_pending_another_download_ = true;
   for (auto& request : *available_requests) {
     if (request.request_id() != picked_request_id) {
       request.set_pending_state(PendingState::PENDING_ANOTHER_DOWNLOAD);
       request_coordinator_->NotifyChanged(request);
     }
   }
+  requests_pending_another_download_ = true;
 }
 
 void PendingStateUpdater::SetPendingState(SavePageRequest& request) {
@@ -48,15 +48,15 @@ void PendingStateUpdater::SetPendingState(SavePageRequest& request) {
         RequestCoordinator::RequestCoordinatorState::OFFLINING) {
       request.set_pending_state(PendingState::PENDING_ANOTHER_DOWNLOAD);
     } else {
+      requests_pending_another_download_ = false;
       request.set_pending_state(PendingState::PENDING_NETWORK);
     }
   }
 }
 
-void PendingStateUpdater::SetPendingStatesAndNotifyChanged(
+void PendingStateUpdater::NotifyChangedPendingStates(
     std::vector<std::unique_ptr<SavePageRequest>> requests) {
-  for (auto& request : requests) {
-    SetPendingState(*request.get());
+  for (const auto& request : requests) {
     request_coordinator_->NotifyChanged(*request);
   }
 }

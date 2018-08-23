@@ -107,7 +107,7 @@ std::unique_ptr<media::AudioInputDelegate> AudioInputDelegateImpl::Create(
     int render_process_id,
     int render_frame_id,
     AudioInputDeviceManager* audio_input_device_manager,
-    media::AudioLog* audio_log,
+    media::mojom::AudioLogPtr audio_log,
     AudioInputDeviceManager::KeyboardMicRegistration keyboard_mic_registration,
     uint32_t shared_memory_count,
     int stream_id,
@@ -152,10 +152,9 @@ std::unique_ptr<media::AudioInputDelegate> AudioInputDelegateImpl::Create(
 
   return base::WrapUnique(new AudioInputDelegateImpl(
       audio_manager, mirroring_manager, user_input_monitor,
-      possibly_modified_parameters, render_process_id, render_frame_id,
-      audio_log, std::move(keyboard_mic_registration), stream_id,
-      automatic_gain_control, subscriber, device, std::move(writer),
-      std::move(foreign_socket)));
+      possibly_modified_parameters, render_process_id, std::move(audio_log),
+      std::move(keyboard_mic_registration), stream_id, automatic_gain_control,
+      subscriber, device, std::move(writer), std::move(foreign_socket)));
 }
 
 AudioInputDelegateImpl::AudioInputDelegateImpl(
@@ -164,8 +163,7 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
     media::UserInputMonitor* user_input_monitor,
     const media::AudioParameters& audio_parameters,
     int render_process_id,
-    int render_frame_id,
-    media::AudioLog* audio_log,
+    media::mojom::AudioLogPtr audio_log,
     AudioInputDeviceManager::KeyboardMicRegistration keyboard_mic_registration,
     int stream_id,
     bool automatic_gain_control,
@@ -177,7 +175,7 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
       controller_event_handler_(),
       writer_(std::move(writer)),
       foreign_socket_(std::move(foreign_socket)),
-      audio_log_(audio_log),
+      audio_log_(std::move(audio_log)),
       controller_(),
       keyboard_mic_registration_(std::move(keyboard_mic_registration)),
       stream_id_(stream_id),
@@ -194,9 +192,9 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
   const std::string& device_id = device->id;
 
   if (WebContentsMediaCaptureId::Parse(device_id, nullptr)) {
-    // For MEDIA_DESKTOP_AUDIO_CAPTURE, the source is selected from picker
-    // window, we do not mute the source audio.
-    // For MEDIA_TAB_AUDIO_CAPTURE, the probable use case is Cast, we mute
+    // For MEDIA_GUM_DESKTOP_AUDIO_CAPTURE, the source is selected from
+    // picker window, we do not mute the source audio. For
+    // MEDIA_GUM_TAB_AUDIO_CAPTURE, the probable use case is Cast, we mute
     // the source audio.
     // TODO(qiangchen): Analyze audio constraints to make a duplicating or
     // diverting decision. It would give web developer more flexibility.
@@ -208,7 +206,7 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
         writer_.get(), user_input_monitor);
     DCHECK(controller_);
     // Only count for captures from desktop media picker dialog.
-    if (device->type == MEDIA_DESKTOP_AUDIO_CAPTURE)
+    if (device->type == MEDIA_GUM_DESKTOP_AUDIO_CAPTURE)
       IncrementDesktopCaptureCounter(TAB_AUDIO_CAPTURER_CREATED);
   } else {
     controller_ = media::AudioInputController::Create(
@@ -218,21 +216,19 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
 
     // Only count for captures from desktop media picker dialog and system loop
     // back audio.
-    if (device->type == MEDIA_DESKTOP_AUDIO_CAPTURE &&
+    if (device->type == MEDIA_GUM_DESKTOP_AUDIO_CAPTURE &&
         (media::AudioDeviceDescription::IsLoopbackDevice(device_id))) {
       IncrementDesktopCaptureCounter(SYSTEM_LOOPBACK_AUDIO_CAPTURER_CREATED);
     }
   }
   DCHECK(controller_);
 
-  audio_log_->OnCreated(stream_id, audio_parameters, device_id);
-  MediaInternals::GetInstance()->SetWebContentsTitleForAudioLogEntry(
-      stream_id, render_process_id_, render_frame_id, audio_log_);
+  audio_log_->OnCreated(audio_parameters, device_id);
 }
 
 AudioInputDelegateImpl::~AudioInputDelegateImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  audio_log_->OnClosed(stream_id_);
+  audio_log_->OnClosed();
   LogMessage(stream_id_, "Closing stream");
 
   BrowserThread::PostTask(
@@ -258,7 +254,7 @@ void AudioInputDelegateImpl::OnRecordStream() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   LogMessage(stream_id_, "OnRecordStream");
   controller_->Record();
-  audio_log_->OnStarted(stream_id_);
+  audio_log_->OnStarted();
 }
 
 void AudioInputDelegateImpl::OnSetVolume(double volume) {
@@ -266,13 +262,20 @@ void AudioInputDelegateImpl::OnSetVolume(double volume) {
   DCHECK_GE(volume, 0);
   DCHECK_LE(volume, 1);
   controller_->SetVolume(volume);
-  audio_log_->OnSetVolume(stream_id_, volume);
+  audio_log_->OnSetVolume(volume);
+}
+
+void AudioInputDelegateImpl::OnSetOutputDeviceForAec(
+    const std::string& raw_output_device_id) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  controller_->SetOutputDeviceForAec(raw_output_device_id);
+  audio_log_->OnLogMessage("SetOutputDeviceForAec");
 }
 
 void AudioInputDelegateImpl::SendCreatedNotification(bool initially_muted) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(foreign_socket_);
-  subscriber_->OnStreamCreated(stream_id_, writer_->shared_memory(),
+  subscriber_->OnStreamCreated(stream_id_, writer_->TakeSharedMemoryRegion(),
                                std::move(foreign_socket_), initially_muted);
 }
 
@@ -283,7 +286,7 @@ void AudioInputDelegateImpl::OnMuted(bool is_muted) {
 
 void AudioInputDelegateImpl::OnError() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  audio_log_->OnError(stream_id_);
+  audio_log_->OnError();
   subscriber_->OnStreamError(stream_id_);
 }
 

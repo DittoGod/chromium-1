@@ -5,6 +5,7 @@
 #include "base/unguessable_token.h"
 
 #include "base/format_macros.h"
+#include "base/no_destructor.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 
@@ -14,7 +15,7 @@ UnguessableToken::UnguessableToken(uint64_t high, uint64_t low)
     : high_(high), low_(low) {}
 
 std::string UnguessableToken::ToString() const {
-  return base::StringPrintf("%08" PRIX64 "%08" PRIX64, high_, low_);
+  return base::StringPrintf("%016" PRIX64 "%016" PRIX64, high_, low_);
 }
 
 // static
@@ -24,6 +25,12 @@ UnguessableToken UnguessableToken::Create() {
   // base version directly, and to prevent the dependency from base/ to crypto/.
   base::RandBytes(&token, sizeof(token));
   return token;
+}
+
+// static
+const UnguessableToken& UnguessableToken::Null() {
+  static const NoDestructor<UnguessableToken> null_token;
+  return *null_token;
 }
 
 // static

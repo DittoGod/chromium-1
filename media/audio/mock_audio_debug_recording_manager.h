@@ -6,6 +6,7 @@
 #define MEDIA_AUDIO_MOCK_AUDIO_DEBUG_RECORDING_MANAGER_H_
 
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "media/audio/audio_debug_recording_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -18,11 +19,9 @@ class MockAudioDebugRecordingManager : public AudioDebugRecordingManager {
 
   ~MockAudioDebugRecordingManager() override;
 
-  MOCK_METHOD1(
-      EnableDebugRecording,
-      void(base::RepeatingCallback<void(const base::FilePath&,
-                                        base::OnceCallback<void(base::File)>)>
-               create_file_callback));
+  MOCK_METHOD1(EnableDebugRecording,
+               void(AudioDebugRecordingManager::CreateWavFileCallback
+                        create_file_callback));
   MOCK_METHOD0(DisableDebugRecording, void());
 
  private:

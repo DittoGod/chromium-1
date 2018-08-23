@@ -12,12 +12,12 @@
 #import <UIKit/UIKit.h>
 #include <cmath>
 
-#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/numerics/math_constants.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
+#include "ios/chrome/browser/ui/ui_feature_flags.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/web/public/web_thread.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -546,51 +546,110 @@ bool IsCompactTablet() {
 }
 
 bool IsCompactHeight() {
-  return [UIApplication sharedApplication]
-             .keyWindow.traitCollection.verticalSizeClass ==
+  return IsCompactHeight([UIApplication sharedApplication].keyWindow);
+}
+
+bool IsCompactHeight(id<UITraitEnvironment> environment) {
+  return environment.traitCollection.verticalSizeClass ==
          UIUserInterfaceSizeClassCompact;
 }
 
-// Returns the current first responder.
-UIResponder* GetFirstResponder() {
-  DCHECK_CURRENTLY_ON(web::WebThread::UI);
-  DCHECK(!gFirstResponder);
-  [[UIApplication sharedApplication]
-      sendAction:@selector(cr_markSelfCurrentFirstResponder)
-              to:nil
-            from:nil
-        forEvent:nil];
-  UIResponder* firstResponder = gFirstResponder;
-  gFirstResponder = nil;
-  return firstResponder;
+bool IsRegularXRegularSizeClass() {
+  UIWindow* keyWindow = [UIApplication sharedApplication].keyWindow;
+  return IsRegularXRegularSizeClass(keyWindow);
 }
 
-// On iOS10 and above, trigger a haptic vibration for the user selecting an
-// action. This is a no-op for devices that do not support it.
-void TriggerHapticFeedbackForAction() {
-  if (@available(iOS 10, *)) {
+bool IsRegularXRegularSizeClass(id<UITraitEnvironment> environment) {
+  UITraitCollection* traitCollection = environment.traitCollection;
+  return traitCollection.verticalSizeClass == UIUserInterfaceSizeClassRegular &&
+         traitCollection.horizontalSizeClass == UIUserInterfaceSizeClassRegular;
+}
+
+bool IsSplitToolbarMode() {
+  return IsCompactWidth() && !IsCompactHeight();
+}
+
+bool IsSplitToolbarMode(id<UITraitEnvironment> environment) {
+  return IsUIRefreshPhase1Enabled() && IsCompactWidth(environment) &&
+         !IsCompactHeight(environment);
+}
+
+// Returns the first responder in the subviews of |view|, or nil if no view in
+// the subtree is the first responder.
+UIView* GetFirstResponderSubview(UIView* view) {
+  if ([view isFirstResponder])
+    return view;
+
+  for (UIView* subview in [view subviews]) {
+    UIView* firstResponder = GetFirstResponderSubview(subview);
+    if (firstResponder)
+      return firstResponder;
+  }
+
+  return nil;
+}
+
+UIResponder* GetFirstResponder() {
+  if (!base::FeatureList::IsEnabled(kFirstResponderKeyWindow)) {
+    DCHECK_CURRENTLY_ON(web::WebThread::UI);
+    DCHECK(!gFirstResponder);
+    [[UIApplication sharedApplication]
+        sendAction:@selector(cr_markSelfCurrentFirstResponder)
+                to:nil
+              from:nil
+          forEvent:nil];
+    UIResponder* firstResponder = gFirstResponder;
+    gFirstResponder = nil;
+    return firstResponder;
+  }
+  return GetFirstResponderSubview([UIApplication sharedApplication].keyWindow);
+}
+
+// Trigger a haptic vibration for the user selecting an action. This is a no-op
+// for devices that do not support it.
+void TriggerHapticFeedbackForImpact(UIImpactFeedbackStyle impactStyle) {
+  // Although Apple documentation claims that UIFeedbackGenerator and its
+  // concrete subclasses are available on iOS 10+, they are not really
+  // available on an app whose deployment target is iOS 10.0 (iOS 10.1+ are
+  // okay) and Chrome will fail at dynamic link time and instantly crash.
+  // NSClassFromString() checks if Objective-C run-time has the class before
+  // using it.
+  Class generatorClass = NSClassFromString(@"UIImpactFeedbackGenerator");
+  if (generatorClass) {
     UIImpactFeedbackGenerator* generator =
-        [[UIImpactFeedbackGenerator alloc] init];
+        [[generatorClass alloc] initWithStyle:impactStyle];
     [generator impactOccurred];
   }
 }
 
-// On iOS10 and above, trigger a haptic vibration for the change in selection.
-// This is a no-op for devices that do not support it.
+// Trigger a haptic vibration for the change in selection. This is a no-op for
+// devices that do not support it.
 void TriggerHapticFeedbackForSelectionChange() {
-  if (@available(iOS 10, *)) {
-    UISelectionFeedbackGenerator* generator =
-        [[UISelectionFeedbackGenerator alloc] init];
+  // Although Apple documentation claims that UIFeedbackGenerator and its
+  // concrete subclasses are available on iOS 10+, they are not really
+  // available on an app whose deployment target is iOS 10.0 (iOS 10.1+ are
+  // okay) and Chrome will fail at dynamic link time and instantly crash.
+  // NSClassFromString() checks if Objective-C run-time has the class before
+  // using it.
+  Class generatorClass = NSClassFromString(@"UISelectionFeedbackGenerator");
+  if (generatorClass) {
+    UISelectionFeedbackGenerator* generator = [[generatorClass alloc] init];
     [generator selectionChanged];
   }
 }
 
-// On iOS10 and above, trigger a haptic vibration for a notification.
-// This is a no-op for devices that do not support it.
+// Trigger a haptic vibration for a notification. This is a no-op for devices
+// that do not support it.
 void TriggerHapticFeedbackForNotification(UINotificationFeedbackType type) {
-  if (@available(iOS 10, *)) {
-    UINotificationFeedbackGenerator* generator =
-        [[UINotificationFeedbackGenerator alloc] init];
+  // Although Apple documentation claims that UIFeedbackGenerator and its
+  // concrete subclasses are available on iOS 10+, they are not really
+  // available on an app whose deployment target is iOS 10.0 (iOS 10.1+ are
+  // okay) and Chrome will fail at dynamic link time and instantly crash.
+  // NSClassFromString() checks if Objective-C run-time has the class before
+  // using it.
+  Class generatorClass = NSClassFromString(@"UINotificationFeedbackGenerator");
+  if (generatorClass) {
+    UINotificationFeedbackGenerator* generator = [[generatorClass alloc] init];
     [generator notificationOccurred:type];
   }
 }
@@ -601,4 +660,12 @@ UIEdgeInsets SafeAreaInsetsForView(UIView* view) {
   } else {
     return UIEdgeInsetsZero;
   }
+}
+
+NSString* TextForTabCount(long count) {
+  if (count <= 0)
+    return @"";
+  if (count > 99)
+    return @":)";
+  return [NSString stringWithFormat:@"%ld", count];
 }

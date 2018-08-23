@@ -9,6 +9,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "remoting/base/auto_thread.h"
 #include "remoting/base/oauth_token_getter.h"
@@ -20,6 +21,11 @@ class MessageLoopForUI;
 template <typename T>
 struct DefaultSingletonTraits;
 }  // namespace base
+
+namespace network {
+class SharedURLLoaderFactory;
+class TransitionalURLLoaderFactoryOwner;
+}  // namespace network
 
 // Houses the global resources on which the Chromoting components run
 // (e.g. message loops and task runners).
@@ -40,21 +46,16 @@ class ChromotingClientRuntime {
     // have been stopped.
     virtual void RuntimeDidShutdown() = 0;
 
-    // TODO(yuweih): Remove this once logger is using OAuthTokenGetter.
-    // RequestAuthTokenForLogger is called when the logger is requesting
-    // and auth token and the delegate is set. It is expected that the
-    // delegate will give the logger and auth token on the network thread like:
-    // (network thread): runtime->log_writer()->SetAuthToken(token)
-    virtual void RequestAuthTokenForLogger() = 0;
-
-    // For fetching auth token. The implementation must allow being called from
-    // multiple threads. Use OAuthTokenGetterProxy when necessary.
-    virtual OAuthTokenGetter* token_getter() = 0;
+    // For fetching auth token. Called on the UI thread.
+    virtual base::WeakPtr<OAuthTokenGetter> oauth_token_getter() = 0;
   };
 
   static ChromotingClientRuntime* GetInstance();
 
-  void SetDelegate(ChromotingClientRuntime::Delegate* delegate);
+  // Must be called before calling any other methods on this object.
+  void Init(ChromotingClientRuntime::Delegate* delegate);
+
+  std::unique_ptr<OAuthTokenGetter> CreateOAuthTokenGetter();
 
   scoped_refptr<AutoThreadTaskRunner> network_task_runner() {
     return network_task_runner_;
@@ -72,25 +73,17 @@ class ChromotingClientRuntime {
     return display_task_runner_;
   }
 
-  scoped_refptr<AutoThreadTaskRunner> file_task_runner() {
-    return file_task_runner_;
-  }
-
   scoped_refptr<net::URLRequestContextGetter> url_requester() {
     return url_requester_;
   }
 
-  // Must call and use log_writer on the network thread.
-  ChromotingEventLogWriter* log_writer();
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory();
 
-  OAuthTokenGetter* token_getter();
+  ChromotingEventLogWriter* log_writer() { return log_writer_.get(); }
 
  private:
   ChromotingClientRuntime();
   virtual ~ChromotingClientRuntime();
-
-  void CreateLogWriter();
-  void RequestAuthTokenForLogger();
 
   // Chromium code's connection to the app message loop. Once created the
   // MessageLoop will live for the life of the program.
@@ -108,14 +101,15 @@ class ChromotingClientRuntime {
   scoped_refptr<AutoThreadTaskRunner> audio_task_runner_;
   scoped_refptr<AutoThreadTaskRunner> display_task_runner_;
   scoped_refptr<AutoThreadTaskRunner> network_task_runner_;
-  scoped_refptr<AutoThreadTaskRunner> file_task_runner_;
 
   scoped_refptr<net::URLRequestContextGetter> url_requester_;
+  std::unique_ptr<network::TransitionalURLLoaderFactoryOwner>
+      url_loader_factory_owner_;
 
   // For logging session stage changes and stats.
   std::unique_ptr<TelemetryLogWriter> log_writer_;
 
-  ChromotingClientRuntime::Delegate* delegate_;
+  ChromotingClientRuntime::Delegate* delegate_ = nullptr;
 
   friend struct base::DefaultSingletonTraits<ChromotingClientRuntime>;
 

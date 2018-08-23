@@ -88,7 +88,7 @@ class ChromePluginTest : public InProcessBrowserTest {
 
   static GURL GetURL(const char* filename) {
     base::FilePath path;
-    PathService::Get(content::DIR_TEST_DATA, &path);
+    base::PathService::Get(content::DIR_TEST_DATA, &path);
     path = path.AppendASCII("plugin").AppendASCII(filename);
     CHECK(base::PathExists(path));
     return net::FilePathToFileURL(path);
@@ -154,7 +154,7 @@ class ChromePluginTest : public InProcessBrowserTest {
       if (iter.GetData().process_type != content::PROCESS_TYPE_PPAPI_PLUGIN)
         continue;
       base::Process process = base::Process::DeprecatedGetProcessFromHandle(
-          iter.GetData().handle);
+          iter.GetData().GetHandle());
       process.Terminate(0, true);
       found = true;
     }
@@ -214,7 +214,7 @@ IN_PROC_BROWSER_TEST_F(ChromePluginTest, DISABLED_Flash) {
   EnsureFlashProcessCount(1);
 }
 
-#if defined(OFFICIAL_BUILD)
+#if defined(GOOGLE_CHROME_BUILD)
 // Verify that the official builds have the known set of plugins.
 IN_PROC_BROWSER_TEST_F(ChromePluginTest, InstalledPlugins) {
   const char* expected[] = {

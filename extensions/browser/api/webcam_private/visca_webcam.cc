@@ -16,7 +16,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/service_manager_connection.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/device/public/interfaces/constants.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 using content::BrowserThread;
@@ -248,8 +248,9 @@ void ViscaWebcam::SendOnIOThread(const std::vector<char>& data,
                                  const CommandCompleteCallback& callback) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   serial_connection_->Send(
-      data, base::Bind(&ViscaWebcam::OnSendCompleted,
-                       weak_ptr_factory_.GetWeakPtr(), callback));
+      std::vector<uint8_t>(data.begin(), data.end()),
+      base::Bind(&ViscaWebcam::OnSendCompleted, weak_ptr_factory_.GetWeakPtr(),
+                 callback));
 }
 
 void ViscaWebcam::OnSendCompleted(const CommandCompleteCallback& callback,
@@ -272,7 +273,7 @@ void ViscaWebcam::ReceiveLoop(const CommandCompleteCallback& callback) {
 }
 
 void ViscaWebcam::OnReceiveCompleted(const CommandCompleteCallback& callback,
-                                     std::vector<char> data,
+                                     std::vector<uint8_t> data,
                                      api::serial::ReceiveError error) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   data_buffer_.insert(data_buffer_.end(), data.begin(), data.end());

@@ -5,7 +5,6 @@
 #ifndef COMPONENTS_CRONET_NATIVE_TEST_TEST_URL_REQUEST_CALLBACK_H_
 #define COMPONENTS_CRONET_NATIVE_TEST_TEST_URL_REQUEST_CALLBACK_H_
 
-#include <list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -41,7 +40,6 @@ class TestUrlRequestCallback {
     // Same as above, but continues to advance the request after posting
     // the cancellation task.
     CANCEL_ASYNC_WITHOUT_PAUSE,
-    THROW_SYNC
   };
 
   class UrlResponseInfo {
@@ -69,11 +67,15 @@ class TestUrlRequestCallback {
     int64_t received_byte_count = 0;
   };
 
-  std::list<std::unique_ptr<UrlResponseInfo>> redirect_response_info_list_;
-  std::list<std::string> redirect_url_list_;
+  std::vector<std::unique_ptr<UrlResponseInfo>> redirect_response_info_list_;
+  std::vector<std::string> redirect_url_list_;
   std::unique_ptr<UrlResponseInfo> response_info_;
   // Owned by UrlRequest, only valid until UrlRequest is destroyed.
   Cronet_ErrorPtr last_error_ = nullptr;
+  // Values copied from |last_error_| valid after UrlRequest is destroyed.
+  Cronet_Error_ERROR_CODE last_error_code_ =
+      Cronet_Error_ERROR_CODE_ERROR_OTHER;
+  std::string last_error_message_;
 
   ResponseStep response_step_ = NOTHING;
 
@@ -87,7 +89,7 @@ class TestUrlRequestCallback {
   TestUrlRequestCallback();
   virtual ~TestUrlRequestCallback();
 
-  Cronet_ExecutorPtr CreateExecutor(bool direct);
+  Cronet_ExecutorPtr GetExecutor(bool direct);
 
   Cronet_UrlRequestCallbackPtr CreateUrlRequestCallback();
 
@@ -109,9 +111,7 @@ class TestUrlRequestCallback {
     step_block_.Reset();
   }
 
-  Cronet_ExecutorPtr executor() { return executor_; }
-
-  void ShutdownExecutor() { executor_thread_.reset(); }
+  void ShutdownExecutor();
 
   bool IsDone() { return done_.IsSignaled(); }
 
@@ -218,6 +218,9 @@ class TestUrlRequestCallback {
 
   // Signaled on each step when |auto_advance_| is false.
   base::WaitableEvent step_block_;
+
+  // Lock that synchronizes access to |executor_| and |executor_thread_|.
+  base::Lock executor_lock_;
 
   // Executor that runs callback tasks.
   Cronet_ExecutorPtr executor_ = nullptr;

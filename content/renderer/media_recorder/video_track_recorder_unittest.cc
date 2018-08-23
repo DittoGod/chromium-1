@@ -17,15 +17,16 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/child/child_process.h"
 #include "content/renderer/media/stream/media_stream_video_track.h"
 #include "content/renderer/media/stream/mock_media_stream_video_source.h"
 #include "media/base/video_frame.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
-#include "third_party/WebKit/public/web/WebHeap.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/web/web_heap.h"
 
 using media::VideoFrame;
 using video_track_recorder::kVEAEncoderMinResolutionWidth;
@@ -92,6 +93,9 @@ class VideoTrackRecorderTest
     blink_source_.Reset();
     video_track_recorder_.reset();
     blink::WebHeap::CollectAllGarbageForTesting();
+    // VideoTrackRecorder::Encoder::~Encoder may post a DeleteSoon(), which
+    // may cause ASAN to detect a memory leak if we don't wait.
+    scoped_task_environment_.RunUntilIdle();
   }
 
   void InitializeRecorder(VideoTrackRecorder::CodecId codec) {
@@ -137,7 +141,7 @@ class VideoTrackRecorderTest
   }
 
   uint32_t NumFramesInEncode() {
-    return video_track_recorder_->encoder_->num_frames_in_encode_;
+    return video_track_recorder_->encoder_->num_frames_in_encode_->count();
   }
 
   // A ChildProcess is needed to fool the Tracks and Sources into believing they
@@ -219,7 +223,7 @@ TEST_P(VideoTrackRecorderTest, VideoEncoding) {
       .Times(1)
       .WillOnce(DoAll(SaveArg<1>(&third_frame_encoded_data),
                       SaveArg<2>(&third_frame_encoded_alpha),
-                      RunClosure(quit_closure)));
+                      RunClosure(std::move(quit_closure))));
   Encode(video_frame2, base::TimeTicks::Now());
 
   run_loop.Run();
@@ -261,7 +265,7 @@ TEST_P(VideoTrackRecorderTest, EncodeFrameWithPaddedCodedSize) {
   base::Closure quit_closure = run_loop.QuitClosure();
   EXPECT_CALL(*this, DoOnEncodedVideo(_, _, _, _, true))
       .Times(1)
-      .WillOnce(RunClosure(quit_closure));
+      .WillOnce(RunClosure(std::move(quit_closure)));
   Encode(video_frame, base::TimeTicks::Now());
   run_loop.Run();
 
@@ -298,7 +302,7 @@ TEST_F(VideoTrackRecorderTest, ForceKeyframeOnAlphaSwitch) {
   EXPECT_CALL(*this, DoOnEncodedVideo(_, _, _, _, false))
       .Times(1)
       .WillOnce(DoAll(SaveArg<2>(&third_frame_encoded_alpha),
-                      RunClosure(quit_closure)));
+                      RunClosure(std::move(quit_closure))));
   Encode(alpha_frame, base::TimeTicks::Now());
   run_loop.Run();
 
@@ -330,7 +334,7 @@ TEST_F(VideoTrackRecorderTest, HandlesOnError) {
   base::Closure quit_closure = run_loop.QuitClosure();
   EXPECT_CALL(*this, DoOnEncodedVideo(_, _, _, _, true))
       .Times(1)
-      .WillOnce(RunClosure(quit_closure));
+      .WillOnce(RunClosure(std::move(quit_closure)));
   Encode(video_frame, base::TimeTicks::Now());
   run_loop.Run();
 
@@ -354,7 +358,7 @@ TEST_F(VideoTrackRecorderTest, ReleasesFrame) {
       base::BindOnce(set_to_true, &frame_is_destroyed));
   EXPECT_CALL(*this, DoOnEncodedVideo(_, _, _, _, true))
       .Times(1)
-      .WillOnce(RunClosure(quit_closure));
+      .WillOnce(RunClosure(std::move(quit_closure)));
   Encode(video_frame, base::TimeTicks::Now());
   video_frame = nullptr;
   run_loop.Run();

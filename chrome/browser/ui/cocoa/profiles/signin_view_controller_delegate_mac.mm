@@ -10,6 +10,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/signin/signin_promo.h"
+#include "chrome/browser/signin/unified_consent_helper.h"
 #include "chrome/browser/ui/browser.h"
 #import "chrome/browser/ui/cocoa/browser_window_utils.h"
 #include "chrome/browser/ui/cocoa/constrained_window/constrained_window_custom_sheet.h"
@@ -49,10 +50,9 @@ CGFloat GetSyncConfirmationDialogPreferredHeight(Profile* profile) {
 }
 
 int GetSyncConfirmationDialogPreferredWidth(Profile* profile) {
-  // With DICE profiles, we show a different sync confirmation dialog which
-  // uses a different width.
-  return signin::IsDiceEnabledForProfile(profile->GetPrefs()) &&
-                 profile->IsSyncAllowed()
+  // If unified-consent enabled, we show a different sync confirmation dialog
+  // which uses a different width.
+  return IsUnifiedConsentEnabled(profile) && profile->IsSyncAllowed()
              ? kModalDialogWidthForDice
              : kModalDialogWidth;
 }
@@ -116,9 +116,12 @@ SigninViewControllerDelegateMac::CreateGaiaWebContents(
 // static
 std::unique_ptr<content::WebContents>
 SigninViewControllerDelegateMac::CreateSyncConfirmationWebContents(
-    Browser* browser) {
+    Browser* browser,
+    bool is_consent_bump) {
   return CreateDialogWebContents(
-      browser, chrome::kChromeUISyncConfirmationURL,
+      browser,
+      is_consent_bump ? chrome::kChromeUISyncConsentBumpURL
+                      : chrome::kChromeUISyncConfirmationURL,
       GetSyncConfirmationDialogPreferredHeight(browser->profile()),
       GetSyncConfirmationDialogPreferredWidth(browser->profile()));
 }
@@ -216,14 +219,12 @@ void SigninViewControllerDelegateMac::DisplayModal() {
 void SigninViewControllerDelegateMac::HandleKeyboardEvent(
     content::WebContents* source,
     const content::NativeWebKeyboardEvent& event) {
-  int chrome_command_id = [BrowserWindowUtils getCommandId:event];
-  bool can_handle_command = [BrowserWindowUtils isTextEditingEvent:event] ||
-                            chrome_command_id == IDC_CLOSE_WINDOW ||
-                            chrome_command_id == IDC_EXIT;
-  if ([BrowserWindowUtils shouldHandleKeyboardEvent:event] &&
-      can_handle_command) {
-    [[NSApp mainMenu] performKeyEquivalent:event.os_event];
-  }
+  if (![BrowserWindowUtils shouldHandleKeyboardEvent:event])
+    return;
+
+  // Redispatch the event. If it's a keyEquivalent:, this gives
+  // CommandDispatcher the opportunity to finish passing the event to consumers.
+  [[window_ commandDispatcher] redispatchKeyEvent:event.os_event];
 }
 
 void SigninViewControllerDelegateMac::CleanupAndDeleteThis() {
@@ -250,11 +251,12 @@ SigninViewControllerDelegate::CreateModalSigninDelegateCocoa(
 SigninViewControllerDelegate*
 SigninViewControllerDelegate::CreateSyncConfirmationDelegateCocoa(
     SigninViewController* signin_view_controller,
-    Browser* browser) {
+    Browser* browser,
+    bool is_consent_bump) {
   return new SigninViewControllerDelegateMac(
       signin_view_controller,
       SigninViewControllerDelegateMac::CreateSyncConfirmationWebContents(
-          browser),
+          browser, is_consent_bump),
       browser,
       NSMakeRect(0, 0,
                  GetSyncConfirmationDialogPreferredWidth(browser->profile()),

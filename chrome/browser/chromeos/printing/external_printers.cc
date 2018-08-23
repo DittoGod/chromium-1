@@ -8,14 +8,13 @@
 
 #include "base/feature_list.h"
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "chrome/common/chrome_features.h"
@@ -213,7 +212,7 @@ class ExternalPrintersImpl : public ExternalPrinters {
   ExternalPrintersImpl()
       : restrictions_(std::make_unique<Restrictions>()),
         restrictions_runner_(base::CreateSequencedTaskRunnerWithTraits(
-            {base::TaskPriority::BACKGROUND, base::MayBlock(),
+            {base::TaskPriority::BEST_EFFORT, base::MayBlock(),
              base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
         weak_ptr_factory_(this) {}
   ~ExternalPrintersImpl() override {
@@ -353,7 +352,7 @@ class ExternalPrintersImpl : public ExternalPrinters {
   // The computed set of printers.
   PrinterView printers_;
 
-  base::ObserverList<ExternalPrinters::Observer> observers_;
+  base::ObserverList<ExternalPrinters::Observer>::Unchecked observers_;
 
   SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<ExternalPrintersImpl> weak_ptr_factory_;

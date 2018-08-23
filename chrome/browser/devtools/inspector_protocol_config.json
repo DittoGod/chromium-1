@@ -17,6 +17,11 @@
                 "include_events": []
             },
             {
+                "domain": "Target",
+                "include": [ "setRemoteLocations", "createTarget" ],
+                "include_events": []
+            },
+            {
                 "domain": "WindowManager"
             }
         ]

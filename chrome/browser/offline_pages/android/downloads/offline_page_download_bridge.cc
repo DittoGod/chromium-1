@@ -4,10 +4,12 @@
 
 #include "chrome/browser/offline_pages/android/downloads/offline_page_download_bridge.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/android/jni_string.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/guid.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -15,17 +17,20 @@
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/offline_items_collection/offline_content_aggregator_factory.h"
 #include "chrome/browser/offline_pages/android/downloads/offline_page_infobar_delegate.h"
-#include "chrome/browser/offline_pages/android/downloads/offline_page_notification_bridge.h"
+#include "chrome/browser/offline_pages/android/downloads/offline_page_share_helper.h"
 #include "chrome/browser/offline_pages/offline_page_mhtml_archiver.h"
 #include "chrome/browser/offline_pages/offline_page_model_factory.h"
 #include "chrome/browser/offline_pages/offline_page_utils.h"
 #include "chrome/browser/offline_pages/recent_tab_helper.h"
 #include "chrome/browser/offline_pages/request_coordinator_factory.h"
+#include "chrome/browser/offline_pages/thumbnail_decoder_impl.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
+#include "chrome/browser/search/suggestions/image_decoder_impl.h"
 #include "components/download/public/common/download_url_parameters.h"
 #include "components/offline_items_collection/core/offline_content_aggregator.h"
+#include "components/offline_items_collection/core/offline_content_provider.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
 #include "components/offline_pages/core/client_policy_controller.h"
@@ -52,11 +57,29 @@ using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
+using ShareCallback =
+    offline_items_collection::OfflineContentProvider::ShareCallback;
 
 namespace offline_pages {
 namespace android {
 
 namespace {
+
+void OnShareInfoRetrieved(std::unique_ptr<OfflinePageShareHelper>,
+                          ShareCallback share_callback,
+                          ShareResult result,
+                          const ContentId& id,
+                          std::unique_ptr<OfflineItemShareInfo> info) {
+  // When |info| is null, the page URL will be used in sharing.
+  if (result != ShareResult::kFileAccessPermissionDenied)
+    std::move(share_callback).Run(id, std::move(info));
+
+  // TODO(jianli, xingliu): When the permission request was denied by the user
+  // and "Never ask again" was checked, we'd better show the permission update
+  // infobar to remind the user. Currently the infobar only works for
+  // ChromeActivities. We need to investigate how to make it work for other
+  // activities.
+}
 
 class DownloadUIAdapterDelegate : public DownloadUIAdapter::Delegate {
  public:
@@ -64,9 +87,14 @@ class DownloadUIAdapterDelegate : public DownloadUIAdapter::Delegate {
 
   // DownloadUIAdapter::Delegate
   bool IsVisibleInUI(const ClientId& client_id) override;
-  bool IsTemporarilyHiddenInUI(const ClientId& client_id) override;
   void SetUIAdapter(DownloadUIAdapter* ui_adapter) override;
-  void OpenItem(const OfflineItem& item, int64_t offline_id) override;
+  void OpenItem(const OfflineItem& item,
+                int64_t offline_id,
+                offline_items_collection::LaunchLocation location) override;
+  bool MaybeSuppressNotification(const std::string& origin,
+                                 const ClientId& id) override;
+  void GetShareInfoForItem(const ContentId& id,
+                           ShareCallback share_callback) override;
 
  private:
   // Not owned, cached service pointer.
@@ -82,18 +110,38 @@ bool DownloadUIAdapterDelegate::IsVisibleInUI(const ClientId& client_id) {
          base::IsValidGUID(client_id.id);
 }
 
-bool DownloadUIAdapterDelegate::IsTemporarilyHiddenInUI(
-    const ClientId& client_id) {
-  return false;
-}
-
 void DownloadUIAdapterDelegate::SetUIAdapter(DownloadUIAdapter* ui_adapter) {}
 
-void DownloadUIAdapterDelegate::OpenItem(const OfflineItem& item,
-                                         int64_t offline_id) {
+void DownloadUIAdapterDelegate::OpenItem(
+    const OfflineItem& item,
+    int64_t offline_id,
+    offline_items_collection::LaunchLocation location) {
   JNIEnv* env = AttachCurrentThread();
   Java_OfflinePageDownloadBridge_openItem(
-      env, ConvertUTF8ToJavaString(env, item.page_url.spec()), offline_id);
+      env, ConvertUTF8ToJavaString(env, item.page_url.spec()), offline_id,
+      static_cast<int>(location),
+      offline_pages::ShouldOfflinePagesInDownloadHomeOpenInCct());
+}
+
+bool DownloadUIAdapterDelegate::MaybeSuppressNotification(
+    const std::string& origin,
+    const ClientId& id) {
+  // Do not suppress notification if chrome.
+  if (origin == "" || !IsOfflinePagesSuppressNotificationsEnabled())
+    return false;
+  JNIEnv* env = AttachCurrentThread();
+  return Java_OfflinePageDownloadBridge_maybeSuppressNotification(
+      env, ConvertUTF8ToJavaString(env, origin),
+      ConvertUTF8ToJavaString(env, id.id));
+}
+
+void DownloadUIAdapterDelegate::GetShareInfoForItem(
+    const ContentId& id,
+    ShareCallback share_callback) {
+  auto share_helper = std::make_unique<OfflinePageShareHelper>(model_);
+  share_helper->GetShareInfo(
+      id, base::BindOnce(&OnShareInfoRetrieved, std::move(share_helper),
+                         std::move(share_callback)));
 }
 
 // TODO(dewittj): Move to Download UI Adapter.
@@ -105,10 +153,6 @@ content::WebContents* GetWebContentsFromJavaTab(
     return nullptr;
 
   return tab->web_contents();
-}
-
-void SavePageLaterCallback(AddRequestResult result) {
-  // do nothing.
 }
 
 void SavePageIfNotNavigatedAway(const GURL& url,
@@ -147,8 +191,8 @@ void SavePageIfNotNavigatedAway(const GURL& url,
           RequestCoordinator::RequestAvailability::DISABLED_FOR_OFFLINER;
       params.original_url = original_url;
       params.request_origin = origin;
-      request_id = request_coordinator->SavePageLater(
-          params, base::Bind(&SavePageLaterCallback));
+      request_id =
+          request_coordinator->SavePageLater(params, base::DoNothing());
     } else {
       DVLOG(1) << "SavePageIfNotNavigatedAway has no valid coordinator.";
     }
@@ -174,8 +218,7 @@ void SavePageIfNotNavigatedAway(const GURL& url,
   }
   tab_helper->ObserveAndDownloadCurrentPage(client_id, request_id, origin);
 
-  OfflinePageNotificationBridge notification_bridge;
-  notification_bridge.ShowDownloadingToast();
+  OfflinePageDownloadBridge::ShowDownloadingToast();
 }
 
 void DuplicateCheckDone(const GURL& url,
@@ -231,7 +274,8 @@ void DownloadAsFile(content::WebContents* web_contents, const GURL& url) {
       web_contents->GetBrowserContext());
   std::unique_ptr<download::DownloadUrlParameters> dl_params(
       content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(
-          web_contents, url, NO_TRAFFIC_ANNOTATION_YET));
+          web_contents, url,
+          TRAFFIC_ANNOTATION_WITHOUT_PROTO("Offline pages download file")));
 
   content::NavigationEntry* entry =
       web_contents->GetController().GetLastCommittedEntry();
@@ -241,8 +285,8 @@ void DownloadAsFile(content::WebContents* web_contents, const GURL& url) {
   content::Referrer referrer =
       content::Referrer::SanitizeForRequest(url, entry->GetReferrer());
   dl_params->set_referrer(referrer.url);
-  dl_params->set_referrer_policy(content::Referrer::ReferrerPolicyForUrlRequest(
-      referrer.policy));
+  dl_params->set_referrer_policy(
+      content::Referrer::ReferrerPolicyForUrlRequest(referrer.policy));
 
   dl_params->set_prefer_cache(true);
   dl_params->set_prompt(false);
@@ -343,17 +387,24 @@ static jlong JNI_OfflinePageDownloadBridge_Init(
         RequestCoordinatorFactory::GetForBrowserContext(browser_context);
     DCHECK(request_coordinator);
     offline_items_collection::OfflineContentAggregator* aggregator =
-        offline_items_collection::OfflineContentAggregatorFactory::
-            GetForBrowserContext(browser_context);
+        OfflineContentAggregatorFactory::GetForBrowserContext(browser_context);
     DCHECK(aggregator);
     adapter = new DownloadUIAdapter(
         aggregator, offline_page_model, request_coordinator,
-        base::MakeUnique<DownloadUIAdapterDelegate>(offline_page_model));
+        std::make_unique<ThumbnailDecoderImpl>(
+            std::make_unique<suggestions::ImageDecoderImpl>()),
+        std::make_unique<DownloadUIAdapterDelegate>(offline_page_model));
     DownloadUIAdapter::AttachToOfflinePageModel(base::WrapUnique(adapter),
                                                 offline_page_model);
   }
 
   return reinterpret_cast<jlong>(new OfflinePageDownloadBridge(env, obj));
+}
+
+// static
+void OfflinePageDownloadBridge::ShowDownloadingToast() {
+  JNIEnv* env = AttachCurrentThread();
+  Java_OfflinePageDownloadBridge_showDownloadingToast(env);
 }
 
 }  // namespace android

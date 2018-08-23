@@ -37,9 +37,8 @@ ThreadSnapshotLinux::ThreadSnapshotLinux()
 ThreadSnapshotLinux::~ThreadSnapshotLinux() {
 }
 
-bool ThreadSnapshotLinux::Initialize(
-    ProcessReader* process_reader,
-    const ProcessReader::Thread& thread) {
+bool ThreadSnapshotLinux::Initialize(ProcessReaderLinux* process_reader,
+                                     const ProcessReaderLinux::Thread& thread) {
   INITIALIZATION_STATE_SET_INITIALIZING(initialized_);
 
 #if defined(ARCH_CPU_X86_FAMILY)
@@ -69,6 +68,22 @@ bool ThreadSnapshotLinux::Initialize(
     InitializeCPUContextARM(thread.thread_info.thread_context.t32,
                             thread.thread_info.float_context.f32,
                             context_.arm);
+  }
+#elif defined(ARCH_CPU_MIPS_FAMILY)
+  if (process_reader->Is64Bit()) {
+    context_.architecture = kCPUArchitectureMIPS64EL;
+    context_.mips64 = &context_union_.mips64;
+    InitializeCPUContextMIPS<ContextTraits64>(
+        thread.thread_info.thread_context.t64,
+        thread.thread_info.float_context.f64,
+        context_.mips64);
+  } else {
+    context_.architecture = kCPUArchitectureMIPSEL;
+    context_.mipsel = &context_union_.mipsel;
+    InitializeCPUContextMIPS<ContextTraits32>(
+        SignalThreadContext32(thread.thread_info.thread_context.t32),
+        thread.thread_info.float_context.f32,
+        context_.mipsel);
   }
 #else
 #error Port.

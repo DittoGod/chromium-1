@@ -21,10 +21,6 @@ void DisplayUtil::DisplayToScreenInfo(ScreenInfo* screen_info,
   screen_info->available_rect = display.work_area();
   screen_info->device_scale_factor = display.device_scale_factor();
   screen_info->color_space = display.color_space();
-#if defined(OS_MACOSX)
-  screen_info->icc_profile =
-      gfx::ICCProfile::FromCacheMac(display.color_space());
-#endif
   screen_info->depth = display.color_depth();
   screen_info->depth_per_component = display.depth_per_component();
   screen_info->is_monochrome = display.is_monochrome();
@@ -52,17 +48,19 @@ void DisplayUtil::DisplayToScreenInfo(ScreenInfo* screen_info,
 
 // static
 void DisplayUtil::GetDefaultScreenInfo(ScreenInfo* screen_info) {
-#if defined(OS_MACOSX) || defined(USE_AURA)
-  // On macOS, we use the display nearest the nullptr view to return the most
-  // recently active screen, instead of the primary screen
-  // https://crbug.com/357443
-  // On Aura, this decision may or may not have been taken intentionally, and
-  // may or may not have any effect.
+  // Some tests are run with no Screen initialized.
+  display::Screen* screen = display::Screen::GetScreen();
+  if (!screen) {
+    *screen_info = ScreenInfo();
+    return;
+  }
+#if defined(USE_AURA)
+  // This behavior difference between Aura and other platforms may or may not
+  // be intentional, and may or may not have any effect.
   gfx::NativeView null_native_view = nullptr;
-  display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestView(null_native_view);
+  display::Display display = screen->GetDisplayNearestView(null_native_view);
 #else
-  display::Display display = display::Screen::GetScreen()->GetPrimaryDisplay();
+  display::Display display = screen->GetPrimaryDisplay();
 #endif
   DisplayToScreenInfo(screen_info, display);
 }
@@ -70,16 +68,15 @@ void DisplayUtil::GetDefaultScreenInfo(ScreenInfo* screen_info) {
 // static
 void DisplayUtil::GetNativeViewScreenInfo(ScreenInfo* screen_info,
                                           gfx::NativeView native_view) {
-#if defined(OS_MACOSX)
-  // See previous comment regarding https://crbug.com/357443
-  display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestView(native_view);
-#else
-  display::Display display =
-      native_view
-          ? display::Screen::GetScreen()->GetDisplayNearestView(native_view)
-          : display::Screen::GetScreen()->GetPrimaryDisplay();
-#endif
+  // Some tests are run with no Screen initialized.
+  display::Screen* screen = display::Screen::GetScreen();
+  if (!screen) {
+    *screen_info = ScreenInfo();
+    return;
+  }
+  display::Display display = native_view
+                                 ? screen->GetDisplayNearestView(native_view)
+                                 : screen->GetPrimaryDisplay();
   DisplayToScreenInfo(screen_info, display);
 }
 

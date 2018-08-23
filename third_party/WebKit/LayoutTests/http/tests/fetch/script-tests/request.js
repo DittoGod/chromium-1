@@ -43,53 +43,9 @@ test(function() {
 
 test(function() {
     [new Request(URL),
-     // All mode/credentials below are invalid and thus ignored.
-     new Request(URL, {mode: null}),
-     new Request(URL, {mode: undefined}),
-     new Request(URL, {mode: 'sameorigin'}),
-     new Request(URL, {mode: 'same origin'}),
-     new Request(URL, {mode: 'same-origin\0'}),
-     new Request(URL, {mode: ' same-origin'}),
-     new Request(URL, {mode: 'same--origin'}),
-     new Request(URL, {mode: 'SAME-ORIGIN'}),
-     new Request(URL, {mode: 'nocors'}),
-     new Request(URL, {mode: 'no cors'}),
-     new Request(URL, {mode: 'no-cors\0'}),
-     new Request(URL, {mode: ' no-cors'}),
-     new Request(URL, {mode: 'no--cors'}),
-     new Request(URL, {mode: 'NO-CORS'}),
-     new Request(URL, {mode: 'cors\0'}),
-     new Request(URL, {mode: ' cors'}),
-     new Request(URL, {mode: 'co rs'}),
-     new Request(URL, {mode: 'CORS'}),
-     new Request(URL, {mode: 'navigate\0'}),
-     new Request(URL, {mode: ' navigate'}),
-     new Request(URL, {mode: 'navi gate'}),
-     new Request(URL, {mode: 'NAVIGATE'}),
-     new Request(URL, {mode: '\0'.repeat(100000)}),
-     new Request(URL, {mode: 'x'.repeat(100000)}),
-     new Request(URL, {credentials: null}),
-     new Request(URL, {credentials: undefined}),
-     new Request(URL, {credentials: 'omit\0'}),
-     new Request(URL, {credentials: ' omit'}),
-     new Request(URL, {credentials: 'om it'}),
-     new Request(URL, {credentials: 'OMIT'}),
-     new Request(URL, {credentials: 'sameorigin'}),
-     new Request(URL, {credentials: 'same origin'}),
-     new Request(URL, {credentials: 'same-origin\0'}),
-     new Request(URL, {credentials: ' same-origin'}),
-     new Request(URL, {credentials: 'same--origin'}),
-     new Request(URL, {credentials: 'SAME-ORIGIN'}),
-     new Request(URL, {credentials: 'include\0'}),
-     new Request(URL, {credentials: ' include'}),
-     new Request(URL, {credentials: 'inc lude'}),
-     new Request(URL, {credentials: 'INCLUDE'}),
-     new Request(URL, {credentials: '\0'.repeat(100000)}),
-     new Request(URL, {credentials: 'x'.repeat(100000)})]
-      .concat(INVALID_TOKENS.map(
-          function(name) { return new Request(URL, {mode: name}); }))
-      .concat(INVALID_TOKENS.map(
-          function(name) { return new Request(URL, {credentials: name}); }))
+    new Request(URL, {method: undefined}),
+    new Request(URL, {mode: undefined}),
+    new Request(URL, {credentials: undefined})]
       .forEach(function(request) {
           assert_equals(request.url, URL,
                         'Request.url should match');
@@ -97,10 +53,114 @@ test(function() {
                         'Default Request.method should be GET');
           assert_equals(request.mode, 'cors',
                         'Default Request.mode should be cors');
-          assert_equals(request.credentials, 'omit',
-                        'Default Request.credentials should be omit');
-        });
-  }, 'Request default value test');
+          assert_equals(request.credentials, 'same-origin',
+                        'Default Request.credentials should be same-origin');
+      });
+}, "Request default value test");
+
+test(function() {
+     // All below values are invalid and thus should throw
+     [{mode: null},
+     {mode: 'sameorigin'},
+     {mode: 'same origin'},
+     {mode: 'same-origin\0'},
+     {mode: ' same-origin'},
+     {mode: 'same--origin'},
+     {mode: 'SAME-ORIGIN'},
+     {mode: 'nocors'},
+     {mode: 'no cors'},
+     {mode: 'no-cors\0'},
+     {mode: ' no-cors'},
+     {mode: 'no--cors'},
+     {mode: 'NO-CORS'},
+     {mode: 'cors\0'},
+     {mode: ' cors'},
+     {mode: 'co rs'},
+     {mode: 'CORS'},
+     {mode: 'navigate\0'},
+     {mode: ' navigate'},
+     {mode: 'navi gate'},
+     {mode: 'NAVIGATE'},
+     {mode: '\0'.repeat(100000)},
+     {mode: 'x'.repeat(100000)},
+     {credentials: null},
+     {credentials: 'omit\0'},
+     {credentials: ' omit'},
+     {credentials: 'om it'},
+     {credentials: 'OMIT'},
+     {credentials: 'sameorigin'},
+     {credentials: 'same origin'},
+     {credentials: 'same-origin\0'},
+     {credentials: ' same-origin'},
+     {credentials: 'same--origin'},
+     {credentials: 'SAME-ORIGIN'},
+     {credentials: 'include\0'},
+     {credentials: ' include'},
+     {credentials: 'inc lude'},
+     {credentials: 'INCLUDE'},
+     {credentials: '\0'.repeat(100000)},
+     {credentials: 'x'.repeat(100000)},
+     {cache: null},
+     {cache: 'default\0'},
+     {cache: ' default'},
+     {cache: 'def ault'},
+     {cache: 'DEFAULT'},
+     {cache: 'nostore'},
+     {cache: 'no store'},
+     {cache: 'no-store\0'},
+     {cache: ' no-store'},
+     {cache: 'no--store'},
+     {cache: 'NO-STORE'},
+     {cache: 'reload\0'},
+     {cache: ' reload'},
+     {cache: 're load'},
+     {cache: 'RELOAD'},
+     {cache: 'nocache'},
+     {cache: 'no cache'},
+     {cache: 'no-cache\0'},
+     {cache: ' no-cache'},
+     {cache: 'no--cache'},
+     {cache: 'NO-CACHE'},
+     {cache: 'forcecache'},
+     {cache: 'force cache'},
+     {cache: 'force-cache\0'},
+     {cache: ' force-cache'},
+     {cache: 'force--cache'},
+     {cache: 'FORCE-CACHE'},
+     {cache: 'onlyifcached'},
+     {cache: 'only if cached'},
+     {cache: 'only-if-cached\0'},
+     {cache: ' only-if-cached'},
+     {cache: 'only-if--cached'},
+     {cache: 'only--if-cached'},
+     {cache: 'ONLY-IF-CACHED'},
+     {cache: '\0'.repeat(100000)},
+     {cache: 'x'.repeat(100000)},
+     {redirect: 'follow\0'},
+     {redirect: ' follow'},
+     {redirect: 'fol low'},
+     {redirect: 'FOLLOW'},
+     {redirect: 'error\0'},
+     {redirect: ' error'},
+     {redirect: 'er ror'},
+     {redirect: 'ERROR'},
+     {redirect: 'manual\0'},
+     {redirect: ' manual'},
+     {redirect: 'man ual'},
+     {redirect: 'MANUAL'},
+     {redirect: '\0'.repeat(100000)},
+     {redirect: 'x'.repeat(100000)}]
+      .concat(INVALID_TOKENS.map(
+          function(name) { return {mode: name}; }))
+      .concat(INVALID_TOKENS.map(
+          function(name) { return {credentials: name}; }))
+      .concat(INVALID_TOKENS.map(
+          function(name) { return {cache: name}; }))
+      .concat(INVALID_TOKENS.map(
+          function(name) { return {redirect: name}; }))
+      .forEach((init) => assert_throws(TypeError(), () => new Request(URL, init)),
+        'Invalid Request.{mode, credentials, cache, redirect} should throw a TypeError');
+  }, 'Request invalid value test');
 
 test(function() {
     var request = new Request(URL);
@@ -111,7 +171,7 @@ test(function() {
     assert_equals(request2.url, URL, 'Request.url should match');
     assert_equals(request2.method, 'GET', 'Request.method should match');
     assert_equals(request2.mode, 'cors', 'Request.mode should match');
-    assert_equals(request2.credentials, 'omit',
+    assert_equals(request2.credentials, 'same-origin',
                   'Request.credentials should match');
     assert_equals(request2.headers.get('X-Fetch-Foo').split(', ')[0], 'foo1',
                   'Request.headers should match');
@@ -162,7 +222,7 @@ test(function() {
     var request2 = {};
     var METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS',
                    undefined];
-    var MODES = ['same-origin', 'no-cors', 'cors', '', undefined];
+    var MODES = ['same-origin', 'no-cors', 'cors', undefined];
     function isSimpleMethod(method) {
       return ['GET', 'HEAD', 'POST', undefined].indexOf(method) != -1;
     };
@@ -229,15 +289,15 @@ test(function() {
 test(function() {
     var request1 = {};
     var request2 = {};
-    var CREDENTIALS = ['omit', 'same-origin', 'include', '', undefined];
+    var CREDENTIALS = ['omit', 'same-origin', 'include', undefined];
     CREDENTIALS.forEach(function(credentials1) {
         var init1 = {};
         if (credentials1 != undefined) { init1['credentials'] = credentials1; }
         request1 = new Request(URL, init1);
-        assert_equals(request1.credentials, credentials1 || 'omit',
+        assert_equals(request1.credentials, credentials1 || 'same-origin',
                       'Request.credentials should match');
         request1 = new Request(request1);
-        assert_equals(request1.credentials, credentials1 || 'omit',
+        assert_equals(request1.credentials, credentials1 || 'same-origin',
                       'Request.credentials should match');
         CREDENTIALS.forEach(function(credentials2) {
             request1 = new Request(URL, init1);
@@ -256,7 +316,7 @@ test(function() {
 test(function() {
     var request1 = {};
     var request2 = {};
-    var REDIRECTS = ['follow', 'error', 'manual', '', undefined];
+    var REDIRECTS = ['follow', 'error', 'manual', undefined];
     REDIRECTS.forEach(function(redirect1) {
         var init1 = {};
         if (redirect1 != undefined) { init1['redirect'] = redirect1; }
@@ -524,12 +584,67 @@ test(() => {
   }, 'Referrer policy settings');
 
 test(() => {
+     // All referrer policies below are invalid and should throw
+     [{referrerPolicy: null},
+     {referrerPolicy: 'noreferrer'},
+     {referrerPolicy: 'no referrer'},
+     {referrerPolicy: 'no-referrer\0'},
+     {referrerPolicy: ' no-referrer'},
+     {referrerPolicy: 'no--referrer'},
+     {referrerPolicy: 'NO-REFERRER'},
+     {referrerPolicy: 'noreferrerwhendowngrade'},
+     {referrerPolicy: 'no referrer when downgrade'},
+     {referrerPolicy: 'no-referrer-when-downgrade\0'},
+     {referrerPolicy: ' no-referrer-when-downgrade'},
+     {referrerPolicy: 'no--referrer--when--downgrade'},
+     {referrerPolicy: 'NO-REFERRER-WHEN-DOWNGRADE'},
+     {referrerPolicy: 'sameorigin'},
+     {referrerPolicy: 'same origin'},
+     {referrerPolicy: 'same-origin\0'},
+     {referrerPolicy: ' same-origin'},
+     {referrerPolicy: 'same--origin'},
+     {referrerPolicy: 'SAME-ORIGIN'},
+     {referrerPolicy: 'origin\0'},
+     {referrerPolicy: ' origin'},
+     {referrerPolicy: 'ori gin'},
+     {referrerPolicy: 'ORIGIN'},
+     {referrerPolicy: 'strictorigin'},
+     {referrerPolicy: 'strict origin'},
+     {referrerPolicy: 'strict-origin\0'},
+     {referrerPolicy: ' strict-origin'},
+     {referrerPolicy: 'strict--origin'},
+     {referrerPolicy: 'STRICT-ORIGIN'},
+     {referrerPolicy: 'originwhencrossorigin'},
+     {referrerPolicy: 'origin when cross origin'},
+     {referrerPolicy: 'origin-when-cross-origin\0'},
+     {referrerPolicy: ' origin-when-cross-origin'},
+     {referrerPolicy: 'origin--when--cross--origin'},
+     {referrerPolicy: 'ORIGIN-WHEN-CROSS-ORIGIN'},
+     {referrerPolicy: 'strictoriginwhencrossorigin'},
+     {referrerPolicy: 'strict origin when cross origin'},
+     {referrerPolicy: 'strict-origin-when-cross-origin\0'},
+     {referrerPolicy: ' strict-origin-when-cross-origin'},
+     {referrerPolicy: 'strict--origin--when--cross--origin'},
+     {referrerPolicy: 'STRICT-ORIGIN-WHEN-CROSS-ORIGIN'},
+     {referrerPolicy: 'unsafeurl'},
+     {referrerPolicy: 'unsafe url'},
+     {referrerPolicy: 'unsafe-url\0'},
+     {referrerPolicy: ' unsafe-url'},
+     {referrerPolicy: 'unsafe--url'},
+     {referrerPolicy: 'UNSAFE-URL'},
+     {referrerPolicy: '\0'.repeat(100000)},
+     {referrerPolicy: 'x'.repeat(100000)}]
+      .forEach((init) => assert_throws(TypeError(), () => new Request(URL, init)),
+        'Invalid Request.referrerPolicy should throw a TypeError');
+  }, 'Request invalid referrer policy test');
+
+test(() => {
     let r = new Request('/', {referrerPolicy: 'origin'});
     assert_equals(r.referrerPolicy, 'origin', 'original policy');
 
     assert_equals(new Request(r, {foo: 32}).referrerPolicy,
         'origin', 'kept original policy');
-    assert_equals(new Request(r, {mode: 44}).referrerPolicy,
+    assert_equals(new Request(r, {mode: 'cors'}).referrerPolicy,
         '', 'cleared policy');
     assert_equals(new Request(r, {referrerPolicy: 'unsafe-url'}).referrerPolicy,
         'unsafe-url', 'overriden policy');
@@ -562,8 +677,9 @@ test(() => {
   }, 'Used => clone');
 
 test(() => {
-  // We implement RequestInit manually so we need to test the functionality
-  // here.
+  // We used to implement RequestInit manually so we needed to test this
+  // functionality here. We now generate RequestInit with the IDL compiler,
+  // but it's still good to keep these around.
   function undefined_notpresent(property_name) {
     assert_not_equals(property_name, 'referrer', 'property_name');
     const request = new Request('/', {referrer: '/'});
@@ -594,8 +710,9 @@ test(() => {
 }, 'An undefined member should be treated as not-present');
 
 test(() => {
-  // We implement RequestInit manually so we need to test the functionality
-  // here.
+  // We used to implement RequestInit manually so we needed to test this
+  // functionality here. We now generate RequestInit with the IDL compiler,
+  // but it's still good to keep these around.
   const e = Error();
   assert_throws(e, () => {
     new Request('/', {get method() { throw e; }})}, 'method');
@@ -619,13 +736,33 @@ test(() => {
     new Request('/', {get integrity() { throw e; }})}, 'integrity');
   assert_throws(e, () => {
     new Request('/', {get keepalive() { throw e; }})}, 'keepalive');
+  assert_throws(e, () => {
+    new Request('/', {get signal() { throw e; }})}, 'signal');
 
   // Not implemented
   // assert_throws(e, () => {
-  //  new Request('/', {get signal() { throw e; }})}, 'signal');
-  // assert_throws(e, () => {
   //  new Request('/', {get window() { throw e; }})}, 'window');
 }, 'Getter exceptions should not be silently ignored');
+
+
+test(() => {
+  // This is to test that a TypeError is thrown when RequestInit's signal
+  // member does not implement the AbortSignal interface. We test this because
+  // we used to use an `any` IDL type to represent RequestInit's signal member
+  // instead of `AbortSignal` due to a bug in the IDL compiler, and performed
+  // conversions manually. This test ensures that conversion were carried out
+  // properly.
+  const e = TypeError();
+  assert_throws(e, () => {
+    new Request('/', {signal: {}})},
+    'An empty object as RequestInit\'s signal member should fail type conversion');
+  assert_throws(e, () => {
+    new Request('/', {signal: new Request('/')})},
+    'A Request object as RequestInit\'s signal member should fail type conversion');
+  assert_throws(e, () => {
+    new Request('/', {signal: new Response('/')})},
+    'A Response object as RequestInit\'s signal member should fail type conversion');
+}, 'TypeError should be thrown when RequestInit\'s signal member does not implement the AbortSignal interface');
 
 promise_test(function() {
     var headers = new Headers;

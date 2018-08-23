@@ -27,6 +27,7 @@
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/manifest_constants.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
@@ -102,8 +103,8 @@ base::string16 ExtensionActionViewController::GetAccessibleName(
   if (!ExtensionIsValid())
     return base::string16();
 
-  std::string title =
-      extension_action()->GetTitle(SessionTabHelper::IdForTab(web_contents));
+  std::string title = extension_action()->GetTitle(
+      SessionTabHelper::IdForTab(web_contents).id());
   return base::UTF8ToUTF16(title.empty() ? extension()->name() : title);
 }
 
@@ -118,7 +119,7 @@ bool ExtensionActionViewController::IsEnabled(
     return false;
 
   return extension_action_->GetIsVisible(
-             SessionTabHelper::IdForTab(web_contents)) ||
+             SessionTabHelper::IdForTab(web_contents).id()) ||
          HasBeenBlocked(web_contents);
 }
 
@@ -133,8 +134,8 @@ bool ExtensionActionViewController::HasPopup(
   if (!ExtensionIsValid())
     return false;
 
-  int tab_id = SessionTabHelper::IdForTab(web_contents);
-  return (tab_id < 0) ? false : extension_action_->HasPopup(tab_id);
+  SessionID tab_id = SessionTabHelper::IdForTab(web_contents);
+  return tab_id.is_valid() ? extension_action_->HasPopup(tab_id.id()) : false;
 }
 
 void ExtensionActionViewController::HidePopup() {
@@ -214,7 +215,7 @@ bool ExtensionActionViewController::ExecuteAction(PopupShowAction show_action,
   if (action_runner->RunAction(extension(), grant_tab_permissions) ==
       ExtensionAction::ACTION_SHOW_POPUP) {
     GURL popup_url = extension_action_->GetPopupUrl(
-        SessionTabHelper::IdForTab(web_contents));
+        SessionTabHelper::IdForTab(web_contents).id());
     return GetPreferredPopupViewController()
         ->TriggerPopupWithUrl(show_action, popup_url, grant_tab_permissions);
   }
@@ -246,6 +247,34 @@ void ExtensionActionViewController::OnIconUpdated() {
 void ExtensionActionViewController::OnExtensionHostDestroyed(
     const extensions::ExtensionHost* host) {
   OnPopupClosed();
+}
+
+ExtensionActionViewController::PageInteractionStatus
+ExtensionActionViewController::GetPageInteractionStatus(
+    content::WebContents* web_contents) {
+  // We give priority to kPending, because it's the one that's most important
+  // for users to see.
+  if (HasBeenBlocked(web_contents))
+    return PageInteractionStatus::kPending;
+
+  // We consider an extension active on a page if either the extension action
+  // is active (in which case it can be clicked) or if the extension has
+  // permission to acccess the page (in which case it can inject scripts and
+  // intercept webRequests).
+  // NOTE(devlin): We could theoretically adjust this to only be considered
+  // active if the extension *did* act on the page, rather than if it *could*.
+  // This is a bit more complex, and it's unclear if this is a better UX, since
+  // it would lead to much less determinism in terms of what extensions look
+  // like on a given host.
+  int tab_id = SessionTabHelper::IdForTab(web_contents).id();
+  if (extension_action_->GetIsVisible(tab_id) ||
+      extension_->permissions_data()->GetPageAccess(
+          web_contents->GetLastCommittedURL(), tab_id, /*error=*/nullptr) ==
+          extensions::PermissionsData::PageAccess::kAllowed) {
+    return PageInteractionStatus::kActive;
+  }
+
+  return PageInteractionStatus::kNone;
 }
 
 bool ExtensionActionViewController::ExtensionIsValid() const {
@@ -370,7 +399,7 @@ std::unique_ptr<IconWithBadgeImageSource>
 ExtensionActionViewController::GetIconImageSource(
     content::WebContents* web_contents,
     const gfx::Size& size) {
-  int tab_id = SessionTabHelper::IdForTab(web_contents);
+  int tab_id = SessionTabHelper::IdForTab(web_contents).id();
   std::unique_ptr<IconWithBadgeImageSource> image_source(
       new IconWithBadgeImageSource(size));
 
@@ -386,21 +415,34 @@ ExtensionActionViewController::GetIconImageSource(
   }
   image_source->SetBadge(std::move(badge));
 
-  // If the extension doesn't want to run on the active web contents, we
-  // grayscale it to indicate that.
-  image_source->set_grayscale(!IsEnabled(web_contents));
-  // If the action *does* want to run on the active web contents and is also
+  bool grayscale = false;
+  bool was_blocked = false;
+  if (base::FeatureList::IsEnabled(
+          extensions::features::kRuntimeHostPermissions)) {
+    PageInteractionStatus interaction_status =
+        GetPageInteractionStatus(web_contents);
+    // With the runtime host permissions feature, we only grayscale the icon if
+    // it cannot interact with the page and the icon is disabled.
+    grayscale = interaction_status == PageInteractionStatus::kNone;
+    was_blocked = interaction_status == PageInteractionStatus::kPending;
+  } else {
+    // Without runtime host permissions enabled, grayscaling is purely used to
+    // indicate "clickability", and not any kind of access.
+    grayscale = !extension_action_->GetIsVisible(tab_id);
+    // was_blocked is always false without runtime host permissions.
+  }
+
+  image_source->set_grayscale(grayscale);
+  image_source->set_paint_blocked_actions_decoration(was_blocked);
+
+  // If the action has an active page action on the web contents and is also
   // overflowed, we add a decoration so that the user can see which overflowed
   // action wants to run (since they wouldn't be able to see the change from
   // grayscale to color).
   bool is_overflow =
       toolbar_actions_bar_ && toolbar_actions_bar_->in_overflow_mode();
-
-  bool has_blocked_actions = HasBeenBlocked(web_contents);
-  image_source->set_paint_blocked_actions_decoration(has_blocked_actions);
   image_source->set_paint_page_action_decoration(
-      !has_blocked_actions && is_overflow &&
-      PageActionWantsToRun(web_contents));
+      !was_blocked && is_overflow && PageActionWantsToRun(web_contents));
 
   return image_source;
 }
@@ -410,7 +452,7 @@ bool ExtensionActionViewController::PageActionWantsToRun(
   return extension_action_->action_type() ==
              extensions::ActionInfo::TYPE_PAGE &&
          extension_action_->GetIsVisible(
-             SessionTabHelper::IdForTab(web_contents));
+             SessionTabHelper::IdForTab(web_contents).id());
 }
 
 bool ExtensionActionViewController::HasBeenBlocked(

@@ -83,6 +83,11 @@ PaymentRequestDialogView::PaymentRequestDialogView(
   if (!request->state()->is_get_all_instruments_finished()) {
     request->state()->AddObserver(this);
     ShowProcessingSpinner();
+  } else if (observer_for_testing_) {
+    // When testing, signal that the processing spinner events have passed, even
+    // though the UI does not need to show it.
+    observer_for_testing_->OnProcessingSpinnerShown();
+    observer_for_testing_->OnProcessingSpinnerHidden();
   }
 
   ShowInitialPaymentSheet();
@@ -139,6 +144,19 @@ int PaymentRequestDialogView::GetDialogButtons() const {
 
 void PaymentRequestDialogView::ShowDialog() {
   constrained_window::ShowWebModalDialogViews(this, request_->web_contents());
+}
+
+void PaymentRequestDialogView::ShowDialogAtPaymentHandlerSheet(
+    const GURL& url,
+    PaymentHandlerOpenWindowCallback callback) {
+  view_stack_->Push(CreateViewAndInstallController(
+                        std::make_unique<PaymentHandlerWebFlowViewController>(
+                            request_->spec(), request_->state(), this,
+                            GetProfile(), url, std::move(callback)),
+                        &controller_map_),
+                    /* animate = */ false);
+  HideProcessingSpinner();
+  ShowDialog();
 }
 
 void PaymentRequestDialogView::CloseDialog() {
@@ -199,13 +217,16 @@ void PaymentRequestDialogView::OnSpecUpdated() {
 
 void PaymentRequestDialogView::OnGetAllPaymentInstrumentsFinished() {
   HideProcessingSpinner();
-  if (observer_for_testing_) {
-    // The OnGetAllPaymentInstrumentsFinished() method is called if the payment
-    // instruments were retrieved asynchronously. This method hides the
-    // "Processing" spinner, so the UI is now ready for interaction. Any test
-    // that opens UI can now interact with it. The OnDialogOpened() call
-    // notifies the tests of this event.
-    observer_for_testing_->OnDialogOpened();
+  if (request_->state()->are_requested_methods_supported()) {
+    request_->RecordDialogShownEventInJourneyLogger();
+    if (observer_for_testing_) {
+      // The OnGetAllPaymentInstrumentsFinished() method is called if the
+      // payment instruments were retrieved asynchronously. This method hides
+      // the "Processing" spinner, so the UI is now ready for interaction. Any
+      // test that opens UI can now interact with it. The OnDialogOpened() call
+      // notifies the tests of this event.
+      observer_for_testing_->OnDialogOpened();
+    }
   }
 }
 
@@ -308,7 +329,7 @@ void PaymentRequestDialogView::ShowCreditCardEditor(
           std::make_unique<CreditCardEditorViewController>(
               request_->spec(), request_->state(), this, back_navigation_type,
               next_ui_tag, std::move(on_edited), std::move(on_added),
-              credit_card),
+              credit_card, request_->IsIncognito()),
           &controller_map_),
       /* animate = */ true);
   if (observer_for_testing_)
@@ -324,7 +345,8 @@ void PaymentRequestDialogView::ShowShippingAddressEditor(
       CreateViewAndInstallController(
           std::make_unique<ShippingAddressEditorViewController>(
               request_->spec(), request_->state(), this, back_navigation_type,
-              std::move(on_edited), std::move(on_added), profile),
+              std::move(on_edited), std::move(on_added), profile,
+              request_->IsIncognito()),
           &controller_map_),
       /* animate = */ true);
   if (observer_for_testing_)
@@ -340,7 +362,8 @@ void PaymentRequestDialogView::ShowContactInfoEditor(
       CreateViewAndInstallController(
           std::make_unique<ContactInfoEditorViewController>(
               request_->spec(), request_->state(), this, back_navigation_type,
-              std::move(on_edited), std::move(on_added), profile),
+              std::move(on_edited), std::move(on_added), profile,
+              request_->IsIncognito()),
           &controller_map_),
       /* animate = */ true);
   if (observer_for_testing_)
@@ -370,14 +393,16 @@ void PaymentRequestDialogView::ShowInitialPaymentSheet() {
                             request_->spec(), request_->state(), this),
                         &controller_map_),
                     /* animate = */ false);
-  if (observer_for_testing_ &&
-      request_->state()->is_get_all_instruments_finished()) {
-    // The is_get_all_instruments_finished() method returns true if all payment
-    // instruments were retrieved synchronously. There's no "Processing" spinner
-    // to hide, so the UI is ready instantly. Any test that opens UI can now
-    // interact with it. The OnDialogOpened() call notifies the tests of this
-    // event.
-    observer_for_testing_->OnDialogOpened();
+  if (request_->state()->is_get_all_instruments_finished() &&
+      request_->state()->are_requested_methods_supported()) {
+    request_->RecordDialogShownEventInJourneyLogger();
+    if (observer_for_testing_) {
+      // The is_get_all_instruments_finished() method returns true if all
+      // payment instruments were retrieved synchronously. Any test that opens
+      // UI can now interact with it. The OnDialogOpened() call notifies the
+      // tests of this event.
+      observer_for_testing_->OnDialogOpened();
+    }
   }
 }
 
@@ -390,21 +415,23 @@ void PaymentRequestDialogView::SetupSpinnerOverlay() {
   // The throbber overlay has to have a solid white background to hide whatever
   // would be under it.
   throbber_overlay_.SetBackground(views::CreateThemedSolidBackground(
-      &throbber_overlay_, ui::NativeTheme::kColorId_WindowBackground));
+      &throbber_overlay_, ui::NativeTheme::kColorId_DialogBackground));
 
   views::GridLayout* layout = throbber_overlay_.SetLayoutManager(
       std::make_unique<views::GridLayout>(&throbber_overlay_));
   views::ColumnSet* throbber_columns = layout->AddColumnSet(0);
   throbber_columns->AddPaddingColumn(0.5, 0);
   throbber_columns->AddColumn(views::GridLayout::Alignment::CENTER,
-                              views::GridLayout::Alignment::TRAILING, 0,
+                              views::GridLayout::Alignment::TRAILING,
+                              views::GridLayout::kFixedSize,
                               views::GridLayout::SizeType::USE_PREF, 0, 0);
   throbber_columns->AddPaddingColumn(0.5, 0);
 
   views::ColumnSet* label_columns = layout->AddColumnSet(1);
   label_columns->AddPaddingColumn(0.5, 0);
   label_columns->AddColumn(views::GridLayout::Alignment::CENTER,
-                           views::GridLayout::Alignment::LEADING, 0,
+                           views::GridLayout::Alignment::LEADING,
+                           views::GridLayout::kFixedSize,
                            views::GridLayout::SizeType::USE_PREF, 0, 0);
   label_columns->AddPaddingColumn(0.5, 0);
 

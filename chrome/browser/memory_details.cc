@@ -13,7 +13,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/nacl/common/nacl_process_type.h"
@@ -31,11 +31,13 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/content_constants.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/global_memory_dump.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
-#include "content/public/browser/zygote_host_linux.h"
+#include "services/service_manager/zygote/zygote_host_linux.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -96,7 +98,7 @@ ProcessMemoryInformation::ProcessMemoryInformation()
       num_open_fds(-1),
       open_fds_soft_limit(-1),
       renderer_type(RENDERER_UNKNOWN),
-      phys_footprint(0) {}
+      private_memory_footprint_kb(0) {}
 
 ProcessMemoryInformation::ProcessMemoryInformation(
     const ProcessMemoryInformation& other) = default;
@@ -105,7 +107,7 @@ ProcessMemoryInformation::~ProcessMemoryInformation() {}
 
 bool ProcessMemoryInformation::operator<(
     const ProcessMemoryInformation& rhs) const {
-  return working_set.priv < rhs.working_set.priv;
+  return private_memory_footprint_kb < rhs.private_memory_footprint_kb;
 }
 
 ProcessData::ProcessData() {}
@@ -175,13 +177,8 @@ std::string MemoryDetails::ToLogString() {
       }
       log += "]";
     }
-    log += StringPrintf(" %d MB private, %d MB shared",
-                        static_cast<int>(iter1->working_set.priv) / 1024,
-                        static_cast<int>(iter1->working_set.shared) / 1024);
-#if defined(OS_CHROMEOS)
-    log += StringPrintf(", %d MB swapped",
-                        static_cast<int>(iter1->working_set.swapped) / 1024);
-#endif
+    log += StringPrintf(
+        " %d MB", static_cast<int>(iter1->private_memory_footprint_kb) / 1024);
     if (iter1->num_open_fds != -1 || iter1->open_fds_soft_limit != -1) {
       log += StringPrintf(", %d FDs open of %d", iter1->num_open_fds,
                           iter1->open_fds_soft_limit);
@@ -200,9 +197,9 @@ void MemoryDetails::CollectChildInfoOnIOThread() {
   // the process is being launched, so we skip it.
   for (BrowserChildProcessHostIterator iter; !iter.Done(); ++iter) {
     ProcessMemoryInformation info;
-    if (!iter.GetData().handle)
+    if (!iter.GetData().GetHandle())
       continue;
-    info.pid = base::GetProcId(iter.GetData().handle);
+    info.pid = base::GetProcId(iter.GetData().GetHandle());
     if (!info.pid)
       continue;
 
@@ -215,7 +212,7 @@ void MemoryDetails::CollectChildInfoOnIOThread() {
   // Now go do expensive memory lookups in a thread pool.
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&MemoryDetails::CollectProcessData, this, child_info));
 }
@@ -233,7 +230,7 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
     // or processes that are still launching.
     if (!widget->GetProcess()->IsReady())
       continue;
-    base::ProcessId pid = base::GetProcId(widget->GetProcess()->GetHandle());
+    base::ProcessId pid = widget->GetProcess()->GetProcess().Pid();
     widgets_by_pid[pid].push_back(widget);
   }
 
@@ -302,10 +299,6 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
 
       // The rest of this block will happen only once per WebContents.
       GURL page_url = contents->GetLastCommittedURL();
-      SiteData& site_data =
-          chrome_browser->site_data[contents->GetBrowserContext()];
-      SiteDetails::CollectSiteInfo(contents, &site_data);
-
       bool is_webui = rvh->GetMainFrame()->GetEnabledBindings() &
                       content::BINDINGS_POLICY_WEB_UI;
 
@@ -345,7 +338,7 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
     }
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
-    if (content::ZygoteHost::GetInstance()->IsZygotePid(process.pid)) {
+    if (service_manager::ZygoteHost::GetInstance()->IsZygotePid(process.pid)) {
       process.process_type = content::PROCESS_TYPE_ZYGOTE;
     }
 #endif
@@ -358,6 +351,33 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
   auto& vector = chrome_browser->processes;
   vector.erase(std::remove_if(vector.begin(), vector.end(), is_unknown),
                vector.end());
+
+  // Grab a memory dump for all processes.
+  // Using AdaptCallbackForRepeating allows for an easier transition to
+  // OnceCallbacks for https://crbug.com/714018.
+  memory_instrumentation::MemoryInstrumentation::GetInstance()
+      ->RequestPrivateMemoryFootprint(
+          base::kNullProcessId,
+          base::AdaptCallbackForRepeating(
+              base::BindOnce(&MemoryDetails::DidReceiveMemoryDump, this)));
+}
+
+void MemoryDetails::DidReceiveMemoryDump(
+    bool success,
+    std::unique_ptr<memory_instrumentation::GlobalMemoryDump> global_dump) {
+  ProcessData* const chrome_browser = ChromeBrowser();
+  if (success) {
+    for (const memory_instrumentation::GlobalMemoryDump::ProcessDump& dump :
+         global_dump->process_dumps()) {
+      base::ProcessId dump_pid = dump.pid();
+      for (ProcessMemoryInformation& pmi : chrome_browser->processes) {
+        if (pmi.pid == dump_pid) {
+          pmi.private_memory_footprint_kb = dump.os_dump().private_footprint_kb;
+          break;
+        }
+      }
+    }
+  }
 
   OnDetailsAvailable();
 }

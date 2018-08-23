@@ -12,6 +12,7 @@ import static org.chromium.chrome.browser.download.DownloadNotificationService2.
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.ACTION_DOWNLOAD_RESUME;
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.EXTRA_DOWNLOAD_CONTENTID_ID;
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.EXTRA_DOWNLOAD_CONTENTID_NAMESPACE;
+import static org.chromium.chrome.browser.download.DownloadNotificationService2.EXTRA_DOWNLOAD_STATE_AT_CANCEL;
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.EXTRA_IS_OFF_THE_RECORD;
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.clearResumptionAttemptLeft;
 
@@ -47,13 +48,11 @@ import org.chromium.components.offline_items_collection.PendingState;
  */
 public class DownloadBroadcastManager extends Service {
     private static final String TAG = "DLBroadcastManager";
-    // TODO(jming): Check to see if this wait time is long enough to execute commands on native.
     private static final int WAIT_TIME_MS = 5000;
 
     private final DownloadSharedPreferenceHelper mDownloadSharedPreferenceHelper =
             DownloadSharedPreferenceHelper.getInstance();
 
-    private final Context mApplicationContext;
     private final DownloadNotificationService2 mDownloadNotificationService;
     private final Handler mHandler = new Handler();
     private final Runnable mStopSelfRunnable = new Runnable() {
@@ -64,7 +63,6 @@ public class DownloadBroadcastManager extends Service {
     };
 
     public DownloadBroadcastManager() {
-        mApplicationContext = ContextUtils.getApplicationContext();
         mDownloadNotificationService = DownloadNotificationService2.getInstance();
     }
 
@@ -109,9 +107,7 @@ public class DownloadBroadcastManager extends Service {
      * Cancel any download resumption tasks and reset the number of resumption attempts available.
      */
     void cancelQueuedResumptions() {
-        DownloadResumptionScheduler
-                .getDownloadResumptionScheduler(ContextUtils.getApplicationContext())
-                .cancel();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().cancel();
         // Reset number of attempts left if the action is triggered by user.
         clearResumptionAttemptLeft();
     }
@@ -142,7 +138,8 @@ public class DownloadBroadcastManager extends Service {
                 // If user manually resumes a download, update the network type if it
                 // is not metered previously.
                 boolean canDownloadWhileMetered = entry.canDownloadWhileMetered
-                        || DownloadManagerService.isActiveNetworkMetered(mApplicationContext);
+                        || DownloadManagerService.isActiveNetworkMetered(
+                                   ContextUtils.getApplicationContext());
                 // Update the SharedPreference entry.
                 mDownloadSharedPreferenceHelper.addOrReplaceSharedPreferenceEntry(
                         new DownloadSharedPreferenceEntry(entry.id, entry.notificationId,
@@ -181,12 +178,18 @@ public class DownloadBroadcastManager extends Service {
                 OfflineContentAggregatorNotificationBridgeUiFactory.instance();
                 propagateInteraction(intent);
             }
+
+            @Override
+            public boolean startServiceManagerOnly() {
+                // TODO(qinmin): change this to return true once ServiceManager can be started
+                // without launching full browser.
+                return false;
+            }
         };
 
         try {
-            ChromeBrowserInitializer.getInstance(mApplicationContext).handlePreNativeStartup(parts);
-            ChromeBrowserInitializer.getInstance(mApplicationContext)
-                    .handlePostNativeStartup(true, parts);
+            ChromeBrowserInitializer.getInstance().handlePreNativeStartup(parts);
+            ChromeBrowserInitializer.getInstance().handlePostNativeStartup(true, parts);
         } catch (ProcessInitException e) {
             Log.e(TAG, "Unable to load native library.", e);
             ChromeApplication.reportStartupErrorAndExit(e);
@@ -202,7 +205,7 @@ public class DownloadBroadcastManager extends Service {
         // Handle actions that do not require a specific entry or service delegate.
         switch (action) {
             case ACTION_NOTIFICATION_CLICKED:
-                openDownload(mApplicationContext, intent, id);
+                openDownload(ContextUtils.getApplicationContext(), intent, id);
                 return;
 
             case ACTION_DOWNLOAD_OPEN:
@@ -224,6 +227,9 @@ public class DownloadBroadcastManager extends Service {
         // Handle all remaining actions.
         switch (action) {
             case ACTION_DOWNLOAD_CANCEL:
+                DownloadNotificationUmaHelper.recordStateAtCancelHistogram(
+                        LegacyHelpers.isLegacyDownload(id),
+                        intent.getIntExtra(EXTRA_DOWNLOAD_STATE_AT_CANCEL, -1));
                 downloadServiceDelegate.cancelDownload(id, isOffTheRecord);
                 break;
 
@@ -260,7 +266,8 @@ public class DownloadBroadcastManager extends Service {
 
     /**
      * Retrieves DownloadSharedPreferenceEntry from a download action intent.
-     * TODO(jming): Instead of getting entire entry, pass only id/isOffTheRecord (crbug.com/749323).
+     * TODO(crbug.com/691805):  Instead of getting entire entry, pass only id/isOffTheRecord, after
+     *                          consolidating all downloads-related objects.
      * @param intent Intent that contains the download action.
      */
     private DownloadSharedPreferenceEntry getDownloadEntryFromIntent(Intent intent) {
@@ -326,7 +333,8 @@ public class DownloadBroadcastManager extends Service {
         String originalUrl = IntentUtils.safeGetStringExtra(intent, Intent.EXTRA_ORIGINATING_URI);
         String referrer = IntentUtils.safeGetStringExtra(intent, Intent.EXTRA_REFERRER);
         DownloadManagerService.openDownloadedContent(context, downloadFilename, isSupportedMimeType,
-                isOffTheRecord, contentId.id, id, originalUrl, referrer);
+                isOffTheRecord, contentId.id, id, originalUrl, referrer,
+                DownloadMetrics.DownloadOpenSource.NOTIFICATION);
     }
 
     @Nullable

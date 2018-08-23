@@ -4,18 +4,21 @@
 
 #include "chrome/browser/plugins/pdf_iframe_navigation_throttle.h"
 
+#include <string>
+
 #include "base/feature_list.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pdf_uma.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/download_utils.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/escape.h"
 #include "net/http/http_response_headers.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
@@ -41,8 +44,8 @@ PDFIFrameNavigationThrottle::MaybeCreateThrottleFor(
 
 #if BUILDFLAG(ENABLE_PLUGINS)
   content::WebPluginInfo pdf_plugin_info;
-  base::FilePath pdf_plugin_path =
-      base::FilePath::FromUTF8Unsafe(ChromeContentClient::kPDFPluginPath);
+  static const base::FilePath pdf_plugin_path(
+      ChromeContentClient::kPDFPluginPath);
   content::PluginService::GetInstance()->GetPluginInfoByPath(pdf_plugin_path,
                                                              &pdf_plugin_info);
 
@@ -61,7 +64,7 @@ PDFIFrameNavigationThrottle::MaybeCreateThrottleFor(
 
   // If ENABLE_PLUGINS is false, the PDF plugin is not available, so we should
   // always intercept PDF iframe navigations.
-  return base::MakeUnique<PDFIFrameNavigationThrottle>(handle);
+  return std::make_unique<PDFIFrameNavigationThrottle>(handle);
 }
 
 content::NavigationThrottle::ThrottleCheckResult
@@ -75,6 +78,13 @@ PDFIFrameNavigationThrottle::WillProcessResponse() {
   response_headers->GetMimeType(&mime_type);
   if (mime_type != kPDFMimeType)
     return content::NavigationThrottle::PROCEED;
+
+  // We MUST download responses marked as attachments rather than showing
+  // a placeholder.
+  if (content::download_utils::MustDownload(navigation_handle()->GetURL(),
+                                            response_headers, mime_type)) {
+    return content::NavigationThrottle::PROCEED;
+  }
 
   ReportPDFLoadStatus(PDFLoadStatus::kLoadedIframePdfWithNoPdfViewer);
 

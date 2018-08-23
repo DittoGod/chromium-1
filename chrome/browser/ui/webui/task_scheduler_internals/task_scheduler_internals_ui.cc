@@ -11,7 +11,7 @@
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
@@ -58,8 +58,8 @@ class TaskSchedulerDataHandler : public content::WebUIMessageHandler {
   void RegisterMessages() override {
     web_ui()->RegisterMessageCallback(
         "getTaskSchedulerData",
-        base::Bind(&TaskSchedulerDataHandler::GetTaskSchedulerData,
-                   base::Unretained(this)));
+        base::BindRepeating(&TaskSchedulerDataHandler::GetTaskSchedulerData,
+                            base::Unretained(this)));
   }
 
  private:

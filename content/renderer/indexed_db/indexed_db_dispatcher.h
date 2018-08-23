@@ -17,8 +17,8 @@
 #include "content/renderer/indexed_db/indexed_db_callbacks_impl.h"
 #include "content/renderer/indexed_db/indexed_db_database_callbacks_impl.h"
 #include "ipc/ipc_sync_message_filter.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBCallbacks.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBTypes.h"
+#include "third_party/blink/public/common/indexeddb/web_idb_types.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_callbacks.h"
 #include "url/origin.h"
 
 namespace content {
@@ -46,39 +46,11 @@ class CONTENT_EXPORT IndexedDBDispatcher : public WorkerThread::Observer {
   void ResetCursorPrefetchCaches(int64_t transaction_id,
                                  WebIDBCursorImpl* exception_cursor);
 
-  void RegisterMojoOwnedCallbacks(
-      IndexedDBCallbacksImpl::InternalState* callback_state);
-  void UnregisterMojoOwnedCallbacks(
-      IndexedDBCallbacksImpl::InternalState* callback_state);
-  void RegisterMojoOwnedDatabaseCallbacks(
-      blink::WebIDBDatabaseCallbacks* callback_state);
-  void UnregisterMojoOwnedDatabaseCallbacks(
-      blink::WebIDBDatabaseCallbacks* callback_state);
-
  private:
   FRIEND_TEST_ALL_PREFIXES(IndexedDBDispatcherTest, CursorReset);
   FRIEND_TEST_ALL_PREFIXES(IndexedDBDispatcherTest, CursorTransactionId);
 
-  // Looking up move-only entries in an std::unordered_set and removing them
-  // with out freeing them seems to be impossible so use a map instead so that
-  // the key type can remain a raw pointer.
-  using CallbackStateSet = std::unordered_map<
-      IndexedDBCallbacksImpl::InternalState*,
-      std::unique_ptr<IndexedDBCallbacksImpl::InternalState>>;
-  using DatabaseCallbackStateSet =
-      std::unordered_map<blink::WebIDBDatabaseCallbacks*,
-                         std::unique_ptr<blink::WebIDBDatabaseCallbacks>>;
-
   std::unordered_set<WebIDBCursorImpl*> cursors_;
-
-  // Holds pointers to the worker-thread owned state of IndexedDBCallbacksImpl
-  // and IndexedDBDatabaseCallbacksImpl objects to makes sure that it is
-  // destroyed on thread exit if the Mojo pipe is not yet closed. Otherwise the
-  // object will leak because the thread's task runner is no longer executing
-  // tasks.
-  CallbackStateSet mojo_owned_callback_state_;
-  DatabaseCallbackStateSet mojo_owned_database_callback_state_;
-  bool in_destructor_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(IndexedDBDispatcher);
 };

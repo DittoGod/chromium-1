@@ -5,7 +5,7 @@
 Polymer({
   is: 'print-preview-color-settings',
 
-  behaviors: [SettingsBehavior],
+  behaviors: [SettingsBehavior, print_preview_new.SelectBehavior],
 
   properties: {
     disabled: Boolean,
@@ -14,15 +14,15 @@ Polymer({
   observers: ['onColorSettingChange_(settings.color.value)'],
 
   /**
-   * @param {*} value The new value of the color setting.
+   * @param {*} newValue The new value of the color setting.
    * @private
    */
-  onColorSettingChange_: function(value) {
-    this.$$('select').value = /** @type {boolean} */ (value) ? 'color' : 'bw';
+  onColorSettingChange_: function(newValue) {
+    this.selectedValue = /** @type {boolean} */ (newValue) ? 'color' : 'bw';
   },
 
-  /** @private */
-  onChange_: function() {
-    this.setSetting('color', this.$$('select').value == 'color');
+  /** @param {string} value The new select value. */
+  onProcessSelectChange: function(value) {
+    this.setSetting('color', value == 'color');
   },
 });

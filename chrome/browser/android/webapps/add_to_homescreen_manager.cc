@@ -22,7 +22,7 @@
 #include "jni/AddToHomescreenManager_jni.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/WebKit/public/platform/modules/installation/installation.mojom.h"
+#include "third_party/blink/public/platform/modules/installation/installation.mojom.h"
 #include "ui/gfx/android/java_bitmap.h"
 
 using base::android::JavaParamRef;
@@ -132,7 +132,7 @@ void AddToHomescreenManager::OnUserTitleAvailable(
                url, url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC));
   Java_AddToHomescreenManager_onUserTitleAvailable(
       env, java_ref_, j_user_title, j_url,
-      !is_webapk_compatible_ /* isTitleEditable */);
+      is_webapk_compatible_ /* isWebapp */);
 }
 
 void AddToHomescreenManager::OnDataAvailable(const ShortcutInfo& info,

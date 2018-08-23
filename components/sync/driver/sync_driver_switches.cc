@@ -17,6 +17,10 @@ const char kSyncDisableDeferredStartup[] = "sync-disable-deferred-startup";
 // Enables feature to avoid unnecessary GetUpdate requests.
 const char kSyncEnableGetUpdateAvoidance[] = "sync-enable-get-update-avoidance";
 
+// Controls whether the initial state of the "Capture Specifics" flag on
+// chrome://sync-internals is enabled.
+const char kSyncIncludeSpecificsInProtocolLog[] = "sync-include-specifics";
+
 // Overrides the default server used for profile sync.
 const char kSyncServiceURL[] = "sync-url";
 
@@ -36,6 +40,11 @@ const char kSyncShortNudgeDelayForTest[] = "sync-short-nudge-delay-for-test";
 const base::Feature kSyncClearDataOnPassphraseEncryption{
     "ClearSyncDataOnPassphraseEncryption", base::FEATURE_DISABLED_BY_DEFAULT};
 
+// If enabled, allows the Sync machinery ("transport layer") to start
+// independently of Sync-the-feature.
+const base::Feature kSyncStandaloneTransport{"SyncStandaloneTransport",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Gates registration and construction of user events machinery. Enabled by
 // default as each use case should have their own gating feature as well.
 const base::Feature kSyncUserEvents{"SyncUserEvents",
@@ -49,6 +58,11 @@ const base::Feature kSyncUserFieldTrialEvents{"SyncUserFieldTrialEvents",
 const base::Feature kSyncUserConsentEvents{"SyncUserConsentEvents",
                                            base::FEATURE_ENABLED_BY_DEFAULT};
 
+// Emit user consents through a separate sync type USER_CONSENTS instead of
+// USER_EVENTS. This feature does not override kSyncUserConsentEvents.
+const base::Feature kSyncUserConsentSeparateType{
+    "SyncUserConsentSeparateType", base::FEATURE_ENABLED_BY_DEFAULT};
+
 // Gates registration for user language detection events.
 const base::Feature kSyncUserLanguageDetectionEvents{
     "SyncUserLanguageDetectionEvents", base::FEATURE_DISABLED_BY_DEFAULT};
@@ -57,16 +71,24 @@ const base::Feature kSyncUserLanguageDetectionEvents{
 const base::Feature kSyncUserTranslationEvents{
     "SyncUserTranslationEvents", base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Enables USS implementation of Autocomplete datatype.
-const base::Feature kSyncUSSAutocomplete{"SyncUSSAutocomplete",
-                                         base::FEATURE_ENABLED_BY_DEFAULT};
-
 // Enable USS implementation of Bookmarks datatype.
 const base::Feature kSyncUSSBookmarks{"SyncUSSBookmarks",
                                       base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Enables USS implementation of typed URL datatype.
-const base::Feature kSyncUSSTypedURL{"SyncUSSTypedURL",
-                                     base::FEATURE_DISABLED_BY_DEFAULT};
+// Enable USS implementation of sessions.
+const base::Feature kSyncUSSSessions{"SyncUSSSessions",
+                                     base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enable USS implementation of autofill profile datatype.
+const base::Feature kSyncUSSAutofillProfile{"SyncUSSAutofillProfile",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enable USS implementation of autofill wallet datatype.
+const base::Feature kSyncUSSAutofillWalletData{
+    "SyncUSSAutofillWalletData", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enable USS implementation of autofill wallet metadata datatype.
+const base::Feature kSyncUSSAutofillWalletMetadata{
+    "SyncUSSAutofillWalletMetadata", base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace switches

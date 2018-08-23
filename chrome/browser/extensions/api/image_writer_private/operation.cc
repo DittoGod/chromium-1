@@ -8,7 +8,7 @@
 
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
@@ -251,8 +251,8 @@ void Operation::GetMD5SumOfFile(
     }
   }
 
-  PostTask(base::BindOnce(&Operation::MD5Chunk, this, Passed(std::move(file)),
-                          0, file_size, progress_offset, progress_scale,
+  PostTask(base::BindOnce(&Operation::MD5Chunk, this, std::move(file), 0,
+                          file_size, progress_offset, progress_scale,
                           std::move(callback)));
 }
 
@@ -294,10 +294,9 @@ void Operation::MD5Chunk(
           progress_offset;
       SetProgress(percent_curr);
 
-      PostTask(base::BindOnce(&Operation::MD5Chunk, this,
-                              Passed(std::move(file)), bytes_processed + len,
-                              bytes_total, progress_offset, progress_scale,
-                              std::move(callback)));
+      PostTask(base::BindOnce(
+          &Operation::MD5Chunk, this, std::move(file), bytes_processed + len,
+          bytes_total, progress_offset, progress_scale, std::move(callback)));
       // Skip closing the file.
       return;
     } else {

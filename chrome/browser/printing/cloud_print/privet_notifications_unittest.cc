@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
@@ -80,7 +79,7 @@ class MockPrivetHttpFactory : public PrivetHTTPAsynchronousFactory {
 
   std::unique_ptr<PrivetHTTPResolution> CreatePrivetHTTP(
       const std::string& name) override {
-    return base::MakeUnique<MockResolution>(name, request_context_.get());
+    return std::make_unique<MockResolution>(name, request_context_.get());
   }
 
  private:
@@ -101,7 +100,7 @@ class PrivetNotificationsListenerTest : public testing::Test {
     description_.description = kExampleDeviceDescription;
   }
 
-  virtual ~PrivetNotificationsListenerTest() {}
+  ~PrivetNotificationsListenerTest() override {}
 
   bool SuccessfulResponseToInfo(const std::string& response) {
     net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
@@ -256,7 +255,7 @@ class PrivetNotificationsNotificationTest : public testing::Test {
   void SetUp() override {
     testing::Test::SetUp();
 
-    profile_manager_ = base::MakeUnique<TestingProfileManager>(
+    profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     ASSERT_TRUE(profile_manager_->SetUp());
     profile_ = profile_manager_->CreateTestingProfile("test-user");
@@ -264,7 +263,7 @@ class PrivetNotificationsNotificationTest : public testing::Test {
         std::make_unique<NotificationDisplayServiceTester>(profile_);
 
     TestingBrowserProcess::GetGlobal()->SetNotificationUIManager(
-        base::MakeUnique<StubNotificationUIManager>());
+        std::make_unique<StubNotificationUIManager>());
   }
 
   void TearDown() override {

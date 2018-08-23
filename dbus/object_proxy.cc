@@ -11,7 +11,6 @@
 #include "base/bind_helpers.h"
 #include "base/debug/leak_annotations.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
@@ -49,10 +48,6 @@ constexpr char kDBusSystemObjectAddress[] = "org.freedesktop.DBus";
 
 // The NameOwnerChanged member in |kDBusSystemObjectInterface|.
 constexpr char kNameOwnerChangedMember[] = "NameOwnerChanged";
-
-// An empty function used for ObjectProxy::EmptyResponseCallback().
-void EmptyResponseCallbackBody(Response* /*response*/) {
-}
 
 }  // namespace
 
@@ -293,7 +288,7 @@ void ObjectProxy::WaitForServiceToBeAvailable(
 void ObjectProxy::Detach() {
   bus_->AssertOnDBusThread();
 
-  if (bus_->is_connected())
+  if (bus_->IsConnected())
     bus_->RemoveFilterFunction(&ObjectProxy::HandleMessageThunk, this);
 
   for (const auto& match_rule : match_rules_) {
@@ -311,11 +306,6 @@ void ObjectProxy::Detach() {
     dbus_pending_call_unref(pending_call);
   }
   pending_calls_.clear();
-}
-
-// static
-ObjectProxy::ResponseCallback ObjectProxy::EmptyResponseCallback() {
-  return base::Bind(&EmptyResponseCallbackBody);
 }
 
 void ObjectProxy::StartAsyncMethodCall(int timeout_ms,
@@ -472,10 +462,10 @@ bool ObjectProxy::ConnectToSignalInternal(const std::string& interface_name,
       GetAbsoluteMemberName(interface_name, signal_name);
 
   // Add a match rule so the signal goes through HandleMessage().
-  const std::string match_rule =
-      base::StringPrintf("type='signal', interface='%s', path='%s'",
-                         interface_name.c_str(),
-                         object_path_.value().c_str());
+  const std::string match_rule = base::StringPrintf(
+      "type='signal', sender='%s', interface='%s', path='%s'",
+      service_name_.c_str(), interface_name.c_str(),
+      object_path_.value().c_str());
   return AddMatchRuleWithCallback(match_rule,
                                   absolute_signal_name,
                                   signal_callback);
@@ -529,6 +519,11 @@ DBusHandlerResult ObjectProxy::HandleMessage(
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
   }
 
+  std::string sender = signal->GetSender();
+  // Ignore message from sender we are not interested in.
+  if (service_name_owner_ != sender)
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
   const std::string interface = signal->GetInterface();
   const std::string member = signal->GetMember();
 
@@ -543,12 +538,6 @@ DBusHandlerResult ObjectProxy::HandleMessage(
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
   }
   VLOG(1) << "Signal received: " << signal->ToString();
-
-  std::string sender = signal->GetSender();
-  if (service_name_owner_ != sender) {
-    LOG(ERROR) << "Rejecting a message from a wrong sender.";
-    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-  }
 
   const base::TimeTicks start_time = base::TimeTicks::Now();
   if (bus_->HasDBusThread()) {

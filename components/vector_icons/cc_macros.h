@@ -15,20 +15,13 @@
 #define VECTOR_ICON_ID_PREFIX ""
 #endif
 
-#define PATH_ELEMENT_TEMPLATE(path_name, ...) \
+#define VECTOR_ICON_REP_TEMPLATE(path_name, ...) \
   static constexpr gfx::PathElement path_name[] = {__VA_ARGS__};
 
-// The VectorIcon will be called kMyIcon, and the identifier for the icon might
-// be "my_namespace::kMyIconId".
-#define VECTOR_ICON_TEMPLATE(icon_name, path_name)                             \
-  const char icon_name##Id[] = VECTOR_ICON_ID_PREFIX #icon_name;               \
-  const gfx::VectorIcon icon_name = {path_name, arraysize(path_name), nullptr, \
-                                     0u, icon_name##Id};
-
-#define VECTOR_ICON_TEMPLATE2(icon_name, path_name, path_name_1x)           \
-  const char icon_name##Id[] = VECTOR_ICON_ID_PREFIX #icon_name;            \
-  const gfx::VectorIcon icon_name = {path_name, arraysize(path_name),       \
-                                     path_name_1x, arraysize(path_name_1x), \
+#define VECTOR_ICON_TEMPLATE_CC(rep_list_name, icon_name, ...)                \
+  constexpr char icon_name##Id[] = VECTOR_ICON_ID_PREFIX #icon_name;          \
+  static constexpr gfx::VectorIconRep rep_list_name[] = {__VA_ARGS__};        \
+  const gfx::VectorIcon icon_name = {rep_list_name, arraysize(rep_list_name), \
                                      icon_name##Id};
 
 #else  // !COMPONENTS_VECTOR_ICONS_CC_MACROS_H_

@@ -54,8 +54,9 @@ class ChromePaymentRequestDelegate : public ContentPaymentRequestDelegate {
  protected:
   // Reference to the dialog so that we can satisfy calls to CloseDialog(). This
   // reference is invalid once CloseDialog() has been called on it, because the
-  // dialog will be destroyed. Protected for testing.
-  PaymentRequestDialog* dialog_;
+  // dialog will be destroyed. Owned by the views:: dialog machinery. Protected
+  // for testing.
+  PaymentRequestDialog* shown_dialog_;
 
  private:
   // Not owned but outlives the PaymentRequest object that owns this.

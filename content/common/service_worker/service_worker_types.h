@@ -17,15 +17,14 @@
 #include "content/common/content_export.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/request_context_type.h"
-#include "content/public/common/service_worker_modes.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "services/network/public/mojom/request_context_frame_type.mojom.h"
-#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
-#include "third_party/WebKit/common/service_worker/service_worker_client.mojom.h"
-#include "third_party/WebKit/common/service_worker/service_worker_object.mojom.h"
-#include "third_party/WebKit/common/service_worker/service_worker_registration.mojom.h"
-#include "third_party/WebKit/common/service_worker/service_worker_state.mojom.h"
-#include "third_party/WebKit/public/platform/modules/fetch/fetch_api_request.mojom.h"
+#include "third_party/blink/public/mojom/page/page_visibility_state.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_client.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_state.mojom.h"
+#include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom.h"
 #include "url/gurl.h"
 
 // This file is to have common definitions that are to be shared by
@@ -47,11 +46,18 @@ extern const char kServiceWorkerUpdateErrorPrefix[];
 extern const char kServiceWorkerUnregisterErrorPrefix[];
 extern const char kServiceWorkerGetRegistrationErrorPrefix[];
 extern const char kServiceWorkerGetRegistrationsErrorPrefix[];
-extern const char kFetchScriptError[];
+extern const char kServiceWorkerFetchScriptError[];
+extern const char kServiceWorkerBadHTTPResponseError[];
+extern const char kServiceWorkerSSLError[];
+extern const char kServiceWorkerBadMIMEError[];
+extern const char kServiceWorkerNoMIMEError[];
+extern const char kServiceWorkerRedirectError[];
+extern const char kServiceWorkerAllowed[];
 
 // Constants for invalid identifiers.
-static const int64_t kInvalidServiceWorkerResourceId = -1;
 static const int kInvalidEmbeddedWorkerThreadId = -1;
+static const int kInvalidServiceWorkerProviderId = -1;
+static const int64_t kInvalidServiceWorkerResourceId = -1;
 
 // The HTTP cache is bypassed for Service Worker scripts if the last network
 // fetch occurred over 24 hours ago.
@@ -69,7 +75,10 @@ using ServiceWorkerHeaderMap =
 
 using ServiceWorkerHeaderList = std::vector<std::string>;
 
-// To dispatch fetch request from browser to child process.
+// Roughly corresponds to Fetch API's Request type. This struct is no longer
+// used by the core Service Worker API. Background Fetch and Cache Storage APIs
+// use it.
+// TODO(falken): Move this out of service_worker_types.h and rename it.
 struct CONTENT_EXPORT ServiceWorkerFetchRequest {
   ServiceWorkerFetchRequest();
   ServiceWorkerFetchRequest(const GURL& url,
@@ -81,10 +90,14 @@ struct CONTENT_EXPORT ServiceWorkerFetchRequest {
   ServiceWorkerFetchRequest& operator=(const ServiceWorkerFetchRequest& other);
   ~ServiceWorkerFetchRequest();
   size_t EstimatedStructSize();
+  std::string Serialize() const;
 
   static blink::mojom::FetchCacheMode GetCacheModeFromLoadFlags(int load_flags);
+  static ServiceWorkerFetchRequest ParseFromString(
+      const std::string& serialized);
 
-  // Be sure to update EstimatedStructSize() when adding members.
+  // Be sure to update EstimatedStructSize(), Serialize(), and ParseFromString()
+  // when adding members.
   network::mojom::FetchRequestMode mode =
       network::mojom::FetchRequestMode::kNoCORS;
   bool is_main_resource_load = false;
@@ -94,9 +107,6 @@ struct CONTENT_EXPORT ServiceWorkerFetchRequest {
   GURL url;
   std::string method;
   ServiceWorkerHeaderMap headers;
-  std::string blob_uuid;
-  uint64_t blob_size = 0;
-  scoped_refptr<storage::BlobHandle> blob;
   Referrer referrer;
   network::mojom::FetchCredentialsMode credentials_mode =
       network::mojom::FetchCredentialsMode::kOmit;
@@ -108,55 +118,7 @@ struct CONTENT_EXPORT ServiceWorkerFetchRequest {
   bool keepalive = false;
   std::string client_id;
   bool is_reload = false;
-  ServiceWorkerFetchType fetch_type = ServiceWorkerFetchType::FETCH;
-};
-
-// Represents a response to a fetch.
-struct CONTENT_EXPORT ServiceWorkerResponse {
-  ServiceWorkerResponse();
-  ServiceWorkerResponse(
-      std::unique_ptr<std::vector<GURL>> url_list,
-      int status_code,
-      const std::string& status_text,
-      network::mojom::FetchResponseType response_type,
-      std::unique_ptr<ServiceWorkerHeaderMap> headers,
-      const std::string& blob_uuid,
-      uint64_t blob_size,
-      scoped_refptr<storage::BlobHandle> blob,
-      blink::mojom::ServiceWorkerResponseError error,
-      base::Time response_time,
-      bool is_in_cache_storage,
-      const std::string& cache_storage_cache_name,
-      std::unique_ptr<ServiceWorkerHeaderList> cors_exposed_header_names);
-  ServiceWorkerResponse(const ServiceWorkerResponse& other);
-  ServiceWorkerResponse& operator=(const ServiceWorkerResponse& other);
-  ~ServiceWorkerResponse();
-  size_t EstimatedStructSize();
-
-  // Be sure to update EstimatedStructSize() when adding members.
-  std::vector<GURL> url_list;
-  int status_code;
-  std::string status_text;
-  network::mojom::FetchResponseType response_type;
-  ServiceWorkerHeaderMap headers;
-  // |blob_uuid| and |blob_size| are set when the body is a blob. For other
-  // types of responses, the body is provided separately in Mojo IPC via
-  // ServiceWorkerFetchResponseCallback.
-  std::string blob_uuid;
-  uint64_t blob_size;
-  // |blob| is only used when features::kMojoBlobs is enabled.
-  scoped_refptr<storage::BlobHandle> blob;
-  blink::mojom::ServiceWorkerResponseError error;
-  base::Time response_time;
-  bool is_in_cache_storage = false;
-  std::string cache_storage_cache_name;
-  ServiceWorkerHeaderList cors_exposed_header_names;
-
-  // Side data is used to pass the metadata of the response (eg: V8 code cache).
-  std::string side_data_blob_uuid;
-  uint64_t side_data_blob_size = 0;
-  // |side_data_blob| is only used when features::kMojoBlobs is enabled.
-  scoped_refptr<storage::BlobHandle> side_data_blob;
+  bool is_history_navigation = false;
 };
 
 class ChangedVersionAttributesMask {

@@ -37,17 +37,16 @@ public class OverlayPanelManagerTest {
     // --------------------------------------------------------------------------------------------
 
     /**
-     * Mocks the ContextualSearchPanel, so it doesn't create ContentViewCore.
+     * Mocks the ContextualSearchPanel, so it doesn't create WebContents.
      */
-    public static class MockOverlayPanel extends OverlayPanel {
-
-        private PanelPriority mPriority;
+    private static class MockOverlayPanel extends OverlayPanel {
+        private @PanelPriority int mPriority;
         private boolean mCanBeSuppressed;
         private ViewGroup mContainerView;
         private DynamicResourceLoader mResourceLoader;
 
         public MockOverlayPanel(Context context, LayoutUpdateHost updateHost,
-                OverlayPanelManager panelManager, PanelPriority priority,
+                OverlayPanelManager panelManager, @PanelPriority int priority,
                 boolean canBeSuppressed) {
             super(context, updateHost, panelManager);
             mPriority = priority;
@@ -60,6 +59,7 @@ public class OverlayPanelManagerTest {
             mContainerView = container;
         }
 
+        @Override
         public ViewGroup getContainerView() {
             return mContainerView;
         }
@@ -80,7 +80,7 @@ public class OverlayPanelManagerTest {
         }
 
         @Override
-        public PanelPriority getPriority() {
+        public @PanelPriority int getPriority() {
             return mPriority;
         }
 
@@ -95,13 +95,13 @@ public class OverlayPanelManagerTest {
         }
 
         @Override
-        public void closePanel(StateChangeReason reason, boolean animate) {
+        public void closePanel(@StateChangeReason int reason, boolean animate) {
             // Immediately call onClosed rather than wait for animation to finish.
             onClosed(reason);
         }
 
         /**
-         * Override creation and destruction of the ContentViewCore as they rely on native methods.
+         * Override creation and destruction of the WebContents as they rely on native methods.
          */
         private static class MockOverlayPanelContent extends OverlayPanelContent {
             public MockOverlayPanelContent() {

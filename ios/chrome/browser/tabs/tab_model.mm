@@ -470,16 +470,6 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
   return static_cast<NSUInteger>(index);
 }
 
-- (Tab*)openerOfTab:(Tab*)tab {
-  int index = _webStateList->GetIndexOfWebState(tab.webState);
-  if (index == WebStateList::kInvalidIndex)
-    return nil;
-
-  WebStateOpener opener = _webStateList->GetOpenerOfWebStateAt(index);
-  return opener.opener ? LegacyTabHelper::GetTabForWebState(opener.opener)
-                       : nil;
-}
-
 - (Tab*)insertTabWithURL:(const GURL&)URL
                 referrer:(const web::Referrer&)referrer
               transition:(ui::PageTransition)transition
@@ -873,7 +863,7 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
     didCommitNavigationWithDetails:
         (const web::LoadCommittedDetails&)load_details {
   Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
-  [self notifyTabChanged:tab];
+  [self notifyTabLoading:tab];
 
   web::NavigationItem* previousItem = nullptr;
   if (load_details.previous_item_index >= 0) {

@@ -31,7 +31,7 @@ group("libcast_media") {
     }
   } else if (is_fuchsia) {
     deps = [
-      "//chromecast/media/cma/backend/fuchsia",
+      "//chromecast/media/cma/backend/fuchsia:media_backend",
     ]
   } else {
     deps = [
@@ -48,6 +48,7 @@ test("cast_media_unittests") {
     "base/media_resource_tracker_unittest.cc",
     "base/slew_volume_unittests.cc",
     "base/supported_codec_profile_levels_memo_unittest.cc",
+    "cma/backend/audio_decoder_software_wrapper_unittest.cc",
     "test/run_all_unittests.cc",
   ]
 
@@ -62,9 +63,14 @@ test("cast_media_unittests") {
     "//base/test:test_support",
     "//chromecast/base",
     "//chromecast/base/metrics:test_support",
+    "//chromecast/common/mojom",
     "//chromecast/media/cma:test_support",
     "//chromecast/public",
+    "//content/test:test_support",
     "//media:test_support",
+    "//media/mojo:test_support",
+    "//mojo/core/embedder",
+    "//services/service_manager/public/cpp",
     "//testing/gmock",
     "//testing/gtest",
   ]

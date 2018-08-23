@@ -73,7 +73,8 @@ std::unique_ptr<const PermissionSet> PermissionSet::CreateDifference(
 // static
 std::unique_ptr<const PermissionSet> PermissionSet::CreateIntersection(
     const PermissionSet& set1,
-    const PermissionSet& set2) {
+    const PermissionSet& set2,
+    URLPatternSet::IntersectionBehavior intersection_behavior) {
   APIPermissionSet apis;
   APIPermissionSet::Intersection(set1.apis(), set2.apis(), &apis);
 
@@ -82,10 +83,10 @@ std::unique_ptr<const PermissionSet> PermissionSet::CreateIntersection(
                                       set2.manifest_permissions(),
                                       &manifest_permissions);
 
-  URLPatternSet explicit_hosts = URLPatternSet::CreateSemanticIntersection(
-      set1.explicit_hosts(), set2.explicit_hosts());
-  URLPatternSet scriptable_hosts = URLPatternSet::CreateSemanticIntersection(
-      set1.scriptable_hosts(), set2.scriptable_hosts());
+  URLPatternSet explicit_hosts = URLPatternSet::CreateIntersection(
+      set1.explicit_hosts(), set2.explicit_hosts(), intersection_behavior);
+  URLPatternSet scriptable_hosts = URLPatternSet::CreateIntersection(
+      set1.scriptable_hosts(), set2.scriptable_hosts(), intersection_behavior);
 
   return base::WrapUnique(new PermissionSet(apis, manifest_permissions,
                                             explicit_hosts, scriptable_hosts));

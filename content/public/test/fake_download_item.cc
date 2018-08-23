@@ -183,6 +183,14 @@ bool FakeDownloadItem::IsTransient() const {
   return is_transient_;
 }
 
+void FakeDownloadItem::SetIsParallelDownload(bool is_parallel_download) {
+  is_parallel_download_ = is_parallel_download;
+}
+
+bool FakeDownloadItem::IsParallelDownload() const {
+  return is_parallel_download_;
+}
+
 void FakeDownloadItem::SetIsDone(bool is_done) {
   is_done_ = is_done;
 }
@@ -258,6 +266,11 @@ bool FakeDownloadItem::CanResume() const {
   return false;
 }
 
+int64_t FakeDownloadItem::GetBytesWasted() const {
+  NOTREACHED();
+  return 0;
+}
+
 const GURL& FakeDownloadItem::GetReferrerUrl() const {
   NOTREACHED();
   return dummy_url;
@@ -322,6 +335,11 @@ const base::FilePath& FakeDownloadItem::GetForcedFilePath() const {
   return dummy_file_path;
 }
 
+base::FilePath FakeDownloadItem::GetTemporaryFilePath() const {
+  NOTREACHED();
+  return dummy_file_path;
+}
+
 base::FilePath FakeDownloadItem::GetFileNameToReportUser() const {
   NOTREACHED();
   return base::FilePath();
@@ -341,6 +359,10 @@ const std::string& FakeDownloadItem::GetHash() const {
 void FakeDownloadItem::DeleteFile(const base::Callback<void(bool)>& callback) {
   NOTREACHED();
   callback.Run(false);
+}
+
+download::DownloadFile* FakeDownloadItem::GetDownloadFile() {
+  return nullptr;
 }
 
 bool FakeDownloadItem::IsDangerous() const {

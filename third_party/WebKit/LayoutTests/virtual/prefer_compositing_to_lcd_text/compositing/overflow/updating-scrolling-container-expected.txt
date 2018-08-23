@@ -5,6 +5,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "contentsOpaque": true,
       "drawsContent": true,
       "children": [
@@ -60,12 +61,6 @@
           ]
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='container'",
-      "reason": "style change"
     }
   ]
 }

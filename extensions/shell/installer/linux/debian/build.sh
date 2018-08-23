@@ -62,11 +62,10 @@ stage_install_debian() {
 
 # Actually generate the package file.
 do_package() {
-  echo "Packaging ${ARCHITECTURE}..."
+  log_cmd echo "Packaging ${ARCHITECTURE}..."
   PREDEPENDS="$COMMON_PREDEPS"
   DEPENDS="${COMMON_DEPS}"
-  REPLACES=""
-  CONFLICTS=""
+  RECOMMENDS="${COMMON_RECOMMENDS}"
   PROVIDES=""
   gen_changelog
   process_template "${SCRIPTDIR}/control.template" "${DEB_CONTROL}"
@@ -79,7 +78,7 @@ do_package() {
   else
     local COMPRESSION_OPTS="-Znone"
   fi
-  fakeroot dpkg-deb ${COMPRESSION_OPTS} -b "${STAGEDIR}" .
+  log_cmd fakeroot dpkg-deb ${COMPRESSION_OPTS} -b "${STAGEDIR}" .
 }
 
 verify_package() {
@@ -100,7 +99,7 @@ verify_package() {
 
 # Remove temporary files and unwanted packaging output.
 cleanup() {
-  echo "Cleaning..."
+  log_cmd echo "Cleaning..."
   rm -rf "${STAGEDIR}"
   rm -rf "${TMPFILEDIR}"
 }
@@ -256,7 +255,7 @@ else
 fi
 SHLIB_ARGS="${SHLIB_ARGS} -l${SYSROOT}/usr/lib"
 DPKG_SHLIB_DEPS=$(cd ${SYSROOT} && dpkg-shlibdeps ${SHLIB_ARGS:-} -O \
-                  -e"$BUILDDIR/app_shell" | sed 's/^shlibs:Depends=//')
+  -e"$BUILDDIR/app_shell" 2>/dev/null | sed 's/^shlibs:Depends=//')
 if [ -n "$SAVE_LDLP" ]; then
   LD_LIBRARY_PATH=$SAVE_LDLP
 fi
@@ -284,6 +283,7 @@ DPKG_SHLIB_DEPS=$(sed 's/\(libnss3 ([^)]*)\), //g' <<< $DPKG_SHLIB_DEPS)
 
 COMMON_DEPS="${DPKG_SHLIB_DEPS}, ${ADDITIONAL_DEPS}"
 COMMON_PREDEPS="dpkg (>= 1.14.0)"
+COMMON_RECOMMENDS="libu2f-udev"
 
 
 # Make everything happen in the OUTPUTDIR.

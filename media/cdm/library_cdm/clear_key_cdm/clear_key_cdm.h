@@ -17,12 +17,13 @@
 #include "base/synchronization/lock.h"
 #include "media/base/cdm_key_information.h"
 #include "media/base/cdm_promise.h"
+#include "media/cdm/api/content_decryption_module.h"
 #include "media/cdm/library_cdm/clear_key_cdm/clear_key_persistent_session_cdm.h"
 
 namespace media {
 
 class CdmHostProxy;
-class CdmProxyTest;
+class CdmProxyHandler;
 class CdmVideoDecoder;
 class DecoderBuffer;
 class FFmpegCdmAudioDecoder;
@@ -32,7 +33,8 @@ const int64_t kInitialTimerDelayMs = 200;
 
 // Clear key implementation of the cdm::ContentDecryptionModule interfaces.
 class ClearKeyCdm : public cdm::ContentDecryptionModule_9,
-                    public cdm::ContentDecryptionModule_10 {
+                    public cdm::ContentDecryptionModule_10,
+                    public cdm::ContentDecryptionModule_11 {
  public:
   template <typename HostInterface>
   ClearKeyCdm(HostInterface* host, const std::string& key_system);
@@ -41,11 +43,33 @@ class ClearKeyCdm : public cdm::ContentDecryptionModule_9,
   // cdm::ContentDecryptionModule_9 implementation.
   void Initialize(bool allow_distinctive_identifier,
                   bool allow_persistent_state) override;
+  cdm::Status InitializeAudioDecoder(
+      const cdm::AudioDecoderConfig_1& audio_decoder_config) override;
+  cdm::Status InitializeVideoDecoder(
+      const cdm::VideoDecoderConfig_1& video_decoder_config) override;
+  cdm::Status Decrypt(const cdm::InputBuffer_1& encrypted_buffer,
+                      cdm::DecryptedBlock* decrypted_block) override;
+  cdm::Status DecryptAndDecodeFrame(const cdm::InputBuffer_1& encrypted_buffer,
+                                    cdm::VideoFrame* video_frame) override;
+  cdm::Status DecryptAndDecodeSamples(
+      const cdm::InputBuffer_1& encrypted_buffer,
+      cdm::AudioFrames* audio_frames) override;
 
-  // cdm::ContentDecryptionModule_10 implementation.
+  // cdm::ContentDecryptionModule_10/11 implementation.
   void Initialize(bool allow_distinctive_identifier,
                   bool allow_persistent_state,
                   bool use_hw_secure_codecs) override;
+  cdm::Status InitializeAudioDecoder(
+      const cdm::AudioDecoderConfig_2& audio_decoder_config) override;
+  cdm::Status InitializeVideoDecoder(
+      const cdm::VideoDecoderConfig_2& video_decoder_config) override;
+  cdm::Status Decrypt(const cdm::InputBuffer_2& encrypted_buffer,
+                      cdm::DecryptedBlock* decrypted_block) override;
+  cdm::Status DecryptAndDecodeFrame(const cdm::InputBuffer_2& encrypted_buffer,
+                                    cdm::VideoFrame* video_frame) override;
+  cdm::Status DecryptAndDecodeSamples(
+      const cdm::InputBuffer_2& encrypted_buffer,
+      cdm::AudioFrames* audio_frames) override;
 
   // Common cdm::ContentDecryptionModule_* implementation.
   void GetStatusForPolicy(uint32_t promise_id,
@@ -74,18 +98,8 @@ class ClearKeyCdm : public cdm::ContentDecryptionModule_9,
                             const uint8_t* server_certificate_data,
                             uint32_t server_certificate_data_size) override;
   void TimerExpired(void* context) override;
-  cdm::Status Decrypt(const cdm::InputBuffer& encrypted_buffer,
-                      cdm::DecryptedBlock* decrypted_block) override;
-  cdm::Status InitializeAudioDecoder(
-      const cdm::AudioDecoderConfig& audio_decoder_config) override;
-  cdm::Status InitializeVideoDecoder(
-      const cdm::VideoDecoderConfig& video_decoder_config) override;
   void DeinitializeDecoder(cdm::StreamType decoder_type) override;
   void ResetDecoder(cdm::StreamType decoder_type) override;
-  cdm::Status DecryptAndDecodeFrame(const cdm::InputBuffer& encrypted_buffer,
-                                    cdm::VideoFrame* video_frame) override;
-  cdm::Status DecryptAndDecodeSamples(const cdm::InputBuffer& encrypted_buffer,
-                                      cdm::AudioFrames* audio_frames) override;
   void Destroy() override;
   void OnPlatformChallengeResponse(
       const cdm::PlatformChallengeResponse& response) override;
@@ -132,7 +146,7 @@ class ClearKeyCdm : public cdm::ContentDecryptionModule_9,
   // Returns cdm::kDecryptError if any decryption error occurred. In this case
   // |decrypted_buffer| should be ignored by the caller.
   cdm::Status DecryptToMediaDecoderBuffer(
-      const cdm::InputBuffer& encrypted_buffer,
+      const cdm::InputBuffer_2& encrypted_buffer,
       scoped_refptr<DecoderBuffer>* decrypted_buffer);
 
   void OnUnitTestComplete(bool success);
@@ -145,9 +159,8 @@ class ClearKeyCdm : public cdm::ContentDecryptionModule_9,
   void ReportVerifyCdmHostTestResult();
   void StartStorageIdTest();
 
-  void StartCdmProxyTest();
-  void OnCdmProxyTestComplete(bool success);
-  void ReportCdmProxyTestResult();
+  void InitializeCdmProxyHandler();
+  void OnCdmProxyHandlerInitialized(bool success);
 
   int host_interface_version_ = 0;
 
@@ -175,12 +188,11 @@ class ClearKeyCdm : public cdm::ContentDecryptionModule_9,
 
   std::unique_ptr<CdmVideoDecoder> video_decoder_;
   std::unique_ptr<FileIOTestRunner> file_io_test_runner_;
-  std::unique_ptr<CdmProxyTest> cdm_proxy_test_;
+  std::unique_ptr<CdmProxyHandler> cdm_proxy_handler_;
 
   bool is_running_output_protection_test_ = false;
   bool is_running_platform_verification_test_ = false;
   bool is_running_storage_id_test_ = false;
-  bool has_cdm_proxy_test_passed_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ClearKeyCdm);
 };

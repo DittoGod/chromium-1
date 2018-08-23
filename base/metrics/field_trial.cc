@@ -13,6 +13,7 @@
 #include "base/debug/activity_tracker.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial_param_associator.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/memory.h"
 #include "base/process/process_handle.h"
 #include "base/process/process_info.h"
@@ -833,6 +834,8 @@ void FieldTrialList::CreateTrialsFromCommandLine(
     std::string switch_value =
         cmd_line.GetSwitchValueASCII(field_trial_handle_switch);
     bool result = CreateTrialsFromSwitchValue(switch_value);
+    UMA_HISTOGRAM_BOOLEAN("ChildProcess.FieldTrials.CreateFromShmemSuccess",
+                          result);
     DCHECK(result);
   }
 #elif defined(OS_POSIX) && !defined(OS_NACL)
@@ -843,6 +846,8 @@ void FieldTrialList::CreateTrialsFromCommandLine(
     std::string switch_value =
         cmd_line.GetSwitchValueASCII(field_trial_handle_switch);
     bool result = CreateTrialsFromDescriptor(fd_key, switch_value);
+    UMA_HISTOGRAM_BOOLEAN("ChildProcess.FieldTrials.CreateFromShmemSuccess",
+                          result);
     DCHECK(result);
   }
 #endif
@@ -851,6 +856,8 @@ void FieldTrialList::CreateTrialsFromCommandLine(
     bool result = FieldTrialList::CreateTrialsFromString(
         cmd_line.GetSwitchValueASCII(switches::kForceFieldTrials),
         std::set<std::string>());
+    UMA_HISTOGRAM_BOOLEAN("ChildProcess.FieldTrials.CreateFromSwitchSuccess",
+                          result);
     DCHECK(result);
   }
 }
@@ -981,10 +988,11 @@ FieldTrial* FieldTrialList::CreateFieldTrial(
 }
 
 // static
-void FieldTrialList::AddObserver(Observer* observer) {
+bool FieldTrialList::AddObserver(Observer* observer) {
   if (!global_)
-    return;
+    return false;
   global_->observer_list_->AddObserver(observer);
+  return true;
 }
 
 // static
@@ -992,6 +1000,18 @@ void FieldTrialList::RemoveObserver(Observer* observer) {
   if (!global_)
     return;
   global_->observer_list_->RemoveObserver(observer);
+}
+
+// static
+void FieldTrialList::SetSynchronousObserver(Observer* observer) {
+  DCHECK(!global_->synchronous_observer_);
+  global_->synchronous_observer_ = observer;
+}
+
+// static
+void FieldTrialList::RemoveSynchronousObserver(Observer* observer) {
+  DCHECK_EQ(global_->synchronous_observer_, observer);
+  global_->synchronous_observer_ = nullptr;
 }
 
 // static
@@ -1033,6 +1053,11 @@ void FieldTrialList::NotifyFieldTrialGroupSelection(FieldTrial* field_trial) {
   if (tracker) {
     tracker->RecordFieldTrial(field_trial->trial_name(),
                               field_trial->group_name_internal());
+  }
+
+  if (global_->synchronous_observer_) {
+    global_->synchronous_observer_->OnFieldTrialGroupFinalized(
+        field_trial->trial_name(), field_trial->group_name_internal());
   }
 
   global_->observer_list_->Notify(
@@ -1442,15 +1467,14 @@ void FieldTrialList::ActivateFieldTrialEntryWhileLocked(
   FieldTrialAllocator* allocator = global_->field_trial_allocator_.get();
 
   // Check if we're in the child process and return early if so.
-  if (allocator && allocator->IsReadonly())
+  if (!allocator || allocator->IsReadonly())
     return;
 
   FieldTrial::FieldTrialRef ref = field_trial->ref_;
   if (ref == FieldTrialAllocator::kReferenceNull) {
     // It's fine to do this even if the allocator hasn't been instantiated
     // yet -- it'll just return early.
-    AddToAllocatorWhileLocked(global_->field_trial_allocator_.get(),
-                              field_trial);
+    AddToAllocatorWhileLocked(allocator, field_trial);
   } else {
     // It's also okay to do this even though the callee doesn't have a lock --
     // the only thing that happens on a stale read here is a slight performance

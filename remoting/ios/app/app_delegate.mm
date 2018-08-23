@@ -8,6 +8,9 @@
 
 #import "remoting/ios/app/app_delegate.h"
 
+#import <AVFoundation/AVFoundation.h>
+
+#import "remoting/ios/app/app_initializer.h"
 #import "remoting/ios/app/app_view_controller.h"
 #import "remoting/ios/app/first_launch_view_presenter.h"
 #import "remoting/ios/app/help_and_feedback.h"
@@ -36,6 +39,7 @@
 
 - (BOOL)application:(UIApplication*)application
     willFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
+  [AppInitializer onAppWillFinishLaunching];
   self.window =
       [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
   self.window.backgroundColor = [UIColor whiteColor];
@@ -46,12 +50,18 @@
     didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
   [self launchRootViewController];
   [RemotingTheme applyColorSchemes];
+  [AVAudioSession.sharedInstance
+      setCategory:AVAudioSessionCategoryPlayback
+      withOptions:AVAudioSessionCategoryOptionMixWithOthers
+            error:NULL];
+  [AppInitializer onAppDidFinishLaunching];
 
   return YES;
 }
 
 #ifndef NDEBUG
 // Used by Chromium debug build to authenticate.
+// TODO(yuweih): This interface is deprecated in iOS 10 and needs some cleanups.
 - (BOOL)application:(UIApplication*)application handleOpenURL:(NSURL*)url {
   DCHECK([RemotingService.instance.authentication
       isKindOfClass:[RemotingOAuthAuthentication class]]);

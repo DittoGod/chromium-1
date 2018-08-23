@@ -35,7 +35,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/shell_integration.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
@@ -51,7 +50,6 @@
 #include "chrome/installer/util/master_preferences_constants.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
@@ -83,6 +81,10 @@ bool g_should_do_autofill_personal_data_manager_first_run = false;
 // is invoked, then used as a cache on subsequent calls.
 first_run::internal::FirstRunState g_first_run =
     first_run::internal::FIRST_RUN_UNKNOWN;
+
+// Cached first run sentinel creation time.
+// Used to avoid excess file operations.
+base::Time g_cached_sentinel_creation_time;
 
 // This class acts as an observer for the ImporterProgressObserver::ImportEnded
 // callback. When the import process is started, certain errors may cause
@@ -158,7 +160,7 @@ class FirstRunDelayedTasks : public content::NotificationObserver {
 
   void OnExtensionSystemReady(content::BrowserContext* context) {
     // Process the notification and delete this.
-    ExtensionService* service =
+    extensions::ExtensionService* service =
         extensions::ExtensionSystem::Get(context)->extension_service();
     if (service) {
       // Trigger an extension update check. If the extension specified in the
@@ -368,7 +370,7 @@ void SetupMasterPrefsFromInstallPrefs(
 
 bool GetFirstRunSentinelFilePath(base::FilePath* path) {
   base::FilePath user_data_dir;
-  if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
     return false;
   *path = user_data_dir.Append(chrome::kFirstRunSentinel);
   return true;
@@ -449,8 +451,14 @@ void CreateSentinelIfNeeded() {
 }
 
 base::Time GetFirstRunSentinelCreationTime() {
-  static const base::Time cached_time = ReadFirstRunSentinelCreationTime();
-  return cached_time;
+  if (g_cached_sentinel_creation_time.is_null())
+    g_cached_sentinel_creation_time = ReadFirstRunSentinelCreationTime();
+  return g_cached_sentinel_creation_time;
+}
+
+void ResetCachedSentinelDataForTesting() {
+  g_cached_sentinel_creation_time = base::Time();
+  g_first_run = first_run::internal::FIRST_RUN_UNKNOWN;
 }
 
 void SetShouldShowWelcomePage() {
@@ -553,7 +561,7 @@ void AutoImport(
     // It may be possible to do the if block below asynchronously. In which
     // case, get rid of this RunLoop. http://crbug.com/366116.
     base::RunLoop run_loop;
-    auto importer_list = base::MakeUnique<ImporterList>();
+    auto importer_list = std::make_unique<ImporterList>();
     importer_list->DetectSourceProfiles(
         g_browser_process->GetApplicationLocale(),
         false,  // include_interactive_profiles?

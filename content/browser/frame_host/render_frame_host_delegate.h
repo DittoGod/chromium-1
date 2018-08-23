@@ -12,18 +12,22 @@
 
 #include "base/i18n/rtl.h"
 #include "build/build_config.h"
+#include "components/viz/common/surfaces/surface_id.h"
 #include "content/browser/webui/web_ui_impl.h"
 #include "content/common/content_export.h"
 #include "content/common/frame_message_enums.h"
 #include "content/public/browser/site_instance.h"
+#include "content/public/browser/visibility.h"
 #include "content/public/common/javascript_dialog_type.h"
 #include "content/public/common/media_stream_request.h"
+#include "content/public/common/resource_load_info.mojom.h"
 #include "content/public/common/resource_type.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/http/http_response_headers.h"
-#include "services/device/public/interfaces/geolocation_context.mojom.h"
-#include "services/device/public/interfaces/wake_lock.mojom.h"
+#include "services/device/public/mojom/geolocation_context.mojom.h"
+#include "services/device/public/mojom/wake_lock.mojom.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/base/window_open_disposition.h"
 
 #if defined(OS_WIN)
@@ -32,7 +36,7 @@
 
 #if defined(OS_ANDROID)
 #include "base/android/scoped_java_ref.h"
-#include "services/device/public/interfaces/nfc.mojom.h"
+#include "services/device/public/mojom/nfc.mojom.h"
 #endif
 
 class GURL;
@@ -43,10 +47,15 @@ class Message;
 
 namespace gfx {
 class Rect;
+class Size;
 }
 
 namespace url {
 class Origin;
+}
+
+namespace blink {
+struct WebFullscreenOptions;
 }
 
 namespace content {
@@ -61,6 +70,7 @@ struct AXEventNotificationDetails;
 struct AXLocationChangeNotificationDetails;
 struct ContextMenuParams;
 struct FileChooserParams;
+struct GlobalRequestID;
 
 namespace mojom {
 class CreateNewWindowParams;
@@ -117,7 +127,6 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   virtual void RunJavaScriptDialog(RenderFrameHost* render_frame_host,
                                    const base::string16& message,
                                    const base::string16& default_prompt,
-                                   const GURL& frame_url,
                                    JavaScriptDialogType type,
                                    IPC::Message* reply_msg) {}
 
@@ -170,14 +179,14 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // The render frame has requested access to media devices listed in
   // |request|, and the client should grant or deny that permission by
   // calling |callback|.
-  virtual void RequestMediaAccessPermission(
-      const MediaStreamRequest& request,
-      const MediaResponseCallback& callback);
+  virtual void RequestMediaAccessPermission(const MediaStreamRequest& request,
+                                            MediaResponseCallback callback);
 
   // Checks if we have permission to access the microphone or camera. Note that
   // this does not query the user. |type| must be MEDIA_DEVICE_AUDIO_CAPTURE
   // or MEDIA_DEVICE_VIDEO_CAPTURE.
-  virtual bool CheckMediaAccessPermission(const url::Origin& security_origin,
+  virtual bool CheckMediaAccessPermission(RenderFrameHost* render_frame_host,
+                                          const url::Origin& security_origin,
                                           MediaStreamType type);
 
   // Returns the ID of the default device for the given media device |type|.
@@ -192,7 +201,7 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // from a render frame, when the accessibility mode has the
   // ui::AXMode::kWebContents flag set.
   virtual void AccessibilityEventReceived(
-      const std::vector<AXEventNotificationDetails>& details) {}
+      const AXEventNotificationDetails& details) {}
   virtual void AccessibilityLocationChangesReceived(
       const std::vector<AXLocationChangeNotificationDetails>& details) {}
 
@@ -215,13 +224,19 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
 
   // Notification that the frame wants to go into fullscreen mode.
   // |origin| represents the origin of the frame that requests fullscreen.
-  virtual void EnterFullscreenMode(const GURL& origin) {}
+  virtual void EnterFullscreenMode(const GURL& origin,
+                                   const blink::WebFullscreenOptions& options) {
+  }
 
   // Notification that the frame wants to go out of fullscreen mode.
   // |will_cause_resize| indicates whether the fullscreen change causes a
   // view resize. e.g. This will be false when going from tab fullscreen to
   // browser fullscreen.
   virtual void ExitFullscreenMode(bool will_cause_resize) {}
+
+  // Notification that this frame has changed fullscreen state.
+  virtual void FullscreenStateChanged(RenderFrameHost* rfh,
+                                      bool is_fullscreen) {}
 
   // Let the delegate decide whether postMessage should be delivered to
   // |target_rfh| from a source frame in the given SiteInstance.  This defaults
@@ -344,16 +359,32 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
 
   // Notifies that the render frame started loading a subresource.
   virtual void SubresourceResponseStarted(const GURL& url,
-                                          const GURL& referrer,
-                                          const std::string& method,
-                                          ResourceType resource_type,
-                                          const std::string& ip,
                                           net::CertStatus cert_status) {}
+
+  // Notifies that the render finished loading a subresource for the frame
+  // associated with |render_frame_host|.
+  virtual void ResourceLoadComplete(
+      RenderFrameHost* render_frame_host,
+      const GlobalRequestID& request_id,
+      mojom::ResourceLoadInfoPtr resource_load_info) {}
 
   // Request to print a frame that is in a different process than its parent.
   virtual void PrintCrossProcessSubframe(const gfx::Rect& rect,
                                          int document_cookie,
                                          RenderFrameHost* render_frame_host) {}
+
+  // Updates the Picture-in-Picture controller with the relevant viz::SurfaceId
+  // of the video to be in Picture-in-Picture mode.
+  virtual void UpdatePictureInPictureSurfaceId(const viz::SurfaceId& surface_id,
+                                               const gfx::Size& natural_size) {}
+
+  // Returns the visibility of the delegate.
+  virtual Visibility GetVisibility() const;
+
+  // Get the UKM source ID for current content. This is used for providing
+  // data about the content to the URL-keyed metrics service.
+  // Note: This is also exposed by the RenderWidgetHostDelegate.
+  virtual ukm::SourceId GetUkmSourceIdForLastCommittedSource() const;
 
  protected:
   virtual ~RenderFrameHostDelegate() {}

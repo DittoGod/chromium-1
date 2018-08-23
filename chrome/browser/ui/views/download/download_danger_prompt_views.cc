@@ -7,7 +7,7 @@
 #include "base/compiler_specific.h"
 #include "chrome/browser/download/download_stats.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -138,7 +138,7 @@ base::string16 DownloadDangerPromptViews::GetDialogButtonLabel(
 }
 
 base::string16 DownloadDangerPromptViews::GetWindowTitle() const {
-  if (show_context_)
+  if (show_context_ || !download_)  // |download_| may be null in tests.
     return l10n_util::GetStringUTF16(IDS_CONFIRM_KEEP_DANGEROUS_DOWNLOAD_TITLE);
   switch (download_->GetDangerType()) {
     case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
@@ -237,6 +237,7 @@ base::string16 DownloadDangerPromptViews::GetMessageBody() const {
       case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
       case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
       case download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+      case download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY:
       case download::DOWNLOAD_DANGER_TYPE_MAX: {
         break;
       }

@@ -17,6 +17,7 @@
 #include "chrome/browser/permissions/permission_uma_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/permission_bubble/permission_prompt.h"
+#include "chrome/browser/vr/ui_suppressed_element.h"
 #include "chrome/browser/vr/vr_tab_helper.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/url_formatter/elide_url.h"
@@ -27,7 +28,7 @@
 #if !defined(OS_ANDROID)
 #include "chrome/browser/extensions/extension_ui_util.h"
 #include "extensions/common/constants.h"
-#endif  // !defined(OS_ANDROID)
+#endif
 
 namespace {
 
@@ -75,8 +76,6 @@ void PermissionRequestManager::Observer::OnBubbleAdded() {
 
 // PermissionRequestManager ----------------------------------------------------
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(PermissionRequestManager);
-
 PermissionRequestManager::PermissionRequestManager(
     content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
@@ -95,10 +94,16 @@ PermissionRequestManager::~PermissionRequestManager() {
 }
 
 void PermissionRequestManager::AddRequest(PermissionRequest* request) {
-  DCHECK(!vr::VrTabHelper::IsInVr(web_contents()));
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDenyPermissionPrompts)) {
+    request->PermissionDenied();
+    request->RequestFinished();
+    return;
+  }
+
+  if (vr::VrTabHelper::IsUiSuppressedInVr(
+          web_contents(), vr::UiSuppressedElement::kPermissionBubbleRequest)) {
     request->PermissionDenied();
     request->RequestFinished();
     return;

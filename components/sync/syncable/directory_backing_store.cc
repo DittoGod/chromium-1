@@ -82,19 +82,10 @@ const ColumnSpec g_metas_columns[] = {
     //////////////////////////////////////
     // Blobs (positions).
     {"server_unique_position", "blob"},
-    {"unique_position", "blob"},
-    //////////////////////////////////////
-    // AttachmentMetadata is a proto that contains all the metadata associated
-    // with an entry's attachments.  Each entry has only one AttachmentMetadata
-    // proto.  We store a single proto per entry (as opposed to one for each
-    // attachment) because it simplifies the database schema and implementation
-    // of
-    // DirectoryBackingStore.
-    {"attachment_metadata", "blob"},
-    {"server_attachment_metadata", "blob"}};
+    {"unique_position", "blob"}};
 
 // Increment this version whenever updating DB tables.
-const int32_t kCurrentDBVersion = 91;
+const int32_t kCurrentDBVersion = 92;
 
 // The current database page size in Kilobytes.
 const int32_t kCurrentPageSizeKB = 32768;
@@ -132,11 +123,6 @@ void BindFields(const EntryKernel& entry,
     entry.ref(static_cast<UniquePositionField>(i)).SerializeToString(&temp);
     statement->BindBlob(index++, temp.data(), temp.length());
   }
-  for (; i < ATTACHMENT_METADATA_FIELDS_END; ++i) {
-    std::string temp;
-    entry.ref(static_cast<AttachmentMetadataField>(i)).SerializeToString(&temp);
-    statement->BindBlob(index++, temp.data(), temp.length());
-  }
 }
 
 // Helper function that loads a number of shareable fields of the
@@ -147,8 +133,7 @@ template <typename TValue, typename TField>
 void UnpackProtoFields(sql::Statement* statement,
                        EntryKernel* kernel,
                        int* index,
-                       int end_index,
-                       int* total_entry_copies) {
+                       int end_index) {
   const void* prev_blob = nullptr;
   int prev_length = -1;
   int prev_index = -1;
@@ -174,7 +159,6 @@ void UnpackProtoFields(sql::Statement* statement,
       prev_blob = blob;
       prev_length = length;
       prev_index = *index;
-      ++(*total_entry_copies);
     }
   }
 }
@@ -182,8 +166,7 @@ void UnpackProtoFields(sql::Statement* statement,
 // The caller owns the returned EntryKernel*.  Assumes the statement currently
 // points to a valid row in the metas table. Returns null to indicate that
 // it detected a corruption in the data on unpacking.
-std::unique_ptr<EntryKernel> UnpackEntry(sql::Statement* statement,
-                                         int* total_specifics_copies) {
+std::unique_ptr<EntryKernel> UnpackEntry(sql::Statement* statement) {
   std::unique_ptr<EntryKernel> kernel(new EntryKernel());
   DCHECK_EQ(statement->ColumnCount(), static_cast<int>(FIELD_COUNT));
   int i = 0;
@@ -206,7 +189,7 @@ std::unique_ptr<EntryKernel> UnpackEntry(sql::Statement* statement,
                 statement->ColumnString(i));
   }
   UnpackProtoFields<sync_pb::EntitySpecifics, ProtoField>(
-      statement, kernel.get(), &i, PROTO_FIELDS_END, total_specifics_copies);
+      statement, kernel.get(), &i, PROTO_FIELDS_END);
   for ( ; i < UNIQUE_POSITION_FIELDS_END; ++i) {
     std::string temp;
     statement->ColumnBlobAsString(i, &temp);
@@ -220,10 +203,6 @@ std::unique_ptr<EntryKernel> UnpackEntry(sql::Statement* statement,
     kernel->mutable_ref(static_cast<UniquePositionField>(i)) =
         UniquePosition::FromProto(proto);
   }
-  int attachemnt_specifics_counts = 0;
-  UnpackProtoFields<sync_pb::AttachmentMetadata, AttachmentMetadataField>(
-      statement, kernel.get(), &i, ATTACHMENT_METADATA_FIELDS_END,
-      &attachemnt_specifics_counts);
 
   // Sanity check on positions.  We risk strange and rare crashes if our
   // assumptions about unique position values are broken.
@@ -291,29 +270,6 @@ bool SaveEntryToDB(sql::Statement* save_statement, const EntryKernel& entry) {
   return save_statement->Run();
 }
 
-// total_specifics_copies : Total copies of entries in memory, include extra
-// copy for some entries which create by copy-on-write mechanism.
-// entries_counts : entry counts for each model type.
-void UploadModelTypeEntryCount(const int total_specifics_copies,
-                               const int (&entries_counts)[MODEL_TYPE_COUNT]) {
-  int total_entry_counts = 0;
-  for (int i = FIRST_REAL_MODEL_TYPE; i < MODEL_TYPE_COUNT; ++i) {
-    std::string model_type;
-    if (RealModelTypeToNotificationType((ModelType)i, &model_type)) {
-      std::string full_histogram_name = "Sync.ModelTypeCount." + model_type;
-      base::HistogramBase* histogram = base::Histogram::FactoryGet(
-          full_histogram_name, 1, 1000000, 50,
-          base::HistogramBase::kUmaTargetedHistogramFlag);
-      if (histogram)
-        histogram->Add(entries_counts[i]);
-      total_entry_counts += entries_counts[i];
-    }
-  }
-  UMA_HISTOGRAM_COUNTS("Sync.ModelTypeCount", total_entry_counts);
-  UMA_HISTOGRAM_COUNTS("Sync.ExtraSyncDataCount",
-                       total_specifics_copies - total_entry_counts);
-}
-
 }  // namespace
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -329,7 +285,7 @@ DirectoryBackingStore::DirectoryBackingStore(const string& dir_name)
 }
 
 DirectoryBackingStore::DirectoryBackingStore(const string& dir_name,
-                                             sql::Connection* db)
+                                             sql::Database* db)
     : dir_name_(dir_name),
       database_page_size_(kCurrentPageSizeKB),
       db_(db),
@@ -433,9 +389,7 @@ bool DirectoryBackingStore::SaveChanges(
             "VALUES (?, ?, ?, ?)"));
 
     ModelTypeSet protocol_types = ProtocolTypes();
-    for (ModelTypeSet::Iterator iter = protocol_types.First(); iter.Good();
-         iter.Inc()) {
-      ModelType type = iter.Get();
+    for (ModelType type : protocol_types) {
       // We persist not ModelType but rather a protobuf-derived ID.
       string model_id = ModelTypeEnumToModelId(type);
       string progress_marker;
@@ -456,7 +410,7 @@ bool DirectoryBackingStore::SaveChanges(
   return transaction.Commit();
 }
 
-sql::Connection* DirectoryBackingStore::db() {
+sql::Database* DirectoryBackingStore::db() {
   return db_.get();
 }
 
@@ -637,6 +591,12 @@ bool DirectoryBackingStore::InitializeTables() {
       version_on_disk = 91;
   }
 
+  // Version 92 migration removes attachment metadata from the metas table.
+  if (version_on_disk == 91) {
+    if (MigrateVersion91To92())
+      version_on_disk = 92;
+  }
+
   // If one of the migrations requested it, drop columns that aren't current.
   // It's only safe to do this after migrating all the way to the current
   // version.
@@ -719,17 +679,10 @@ bool DirectoryBackingStore::LoadEntries(Directory::MetahandlesMap* handles_map,
   select.append("SELECT ");
   AppendColumnList(&select);
   select.append(" FROM metas");
-  int total_specifics_copies = 0;
-  int model_type_entry_count[MODEL_TYPE_COUNT];
-  for (int i = 0; i < MODEL_TYPE_COUNT; ++i) {
-    model_type_entry_count[i] = 0;
-  }
-
   sql::Statement s(db_->GetUniqueStatement(select.c_str()));
 
   while (s.Step()) {
-    std::unique_ptr<EntryKernel> kernel =
-        UnpackEntry(&s, &total_specifics_copies);
+    std::unique_ptr<EntryKernel> kernel = UnpackEntry(&s);
     // A null kernel is evidence of external data corruption.
     if (!kernel)
       return false;
@@ -738,16 +691,9 @@ bool DirectoryBackingStore::LoadEntries(Directory::MetahandlesMap* handles_map,
     if (SafeToPurgeOnLoading(*kernel)) {
       metahandles_to_purge->insert(handle);
     } else {
-      ModelType model_type = kernel->GetModelType();
-      if (!IsRealDataType(model_type)) {
-        model_type = kernel->GetServerModelType();
-      }
-      ++model_type_entry_count[model_type];
       (*handles_map)[handle] = std::move(kernel);
     }
   }
-
-  UploadModelTypeEntryCount(total_specifics_copies, model_type_entry_count);
 
   return s.Succeeded();
 }
@@ -773,8 +719,7 @@ bool DirectoryBackingStore::LoadDeleteJournals(JournalIndex* delete_journals) {
   sql::Statement s(db_->GetUniqueStatement(select.c_str()));
 
   while (s.Step()) {
-    int total_entry_copies;
-    std::unique_ptr<EntryKernel> kernel = UnpackEntry(&s, &total_entry_copies);
+    std::unique_ptr<EntryKernel> kernel = UnpackEntry(&s);
     // A null kernel is evidence of external data corruption.
     if (!kernel)
       return false;
@@ -1570,6 +1515,16 @@ bool DirectoryBackingStore::MigrateVersion90To91() {
   return true;
 }
 
+bool DirectoryBackingStore::MigrateVersion91To92() {
+  // This change removed 2 columns from metas:
+  //   attachment_metadata
+  //   server_attachment_metadata
+  // No data migration is necessary, but we should do a column refresh.
+  SetVersion(92);
+  needs_metas_column_refresh_ = true;
+  return true;
+}
+
 bool DirectoryBackingStore::CreateTables() {
   DVLOG(1) << "First run, creating tables";
 
@@ -1847,7 +1802,7 @@ bool DirectoryBackingStore::needs_column_refresh() const {
 }
 
 void DirectoryBackingStore::ResetAndCreateConnection() {
-  db_ = std::make_unique<sql::Connection>();
+  db_ = std::make_unique<sql::Database>();
   db_->set_histogram_tag("SyncDirectory");
   db_->set_cache_size(32);
   db_->set_page_size(database_page_size_);
@@ -1864,7 +1819,7 @@ void DirectoryBackingStore::SetCatastrophicErrorHandler(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!catastrophic_error_handler.is_null());
   catastrophic_error_handler_ = catastrophic_error_handler;
-  sql::Connection::ErrorCallback error_callback =
+  sql::Database::ErrorCallback error_callback =
       base::Bind(&OnSqliteError, catastrophic_error_handler_);
   db_->set_error_callback(error_callback);
 }

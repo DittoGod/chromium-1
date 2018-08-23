@@ -5,6 +5,8 @@
 #ifndef CHROMECAST_BROWSER_CAST_WEB_VIEW_EXTENSION_H_
 #define CHROMECAST_BROWSER_CAST_WEB_VIEW_EXTENSION_H_
 
+#include <memory>
+
 #include "chromecast/browser/cast_web_view.h"
 #include "content/public/browser/media_capture_devices.h"
 #include "content/public/browser/navigation_handle.h"
@@ -27,15 +29,13 @@ class RemoteDebuggingServer;
 }
 
 class CastExtensionHost;
-class CastWebContentsManager;
 
 // A simplified interface for loading and displaying WebContents in cast_shell.
-class CastWebViewExtension : public CastWebView {
+class CastWebViewExtension : public CastWebView, content::WebContentsObserver {
  public:
   // |delegate| and |browser_context| should outlive the lifetime of this
   // object.
   CastWebViewExtension(const CreateParams& params,
-                       CastWebContentsManager* web_contents_manager,
                        content::BrowserContext* browser_context,
                        scoped_refptr<content::SiteInstance> site_instance,
                        const extensions::Extension* extension,
@@ -49,9 +49,25 @@ class CastWebViewExtension : public CastWebView {
   // CastWebView implementation:
   void LoadUrl(GURL url) override;
   void ClosePage(const base::TimeDelta& shutdown_delay) override;
-  void Show(CastWindowManager* window_manager) override;
+  void InitializeWindow(CastWindowManager* window_manager,
+                        CastWindowManager::WindowId z_order,
+                        VisibilityPriority initial_priority) override;
+  void GrantScreenAccess() override;
+  void RevokeScreenAccess() override;
 
  private:
+  // WebContentsObserver implementation:
+  void WebContentsDestroyed() override;
+  void RenderViewCreated(content::RenderViewHost* render_view_host) override;
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
+  void DidFailLoad(content::RenderFrameHost* render_frame_host,
+                   const GURL& validated_url,
+                   int error_code,
+                   const base::string16& error_description) override;
+  void RenderProcessGone(base::TerminationStatus status) override;
+
+  Delegate* const delegate_;
   const std::unique_ptr<shell::CastContentWindow> window_;
   const std::unique_ptr<CastExtensionHost> extension_host_;
   shell::RemoteDebuggingServer* remote_debugging_server_;

@@ -15,17 +15,8 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_value_store.h"
 
-namespace {
-
-// Do-nothing default implementation.
-void DoNothingHandleReadError(PersistentPrefStore::PrefReadError error) {
-}
-
-}  // namespace
-
 PrefServiceFactory::PrefServiceFactory()
-    : read_error_callback_(base::Bind(&DoNothingHandleReadError)),
-      async_(false) {}
+    : read_error_callback_(base::DoNothing()), async_(false) {}
 
 PrefServiceFactory::~PrefServiceFactory() {}
 
@@ -33,7 +24,7 @@ void PrefServiceFactory::SetUserPrefsFile(
     const base::FilePath& prefs_file,
     base::SequencedTaskRunner* task_runner) {
   user_prefs_ =
-      base::MakeRefCounted<JsonPrefStore>(prefs_file, task_runner, nullptr);
+      base::MakeRefCounted<JsonPrefStore>(prefs_file, nullptr, task_runner);
 }
 
 std::unique_ptr<PrefService> PrefServiceFactory::Create(

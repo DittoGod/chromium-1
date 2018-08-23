@@ -6,15 +6,12 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/post_task.h"
-#include "chrome/browser/net/nqe/ui_network_quality_estimator_service.h"
-#include "chrome/browser/net/nqe/ui_network_quality_estimator_service_factory.h"
+#include "base/task/post_task.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/offline_pages/android/background_scheduler_bridge.h"
 #include "chrome/browser/offline_pages/android/cct_request_observer.h"
-#include "chrome/browser/offline_pages/android/downloads/offline_page_notification_bridge.h"
 #include "chrome/browser/offline_pages/android/load_termination_listener_impl.h"
 #include "chrome/browser/offline_pages/background_loader_offliner.h"
 #include "chrome/browser/offline_pages/offline_page_model_factory.h"
@@ -28,10 +25,12 @@
 #include "components/offline_pages/core/background/request_queue_store.h"
 #include "components/offline_pages/core/background/request_queue_store_sql.h"
 #include "components/offline_pages/core/background/scheduler.h"
-#include "components/offline_pages/core/downloads/download_notifying_observer.h"
 #include "components/offline_pages/core/offline_page_feature.h"
 #include "components/offline_pages/core/offline_pages_ukm_reporter.h"
-#include "net/nqe/network_quality_estimator.h"
+
+namespace network {
+class NetworkQualityTracker;
+}
 
 namespace offline_pages {
 
@@ -62,13 +61,13 @@ KeyedService* RequestCoordinatorFactory::BuildServiceInstanceFor(
       OfflinePageModelFactory::GetInstance()->GetForBrowserContext(context);
 
   std::unique_ptr<LoadTerminationListenerImpl> load_termination_listener =
-      base::MakeUnique<LoadTerminationListenerImpl>();
+      std::make_unique<LoadTerminationListenerImpl>();
   offliner.reset(new BackgroundLoaderOffliner(
       context, policy.get(), model, std::move(load_termination_listener)));
 
   scoped_refptr<base::SequencedTaskRunner> background_task_runner =
       base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND});
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT});
   Profile* profile = Profile::FromBrowserContext(context);
   base::FilePath queue_store_path =
       profile->GetPath().Append(chrome::kOfflinePageRequestQueueDirname);
@@ -78,18 +77,13 @@ KeyedService* RequestCoordinatorFactory::BuildServiceInstanceFor(
   std::unique_ptr<RequestQueue> queue(new RequestQueue(std::move(queue_store)));
   std::unique_ptr<Scheduler>
       scheduler(new android::BackgroundSchedulerBridge());
-  net::NetworkQualityEstimator::NetworkQualityProvider*
-      network_quality_estimator =
-          UINetworkQualityEstimatorServiceFactory::GetForProfile(profile);
+  network::NetworkQualityTracker* network_quality_tracker =
+      g_browser_process->network_quality_tracker();
   std::unique_ptr<OfflinePagesUkmReporter> ukm_reporter(
       new OfflinePagesUkmReporter());
   RequestCoordinator* request_coordinator = new RequestCoordinator(
       std::move(policy), std::move(offliner), std::move(queue),
-      std::move(scheduler), network_quality_estimator, std::move(ukm_reporter));
-
-  DownloadNotifyingObserver::CreateAndStartObserving(
-      request_coordinator,
-      base::MakeUnique<android::OfflinePageNotificationBridge>());
+      std::move(scheduler), network_quality_tracker, std::move(ukm_reporter));
 
   CCTRequestObserver::AttachToRequestCoordinator(request_coordinator);
 

@@ -35,20 +35,20 @@
 #import "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
 #import "ios/chrome/browser/ui/browser_view_controller.h"
 #import "ios/chrome/browser/ui/browser_view_controller_dependency_factory.h"
+#import "ios/chrome/browser/ui/browser_view_controller_helper.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_controller.h"
 #import "ios/chrome/browser/ui/page_not_available_controller.h"
 #import "ios/chrome/browser/ui/toolbar/public/omnibox_focuser.h"
-#include "ios/chrome/browser/ui/toolbar/test_toolbar_model_ios.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/web/error_page_content.h"
-#import "ios/chrome/browser/web/passkit_dialog_provider.h"
 #include "ios/chrome/browser/web_state_list/fake_web_state_list_delegate.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/test/block_cleanup_test.h"
 #include "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #include "ios/chrome/test/testing_application_context.h"
+#import "ios/net/protocol_handler_util.h"
 #import "ios/testing/ocmock_complex_type_helper.h"
 #include "ios/web/public/referrer.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
@@ -77,7 +77,7 @@ using web::WebStateImpl;
 
 // Private methods in BrowserViewController to test.
 @interface BrowserViewController (
-    Testing)<CRWNativeContentProvider, PassKitDialogProvider, TabModelObserver>
+    Testing)<CRWNativeContentProvider, TabModelObserver>
 - (void)pageLoadStarted:(NSNotification*)notification;
 - (void)pageLoadComplete:(NSNotification*)notification;
 - (void)tabSelected:(Tab*)tab notifyToolbar:(BOOL)notifyToolbar;
@@ -133,54 +133,6 @@ using web::WebStateImpl;
 
 - (WebStateList*)webStateList {
   return _webStateList.get();
-}
-@end
-
-// Fake WebToolbarController for testing.
-@interface TestWebToolbarController : UIViewController
-- (BOOL)isOmniboxFirstResponder;
-- (BOOL)showingOmniboxPopup;
-- (void)cancelOmniboxEdit;
-- (void)setBackgroundAlpha:(CGFloat)alpha;
-- (void)browserStateDestroyed;
-- (void)stop;
-
-- (ToolbarButtonUpdater*)buttonUpdater;
-- (void)setToolsMenuStateProvider:(id)provider;
-@property(nonatomic, readonly, weak) UIViewController* viewController;
-
-@end
-
-@implementation TestWebToolbarController
-- (BOOL)isOmniboxFirstResponder {
-  return NO;
-}
-- (BOOL)showingOmniboxPopup {
-  return NO;
-}
-- (void)cancelOmniboxEdit {
-  return;
-}
-- (UIViewController*)viewController {
-  return self;
-}
-- (ToolbarButtonUpdater*)buttonUpdater {
-  return nil;
-}
-- (void)setToolsMenuStateProvider:(id)provider {
-  return;
-}
-- (void)start {
-  return;
-}
-- (void)setBackgroundAlpha:(CGFloat)alpha {
-  return;
-}
-- (void)browserStateDestroyed {
-  return;
-}
-- (void)stop {
-  return;
 }
 @end
 
@@ -247,26 +199,12 @@ class BrowserViewControllerTest : public BlockCleanupTest {
         [OCMockObject niceMockForClass:[PKAddPassesViewController class]];
     passKitViewController_ = passKitController;
 
-    // Set up a fake toolbar model for the dependency factory to return.
-    // It will be owned (and destroyed) by the BVC.
-    toolbarModelIOS_ = new TestToolbarModelIOS();
-
-    // Create fake WTC.
-    TestWebToolbarController* testWTC = [[TestWebToolbarController alloc] init];
+    bvcHelper_ = [[BrowserViewControllerHelper alloc] init];
 
     // Set up a stub dependency factory.
     id factory = [OCMockObject
         mockForClass:[BrowserViewControllerDependencyFactory class]];
-    [[[factory stub] andReturnValue:OCMOCK_VALUE(toolbarModelIOS_)]
-        newToolbarModelIOSWithDelegate:static_cast<ToolbarModelDelegateIOS*>(
-                                           [OCMArg anyPointer])];
-    [[[factory stub] andReturn:testWTC]
-        newToolbarControllerWithDelegate:[OCMArg any]
-                               urlLoader:[OCMArg any]
-                              dispatcher:[OCMArg any]];
-    [[[factory stub] andReturn:passKitViewController_]
-        newPassKitViewControllerForPass:nil];
-    [[[factory stub] andReturn:nil] showPassKitErrorInfoBarForManager:nil];
+    [[[factory stub] andReturn:bvcHelper_] newBrowserViewControllerHelper];
 
     tabModel_ = tabModel;
     tab_ = currentTab;
@@ -291,6 +229,7 @@ class BrowserViewControllerTest : public BlockCleanupTest {
 
   void TearDown() override {
     [[bvc_ view] removeFromSuperview];
+    [bvc_ browserStateDestroyed];
     [bvc_ shutdown];
 
     BlockCleanupTest::TearDown();
@@ -304,7 +243,7 @@ class BrowserViewControllerTest : public BlockCleanupTest {
   std::unique_ptr<WebStateImpl> webStateImpl_;
   Tab* tab_;
   TabModel* tabModel_;
-  ToolbarModelIOS* toolbarModelIOS_;
+  BrowserViewControllerHelper* bvcHelper_;
   PKAddPassesViewController* passKitViewController_;
   OCMockObject* dependencyFactory_;
   BrowserViewController* bvc_;
@@ -313,7 +252,7 @@ class BrowserViewControllerTest : public BlockCleanupTest {
 
 TEST_F(BrowserViewControllerTest, TestTabSelected) {
   [bvc_ tabSelected:tab_ notifyToolbar:YES];
-  EXPECT_EQ([[tab_ view] superview], static_cast<UIView*>([bvc_ contentArea]));
+  EXPECT_EQ([[tab_ view] superview], [bvc_ contentArea]);
   EXPECT_TRUE(webStateImpl_->IsVisible());
 }
 
@@ -324,7 +263,7 @@ TEST_F(BrowserViewControllerTest, TestTabSelectedIsNewTab) {
   id tabMock = (id)tab_;
   [tabMock onSelector:@selector(url) callBlockExpectation:block];
   [bvc_ tabSelected:tab_ notifyToolbar:YES];
-  EXPECT_EQ([[tab_ view] superview], static_cast<UIView*>([bvc_ contentArea]));
+  EXPECT_EQ([[tab_ view] superview], [bvc_ contentArea]);
   EXPECT_TRUE(webStateImpl_->IsVisible());
 }
 
@@ -352,11 +291,9 @@ TEST_F(BrowserViewControllerTest, TestErrorController) {
   NSDictionary* userInfoDic = [NSDictionary
       dictionaryWithObjectsAndKeys:badURLString,
                                    NSURLErrorFailingURLStringErrorKey,
-                                   [NSError
-                                       errorWithDomain:base::SysUTF8ToNSString(
-                                                           net::kErrorDomain)
-                                                  code:-104
-                                              userInfo:nil],
+                                   [NSError errorWithDomain:net::kNSErrorDomain
+                                                       code:-104
+                                                   userInfo:nil],
                                    NSUnderlyingErrorKey, nil];
   NSError* testError =
       [NSError errorWithDomain:@"testdomain" code:-1 userInfo:userInfoDic];
@@ -384,7 +321,10 @@ TEST_F(BrowserViewControllerTest,
   OCMockObject* tabMock = static_cast<OCMockObject*>(tab_);
 
   // Have the TestToolbarModel indicate that a page load is in progress.
-  static_cast<TestToolbarModelIOS*>(toolbarModelIOS_)->set_is_loading(true);
+  id partialMock = OCMPartialMock(bvcHelper_);
+  OCMExpect([partialMock isToolbarLoading:static_cast<web::WebState*>(
+                                              [OCMArg anyPointer])])
+      .andReturn(YES);
 
   // The tab should stop loading on iPhones.
   [bvc_ locationBarBeganEdit];
@@ -392,32 +332,6 @@ TEST_F(BrowserViewControllerTest,
     EXPECT_FALSE(webStateImpl_->IsLoading());
 
   EXPECT_OCMOCK_VERIFY(tabMock);
-}
-
-TEST_F(BrowserViewControllerTest, TestPassKitDialogDisplayed) {
-  // Create a good Pass and make sure the controller is displayed.
-  base::FilePath pass_path;
-  ASSERT_TRUE(PathService::Get(ios::DIR_TEST_DATA, &pass_path));
-  pass_path = pass_path.Append(FILE_PATH_LITERAL("testpass.pkpass"));
-  NSData* passKitObject = [NSData
-      dataWithContentsOfFile:base::SysUTF8ToNSString(pass_path.value())];
-  EXPECT_TRUE(passKitObject);
-  [[dependencyFactory_ expect] newPassKitViewControllerForPass:OCMOCK_ANY];
-  [bvc_ presentPassKitDialog:passKitObject];
-  EXPECT_OCMOCK_VERIFY(dependencyFactory_);
-}
-
-TEST_F(BrowserViewControllerTest, TestPassKitErrorInfoBarDisplayed) {
-  // Create a bad Pass and make sure the controller is not displayed.
-  base::FilePath bad_pass_path;
-  ASSERT_TRUE(PathService::Get(ios::DIR_TEST_DATA, &bad_pass_path));
-  bad_pass_path = bad_pass_path.Append(FILE_PATH_LITERAL("testbadpass.pkpass"));
-  NSData* badPassKitObject = [NSData
-      dataWithContentsOfFile:base::SysUTF8ToNSString(bad_pass_path.value())];
-  EXPECT_TRUE(badPassKitObject);
-  [[dependencyFactory_ reject] newPassKitViewControllerForPass:OCMOCK_ANY];
-  [bvc_ presentPassKitDialog:badPassKitObject];
-  EXPECT_OCMOCK_VERIFY(dependencyFactory_);
 }
 
 TEST_F(BrowserViewControllerTest, TestClearPresentedState) {

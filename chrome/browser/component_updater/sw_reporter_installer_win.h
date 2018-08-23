@@ -32,12 +32,6 @@ namespace component_updater {
 
 class ComponentUpdateService;
 
-// Expose the feature name so it can be referenced in tests.
-// TODO(crbug.com/786964): This feature will continue to exist as part of a
-// permanent variations study to control which version of the reporter gets
-// downloaded. Rename it to something that makes sense long-term.
-constexpr char kComponentTagFeatureName[] = "ExperimentalSwReporterEngine";
-
 constexpr char kSwReporterComponentId[] = "gkmgaooipdjhmangpemjhigmamcehddo";
 
 // These MUST match the values for SoftwareReporterExperimentError in
@@ -111,12 +105,20 @@ class SwReporterOnDemandFetcher : public ServiceObserver {
 // SwReporter. Once ready, this may trigger a periodic run of the reporter.
 void RegisterSwReporterComponent(ComponentUpdateService* cus);
 
+// Allow tests to register a function to be called when the registration
+// of the reporter component is done.
+void SetRegisterSwReporterComponentCallbackForTesting(
+    base::OnceClosure registration_cb);
+
 // Register local state preferences related to the SwReporter.
 void RegisterPrefsForSwReporter(PrefRegistrySimple* registry);
 
 // Register profile preferences related to the SwReporter.
 void RegisterProfilePrefsForSwReporter(
     user_prefs::PrefRegistrySyncable* registry);
+
+// Checks if we have information from the Cleaner and records UMA statistics.
+void ReportUMAForLastCleanerRun();
 
 }  // namespace component_updater
 

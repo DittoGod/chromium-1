@@ -20,7 +20,11 @@ settings.defaultResourceLoaded = true;
 Polymer({
   is: 'settings-ui',
 
-  behaviors: [settings.RouteObserverBehavior, CrContainerShadowBehavior],
+  behaviors: [
+    settings.RouteObserverBehavior,
+    CrContainerShadowBehavior,
+    settings.FindShortcutBehavior,
+  ],
 
   properties: {
     /**
@@ -50,16 +54,26 @@ Polymer({
     showAndroidApps_: Boolean,
 
     /** @private */
+    showCrostini_: Boolean,
+
+    /** @private */
     showMultidevice_: Boolean,
 
     /** @private */
     havePlayStoreApp_: Boolean,
 
+    /**
+     * TODO(jdoerrie): https://crbug.com/854562.
+     * Remove once Autofill Home is launched.
+     * @private
+     */
+    autofillHomeEnabled_: Boolean,
+
     /** @private */
     lastSearchQuery_: {
       type: String,
       value: '',
-    }
+    },
   },
 
   listeners: {
@@ -89,6 +103,8 @@ Polymer({
     CrPolicyStrings = {
       controlledSettingExtension:
           loadTimeData.getString('controlledSettingExtension'),
+      controlledSettingExtensionWithoutName:
+          loadTimeData.getString('controlledSettingExtensionWithoutName'),
       controlledSettingPolicy:
           loadTimeData.getString('controlledSettingPolicy'),
       controlledSettingRecommendedMatches:
@@ -118,6 +134,8 @@ Polymer({
           loadTimeData.getString('networkListItemConnectingTo'),
       networkListItemInitializing:
           loadTimeData.getString('networkListItemInitializing'),
+      networkListItemScanning:
+          loadTimeData.getString('networkListItemScanning'),
       networkListItemNotConnected:
           loadTimeData.getString('networkListItemNotConnected'),
       networkListItemNoNetwork:
@@ -128,11 +146,16 @@ Polymer({
 
     this.showAndroidApps_ = loadTimeData.valueExists('androidAppsVisible') &&
         loadTimeData.getBoolean('androidAppsVisible');
+    this.showCrostini_ = loadTimeData.valueExists('showCrostini') &&
+        loadTimeData.getBoolean('showCrostini');
     this.showMultidevice_ = this.showAndroidApps_ &&
         loadTimeData.valueExists('enableMultideviceSettings') &&
         loadTimeData.getBoolean('enableMultideviceSettings');
     this.havePlayStoreApp_ = loadTimeData.valueExists('havePlayStoreApp') &&
         loadTimeData.getBoolean('havePlayStoreApp');
+    this.autofillHomeEnabled_ =
+        loadTimeData.valueExists('autofillHomeEnabled') &&
+        loadTimeData.getBoolean('autofillHomeEnabled');
 
     this.addEventListener('show-container', () => {
       this.$.container.style.visibility = 'visible';
@@ -156,6 +179,26 @@ Polymer({
     // Preload bold Roboto so it doesn't load and flicker the first time used.
     document.fonts.load('bold 12px Roboto');
     settings.setGlobalScrollTarget(this.$.container);
+
+    const scrollToTop = top => new Promise(resolve => {
+      this.$.container.scrollTo({top, behavior: 'smooth'});
+      const onScroll = () => {
+        this.debounce('scrollEnd', () => {
+          this.$.container.removeEventListener('scroll', onScroll);
+          resolve();
+        }, 75);
+      };
+      this.$.container.addEventListener('scroll', onScroll);
+    });
+    this.addEventListener('scroll-to-top', e => {
+      scrollToTop(e.detail.top).then(e.detail.callback);
+    });
+    this.addEventListener('scroll-to-bottom', e => {
+      scrollToTop(e.detail.bottom - this.$.container.clientHeight)
+          .then(e.detail.callback);
+    });
+
+    this.becomeActiveFindShortcutListener();
   },
 
   /** @override */
@@ -184,6 +227,14 @@ Polymer({
     }
 
     this.$.main.searchContents(urlSearchQuery);
+  },
+
+  // Override settings.FindShortcutBehavior methods.
+  handleFindShortcut: function(modalContextOpen) {
+    if (modalContextOpen)
+      return false;
+    this.$$('cr-toolbar').getSearchField().showAndFocus();
+    return true;
   },
 
   /**

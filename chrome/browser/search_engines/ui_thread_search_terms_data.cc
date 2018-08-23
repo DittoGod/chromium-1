@@ -14,10 +14,10 @@
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/google/core/browser/google_url_tracker.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 #include "ui/base/device_form_factor.h"
 #include "url/gurl.h"
 
@@ -125,7 +125,7 @@ std::string UIThreadSearchTermsData::GoogleImageSearchSource() const {
   if (version_info::IsOfficialBuild())
     version += " (Official)";
   version += " " + version_info::GetOSType();
-  std::string modifier(chrome::GetChannelString());
+  std::string modifier(chrome::GetChannelName());
   if (!modifier.empty())
     version += " " + modifier;
   return version;

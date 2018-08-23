@@ -62,10 +62,6 @@ class TranslateController : public web::WebStateObserver {
   void StartTranslation(const std::string& source_language,
                         const std::string& target_language);
 
-  // Checks the translation status and calls the observer when it is done.
-  // This method must be called after StartTranslation().
-  void CheckTranslateStatus();
-
   // Changes the JsTranslateManager used by this TranslateController.
   // Only used for testing.
   void SetJsTranslateManagerForTesting(JsTranslateManager* manager);
@@ -73,6 +69,8 @@ class TranslateController : public web::WebStateObserver {
  private:
   FRIEND_TEST_ALL_PREFIXES(TranslateControllerTest,
                            OnJavascriptCommandReceived);
+  FRIEND_TEST_ALL_PREFIXES(TranslateControllerTest,
+                           OnIFrameJavascriptCommandReceived);
   FRIEND_TEST_ALL_PREFIXES(TranslateControllerTest,
                            OnTranslateScriptReadyTimeoutCalled);
   FRIEND_TEST_ALL_PREFIXES(TranslateControllerTest,
@@ -83,7 +81,8 @@ class TranslateController : public web::WebStateObserver {
   // Called when a JavaScript command is received.
   bool OnJavascriptCommandReceived(const base::DictionaryValue& command,
                                    const GURL& url,
-                                   bool interacting);
+                                   bool interacting,
+                                   bool is_main_frame);
   // Methods to handle specific JavaScript commands.
   // Return false if the command is invalid.
   bool OnTranslateReady(const base::DictionaryValue& command);

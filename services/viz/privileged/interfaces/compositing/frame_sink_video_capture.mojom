@@ -4,10 +4,11 @@
 
 module viz.mojom;
 
-import "media/capture/mojo/video_capture_types.mojom";
+import "media/capture/mojom/video_capture_types.mojom";
 import "media/mojo/interfaces/media_types.mojom";
-import "mojo/common/time.mojom";
+import "mojo/public/mojom/base/time.mojom";
 import "services/viz/public/interfaces/compositing/frame_sink_id.mojom";
+import "skia/public/interfaces/bitmap.mojom";
 import "ui/gfx/geometry/mojo/geometry.mojom";
 
 // Provided with each call to FrameSinkVideoConsumer::OnFrameCaptured() so that
@@ -46,11 +47,6 @@ interface FrameSinkVideoConsumer {
                   gfx.mojom.Rect content_rect,
                   FrameSinkVideoConsumerFrameCallbacks callbacks);
 
-  // Indicates the video capture target (a frame sink) has gone away. A consumer
-  // should use this to determine whether to change to a different target or
-  // shutdown.
-  OnTargetLost(FrameSinkId frame_sink_id);
-
   // Indicates that OnFrameCaptured() will not be called again, an end-of-stream
   // signal.
   OnStopped();
@@ -84,7 +80,16 @@ interface FrameSinkVideoCapturer {
   // Default, if never called: a very conservative 1/5 second (for 5 FPS
   // max). Usually 30-60 FPS is desired for frame sinks that may contain video
   // content.
-  SetMinCapturePeriod(mojo.common.mojom.TimeDelta min_period);
+  SetMinCapturePeriod(mojo_base.mojom.TimeDelta min_period);
+
+  // Specifies the minimum amount of time that must elapse between changing the
+  // size of video frames. This can be set to zero to disable resize throttling,
+  // which means each video frame could have a different size. Note that
+  // setting this period too low can result in erratic frame sizing behaviour;
+  // consider disabling auto-throttling in such cases.
+  //
+  // Default, if never called: 3 seconds.
+  SetMinSizeChangePeriod(mojo_base.mojom.TimeDelta min_period);
 
   // Specifies the range (if any) of acceptable capture resolutions and whether
   // a fixed aspect ratio is required. When |min_size| is equal to |max_size|,
@@ -100,9 +105,19 @@ interface FrameSinkVideoCapturer {
   SetResolutionConstraints(gfx.mojom.Size min_size, gfx.mojom.Size max_size,
                            bool use_fixed_aspect_ratio);
 
+  // Specifies whether capture resolution should be automatically adjusted
+  // within the bounds provided to SetReslutionConstraints in response to
+  // utilization feedback from the consumer and the buffer pool. When set to
+  // false, the capturer will always use the highest resolution within
+  // constraints that doesn't exceed the source size.
+  //
+  // Default, if never called: true.
+  SetAutoThrottlingEnabled(bool enabled);
+
   // Targets a different compositor frame sink. This may be called anytime,
-  // before or after Start().
-  ChangeTarget(FrameSinkId frame_sink_id);
+  // before or after Start(). If the argument is null, capture will suspend
+  // until a new frame sink target is set.
+  ChangeTarget(FrameSinkId? frame_sink_id);
 
   // Starts emitting video frames to the given |consumer|.
   Start(FrameSinkVideoConsumer consumer);
@@ -115,4 +130,30 @@ interface FrameSinkVideoCapturer {
   // Requests the capturer send a duplicate of the last frame. This is used to
   // resolve occasional "picture loss" issues consumer-side.
   RequestRefreshFrame();
+
+  // Creates an overlay to be renderered within each captured video frame. The
+  // |stacking_index| is an arbitrary value that determines whether to render
+  // this overlay before/after other overlays. Greater values mean "after" and
+  // "on top of" those with lesser values. Specifying the same index as an
+  // existing overlay will cause the existing one to be dropped and replaced
+  // with a new one.
+  CreateOverlay(int32 stacking_index, FrameSinkVideoCaptureOverlay& request);
+};
+
+// Control interface for a small image to be composited on top of each captured
+// video frame. This allows clients to, for example, have the capturer render
+// mouse cursors or debug info boxes on top of the captured content.
+interface FrameSinkVideoCaptureOverlay {
+  // Sets/Changes the overlay |image| and its position and size, relative to the
+  // source content. |bounds| consists of coordinates where the range [0.0,1.0)
+  // indicates the relative position+size within the bounds of the source
+  // content (e.g., 0.0 refers to the top or left edge; 1.0 to just after the
+  // bottom or right edge). Pass empty |bounds| to temporarily hide the overlay
+  // until a later call to SetBounds().
+  SetImageAndBounds(skia.mojom.Bitmap image, gfx.mojom.RectF bounds);
+
+  // Changes the bounds of the previously-set image, showing the overlay if
+  // non-empty bounds are provided, and hiding the overlay otherwise. |bounds|
+  // has the same semantics as described in ShowImageAt().
+  SetBounds(gfx.mojom.RectF bounds);
 };

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
@@ -15,7 +16,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
 #include "storage/browser/database/database_quota_client.h"
 #include "storage/browser/database/database_tracker.h"
@@ -48,9 +49,8 @@ class MockDatabaseTracker : public DatabaseTracker {
 
   bool GetOriginInfo(const std::string& origin_identifier,
                      OriginInfo* info) override {
-    std::map<GURL, MockOriginInfo>::const_iterator found =
-        mock_origin_infos_.find(
-            storage::GetOriginFromIdentifier(origin_identifier));
+    auto found = mock_origin_infos_.find(
+        storage::GetOriginFromIdentifier(origin_identifier));
     if (found == mock_origin_infos_.end())
       return false;
     *info = OriginInfo(found->second);
@@ -59,44 +59,37 @@ class MockDatabaseTracker : public DatabaseTracker {
 
   bool GetAllOriginIdentifiers(
       std::vector<std::string>* origins_identifiers) override {
-    std::map<GURL, MockOriginInfo>::const_iterator iter;
-    for (iter = mock_origin_infos_.begin(); iter != mock_origin_infos_.end();
-         ++iter) {
-      origins_identifiers->push_back(iter->second.GetOriginIdentifier());
-    }
+    for (const auto& origin_info : mock_origin_infos_)
+      origins_identifiers->push_back(origin_info.second.GetOriginIdentifier());
     return true;
   }
 
   bool GetAllOriginsInfo(std::vector<OriginInfo>* origins_info) override {
-    std::map<GURL, MockOriginInfo>::const_iterator iter;
-    for (iter = mock_origin_infos_.begin(); iter != mock_origin_infos_.end();
-         ++iter) {
-      origins_info->push_back(OriginInfo(iter->second));
-    }
+    for (const auto& origin_info : mock_origin_infos_)
+      origins_info->push_back(OriginInfo(origin_info.second));
     return true;
   }
 
   int DeleteDataForOrigin(const std::string& origin_identifier,
-                          const net::CompletionCallback& callback) override {
+                          net::CompletionOnceCallback callback) override {
     ++delete_called_count_;
     if (async_delete()) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
           base::BindOnce(&MockDatabaseTracker::AsyncDeleteDataForOrigin, this,
-                         callback));
+                         std::move(callback)));
       return net::ERR_IO_PENDING;
     }
     return net::OK;
   }
 
-  void AsyncDeleteDataForOrigin(const net::CompletionCallback& callback) {
-    callback.Run(net::OK);
+  void AsyncDeleteDataForOrigin(net::CompletionOnceCallback callback) {
+    std::move(callback).Run(net::OK);
   }
 
   void AddMockDatabase(const url::Origin& origin, const char* name, int size) {
-    GURL origin_url = origin.GetURL();
-    MockOriginInfo& info = mock_origin_infos_[origin_url];
-    info.set_origin(storage::GetIdentifierFromOrigin(origin_url));
+    MockOriginInfo& info = mock_origin_infos_[origin];
+    info.set_origin(storage::GetIdentifierFromOrigin(origin));
     info.AddMockDatabase(base::ASCIIToUTF16(name), size);
   }
 
@@ -123,7 +116,7 @@ class MockDatabaseTracker : public DatabaseTracker {
 
   int delete_called_count_;
   bool async_delete_;
-  std::map<GURL, MockOriginInfo> mock_origin_infos_;
+  std::map<url::Origin, MockOriginInfo> mock_origin_infos_;
 };
 
 // Base class for our test fixtures.

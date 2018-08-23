@@ -7,12 +7,12 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/ui/ntp/incognito_view_controller_delegate.h"
+#import "ios/chrome/browser/ui/ntp/new_tab_page_controller_delegate.h"
+#import "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_interacting.h"
 
-@protocol ToolbarCoordinating<IncognitoViewControllerDelegate>
-
-// Updates the tools menu, changing its content to reflect the current page.
-- (void)updateToolsMenu;
+// Defines a class coordinating the interactions with the toolbar.
+@protocol ToolbarCoordinating<NewTabPageControllerDelegate,
+                              SideSwipeToolbarInteracting>
 
 @end
 

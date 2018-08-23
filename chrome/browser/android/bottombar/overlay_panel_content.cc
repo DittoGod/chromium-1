@@ -16,16 +16,16 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/android/view_android_helper.h"
 #include "chrome/common/chrome_render_frame.mojom.h"
+#include "components/embedder_support/android/delegate/web_contents_delegate_android.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/navigation_interception/intercept_navigation_delegate.h"
 #include "components/variations/variations_associated_data.h"
-#include "components/web_contents_delegate_android/web_contents_delegate_android.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/browser_controls_state.h"
 #include "jni/OverlayPanelContent_jni.h"
 #include "net/url_request/url_fetcher_impl.h"
-#include "third_party/WebKit/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "ui/android/view_android.h"
 
 using base::android::JavaParamRef;
@@ -109,9 +109,8 @@ void OverlayPanelContent::SetWebContents(
 
   DCHECK(web_contents);
 
-  // NOTE(pedrosimonetti): Takes ownership of the WebContents associated
-  // with the ContentViewCore. This is to make sure that the WebContens
-  // and the Compositor are in the same process.
+  // NOTE(pedrosimonetti): Takes ownership of the WebContents. This is to make
+  // sure that the WebContens and the Compositor are in the same process.
   // TODO(pedrosimonetti): Confirm with dtrainor@ if the comment above
   // is accurate.
   web_contents_.reset(web_contents);

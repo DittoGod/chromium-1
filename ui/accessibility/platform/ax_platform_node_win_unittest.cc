@@ -4,13 +4,12 @@
 
 #include "ui/accessibility/platform/ax_platform_node.h"
 
-#include <atlbase.h>
-#include <atlcom.h>
 #include <oleacc.h>
 #include <wrl/client.h>
 
 #include <memory>
 
+#include "base/win/atl.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_variant.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -295,7 +294,7 @@ TEST_F(AXPlatformNodeWinTest,
   AXNodeData list_item_1;
   list_item_1.id = 1;
   list_item_1.role = ax::mojom::Role::kListBoxOption;
-  list_item_1.AddState(ax::mojom::State::kSelected);
+  list_item_1.AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
   list_item_1.SetName("Name1");
 
   AXNodeData list_item_2;
@@ -327,13 +326,13 @@ TEST_F(AXPlatformNodeWinTest,
   AXNodeData list_item_1;
   list_item_1.id = 1;
   list_item_1.role = ax::mojom::Role::kListBoxOption;
-  list_item_1.AddState(ax::mojom::State::kSelected);
+  list_item_1.AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
   list_item_1.SetName("Name1");
 
   AXNodeData list_item_2;
   list_item_2.id = 2;
   list_item_2.role = ax::mojom::Role::kListBoxOption;
-  list_item_2.AddState(ax::mojom::State::kSelected);
+  list_item_2.AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
   list_item_2.SetName("Name2");
 
   AXNodeData list_item_3;
@@ -415,7 +414,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleSelectionTableRowOneSelected) {
   AXTreeUpdate update = Build3X3Table();
 
   // 5 == table_row_1
-  update.nodes[5].AddState(ax::mojom::State::kSelected);
+  update.nodes[5].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -443,8 +442,8 @@ TEST_F(AXPlatformNodeWinTest,
 
   // 5 == table_row_1
   // 9 == table_row_2
-  update.nodes[5].AddState(ax::mojom::State::kSelected);
-  update.nodes[9].AddState(ax::mojom::State::kSelected);
+  update.nodes[5].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[9].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -505,7 +504,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleSelectionTableCellOneSelected) {
   AXTreeUpdate update = Build3X3Table();
 
   // 7 == table_cell_1
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -543,8 +542,8 @@ TEST_F(AXPlatformNodeWinTest,
 
   // 11 == table_cell_3
   // 12 == table_cell_4
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1104,7 +1103,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetChildIndex) {
   root_obj.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long id;
+  LONG id;
   EXPECT_EQ(S_OK, result->get_childIndex(0, 0, &id));
   EXPECT_EQ(id, 0);
 
@@ -1160,7 +1159,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetColumnExtentAt) {
   root_obj.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long columns_spanned;
+  LONG columns_spanned;
   EXPECT_EQ(S_OK, result->get_columnExtentAt(1, 1, &columns_spanned));
   EXPECT_EQ(columns_spanned, 1);
 
@@ -1176,8 +1175,10 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetColumnIndex) {
   root_obj.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long index;
-  EXPECT_EQ(S_OK, result->get_columnIndex(1, &index));
+  LONG index;
+  EXPECT_EQ(S_OK, result->get_columnIndex(2, &index));
+  EXPECT_EQ(index, 2);
+  EXPECT_EQ(S_OK, result->get_columnIndex(3, &index));
   EXPECT_EQ(index, 0);
 
   EXPECT_EQ(E_INVALIDARG, result->get_columnIndex(-1, &index));
@@ -1192,7 +1193,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetNColumns) {
   root_obj.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long count;
+  LONG count;
   EXPECT_EQ(S_OK, result->get_nColumns(&count));
   EXPECT_EQ(count, 3);
 }
@@ -1206,7 +1207,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetNRows) {
   root_obj.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long count;
+  LONG count;
   EXPECT_EQ(S_OK, result->get_nRows(&count));
   EXPECT_EQ(count, 3);
 }
@@ -1248,7 +1249,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetRowExtentAt) {
   root_obj.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long rows_spanned;
+  LONG rows_spanned;
   EXPECT_EQ(S_OK, result->get_rowExtentAt(0, 1, &rows_spanned));
   EXPECT_EQ(rows_spanned, 0);
 
@@ -1264,9 +1265,11 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetRowIndex) {
   root_obj.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long index;
-  EXPECT_EQ(S_OK, result->get_rowIndex(1, &index));
+  LONG index;
+  EXPECT_EQ(S_OK, result->get_rowIndex(2, &index));
   EXPECT_EQ(index, 0);
+  EXPECT_EQ(S_OK, result->get_rowIndex(3, &index));
+  EXPECT_EQ(index, 1);
 
   EXPECT_EQ(E_INVALIDARG, result->get_rowIndex(-1, &index));
 }
@@ -1280,7 +1283,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetRowColumnExtentsAtIndex) {
   root_obj.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long row, column, row_extents, column_extents;
+  LONG row, column, row_extents, column_extents;
   boolean is_selected;
   EXPECT_EQ(S_OK,
             result->get_rowColumnExtentsAtIndex(0, &row, &column, &row_extents,
@@ -1323,7 +1326,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetColumnExtent) {
   ComPtr<IAccessibleTableCell> cell = GetCellInTable();
   ASSERT_NE(nullptr, cell.Get());
 
-  long column_spanned;
+  LONG column_spanned;
   EXPECT_EQ(S_OK, cell->get_columnExtent(&column_spanned));
   EXPECT_EQ(column_spanned, 1);
 }
@@ -1336,7 +1339,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetColumnHeaderCells) {
 
   IUnknown** cell_accessibles;
 
-  long number_cells;
+  LONG number_cells;
   EXPECT_EQ(S_OK,
             cell->get_columnHeaderCells(&cell_accessibles, &number_cells));
   EXPECT_EQ(number_cells, 1);
@@ -1348,9 +1351,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetColumnIndex) {
   ComPtr<IAccessibleTableCell> cell = GetCellInTable();
   ASSERT_NE(nullptr, cell.Get());
 
-  long index;
+  LONG index;
   EXPECT_EQ(S_OK, cell->get_columnIndex(&index));
-  EXPECT_EQ(index, 0);
+  EXPECT_EQ(index, 1);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetRowExtent) {
@@ -1359,7 +1362,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetRowExtent) {
   ComPtr<IAccessibleTableCell> cell = GetCellInTable();
   ASSERT_NE(nullptr, cell.Get());
 
-  long rows_spanned;
+  LONG rows_spanned;
   EXPECT_EQ(S_OK, cell->get_rowExtent(&rows_spanned));
   EXPECT_EQ(rows_spanned, 1);
 }
@@ -1372,12 +1375,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetRowHeaderCells) {
 
   IUnknown** cell_accessibles;
 
-  long number_cells;
+  LONG number_cells;
   EXPECT_EQ(S_OK, cell->get_rowHeaderCells(&cell_accessibles, &number_cells));
-
-  // Since we do not have ax::mojom::IntAttribute::kTableCellRowIndex set, the
-  // evaluated row will be 0.  In this case, we do not expect any row headers.
-  EXPECT_EQ(number_cells, 0);
+  EXPECT_EQ(number_cells, 1);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetRowIndex) {
@@ -1386,9 +1386,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetRowIndex) {
   ComPtr<IAccessibleTableCell> cell = GetCellInTable();
   ASSERT_NE(nullptr, cell.Get());
 
-  long index;
+  LONG index;
   EXPECT_EQ(S_OK, cell->get_rowIndex(&index));
-  EXPECT_EQ(index, 0);
+  EXPECT_EQ(index, 1);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetRowColumnExtent) {
@@ -1397,12 +1397,12 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableCellGetRowColumnExtent) {
   ComPtr<IAccessibleTableCell> cell = GetCellInTable();
   ASSERT_NE(nullptr, cell.Get());
 
-  long row, column, row_extents, column_extents;
+  LONG row, column, row_extents, column_extents;
   boolean is_selected;
   EXPECT_EQ(S_OK, cell->get_rowColumnExtents(&row, &column, &row_extents,
                                              &column_extents, &is_selected));
-  EXPECT_EQ(row, 0);
-  EXPECT_EQ(column, 0);
+  EXPECT_EQ(row, 1);
+  EXPECT_EQ(column, 1);
   EXPECT_EQ(row_extents, 1);
   EXPECT_EQ(column_extents, 1);
 }
@@ -1647,7 +1647,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetNSelectedChildrenOne) {
   AXTreeUpdate update = Build3X3Table();
 
   // 7 == table_cell_1
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
   Init(update);
 
   ComPtr<IAccessibleTableCell> cell = GetCellInTable();
@@ -1672,10 +1672,10 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetNSelectedChildrenMany) {
   // 8 == table_cell_2
   // 11 == table_cell_3
   // 12 == table_cell_4
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1718,9 +1718,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetNSelectedColumnsOne) {
   // 3 == table_column_header_2
   // 7 == table_cell_1
   // 11 == table_cell_3
-  update.nodes[3].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
+  update.nodes[3].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1745,16 +1745,16 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetNSelectedColumnsMany) {
   // 3 == table_column_header_2
   // 7 == table_cell_1
   // 11 == table_cell_3
-  update.nodes[3].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
+  update.nodes[3].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   // 4 == table_column_header_3
   // 8 == table_cell_2
   // 12 == table_cell_4
-  update.nodes[4].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[4].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1797,9 +1797,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetNSelectedRowsOne) {
   // 6 == table_row_header_1
   // 7 == table_cell_1
   // 8 == table_cell_2
-  update.nodes[6].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
+  update.nodes[6].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1824,16 +1824,16 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetNSelectedRowsMany) {
   // 6 == table_row_header_3
   // 7 == table_cell_1
   // 8 == table_cell_2
-  update.nodes[6].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
+  update.nodes[6].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   // 10 == table_row_header_3
   // 11 == table_cell_1
   // 12 == table_cell_2
-  update.nodes[10].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[10].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1857,8 +1857,8 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedChildren) {
 
   // 7 == table_cell_1
   // 12 == table_cell_4
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1886,8 +1886,8 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedChildrenZeroMax) {
 
   // 7 == table_cell_1
   // 12 == table_cell_4
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1911,8 +1911,8 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedColumnsZero) {
 
   // 7 == table_cell_1
   // 11 == table_cell_3
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1926,9 +1926,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedColumnsZero) {
   table.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long max_columns = 10;
-  long* columns;
-  long n_columns;
+  LONG max_columns = 10;
+  LONG* columns;
+  LONG n_columns;
   EXPECT_EQ(S_OK,
             result->get_selectedColumns(max_columns, &columns, &n_columns));
   EXPECT_EQ(0, n_columns);
@@ -1940,9 +1940,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedColumnsOne) {
   // 3 == table_column_header_2
   // 7 == table_cell_1
   // 11 == table_cell_3
-  update.nodes[3].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
+  update.nodes[3].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1956,9 +1956,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedColumnsOne) {
   table.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long max_columns = 10;
-  long* columns;
-  long n_columns;
+  LONG max_columns = 10;
+  LONG* columns;
+  LONG n_columns;
   EXPECT_EQ(S_OK,
             result->get_selectedColumns(max_columns, &columns, &n_columns));
   EXPECT_EQ(1, n_columns);
@@ -1971,16 +1971,16 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedColumnsMany) {
   // 3 == table_column_header_2
   // 7 == table_cell_1
   // 11 == table_cell_3
-  update.nodes[3].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
+  update.nodes[3].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   // 4 == table_column_header_3
   // 8 == table_cell_2
   // 12 == table_cell_4
-  update.nodes[4].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[4].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -1994,9 +1994,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedColumnsMany) {
   table.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long max_columns = 10;
-  long* columns;
-  long n_columns;
+  LONG max_columns = 10;
+  LONG* columns;
+  LONG n_columns;
   EXPECT_EQ(S_OK,
             result->get_selectedColumns(max_columns, &columns, &n_columns));
   EXPECT_EQ(2, n_columns);
@@ -2017,9 +2017,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedRowsZero) {
   table.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long max_rows = 10;
-  long* rows;
-  long n_rows;
+  LONG max_rows = 10;
+  LONG* rows;
+  LONG n_rows;
   EXPECT_EQ(S_OK, result->get_selectedRows(max_rows, &rows, &n_rows));
   EXPECT_EQ(0, n_rows);
 }
@@ -2030,9 +2030,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedRowsOne) {
   // 6 == table_row_header_1
   // 7 == table_cell_1
   // 8 == table_cell_2
-  update.nodes[6].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
+  update.nodes[6].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -2046,9 +2046,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedRowsOne) {
   table.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long max_rows = 10;
-  long* rows;
-  long n_rows;
+  LONG max_rows = 10;
+  LONG* rows;
+  LONG n_rows;
   EXPECT_EQ(S_OK, result->get_selectedRows(max_rows, &rows, &n_rows));
   EXPECT_EQ(1, n_rows);
   EXPECT_EQ(1, rows[0]);
@@ -2060,16 +2060,16 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedRowsMany) {
   // 6 == table_row_header_3
   // 7 == table_cell_1
   // 8 == table_cell_2
-  update.nodes[6].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
+  update.nodes[6].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   // 10 == table_row_header_3
   // 11 == table_cell_1
   // 12 == table_cell_2
-  update.nodes[10].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[10].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -2083,9 +2083,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableGetSelectedRowsMany) {
   table.CopyTo(result.GetAddressOf());
   ASSERT_NE(nullptr, result.Get());
 
-  long max_rows = 10;
-  long* rows;
-  long n_rows;
+  LONG max_rows = 10;
+  LONG* rows;
+  LONG n_rows;
   EXPECT_EQ(S_OK, result->get_selectedRows(max_rows, &rows, &n_rows));
   EXPECT_EQ(2, n_rows);
   EXPECT_EQ(1, rows[0]);
@@ -2098,9 +2098,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableIsColumnSelected) {
   // 3 == table_column_header_2
   // 7 == table_cell_1
   // 11 == table_cell_3
-  update.nodes[3].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[11].AddState(ax::mojom::State::kSelected);
+  update.nodes[3].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[11].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -2134,9 +2134,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableIsRowSelected) {
   // 6 == table_row_header_3
   // 7 == table_cell_1
   // 8 == table_cell_2
-  update.nodes[6].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
+  update.nodes[6].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -2170,9 +2170,9 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTableIsSelected) {
   // 6 == table_row_header_3
   // 7 == table_cell_1
   // 8 == table_cell_2
-  update.nodes[6].AddState(ax::mojom::State::kSelected);
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[8].AddState(ax::mojom::State::kSelected);
+  update.nodes[6].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[8].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 
@@ -2235,8 +2235,8 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessibleTable2GetSelectedChildren) {
 
   // 7 == table_cell_1
   // 12 == table_cell_4
-  update.nodes[7].AddState(ax::mojom::State::kSelected);
-  update.nodes[12].AddState(ax::mojom::State::kSelected);
+  update.nodes[7].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
+  update.nodes[12].AddBoolAttribute(ax::mojom::BoolAttribute::kSelected, true);
 
   Init(update);
 

@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.searchwidget;
 
 import android.app.Activity;
+import android.app.SearchManager;
 import android.content.Intent;
 import android.net.Uri;
 import android.support.v4.app.ActivityOptionsCompat;
@@ -35,16 +36,20 @@ import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.ui.base.ActivityWindowAndroid;
 
 /** Queries the user's default search engine and shows autocomplete suggestions. */
 public class SearchActivity extends AsyncInitializationActivity
         implements SnackbarManageable, SearchActivityLocationBarLayout.Delegate {
+    // Shared with other org.chromium.chrome.browser.searchwidget classes.
+    protected static final String TAG = "searchwidget";
+
     /** Notified about events happening inside a SearchActivity. */
     public static class SearchActivityDelegate {
         /**
-         * Called when {@link SearchActivity#setContentView} is deciding whether to continue loading
-         * the native library immediately.
+         * Called when {@link SearchActivity#triggerLayoutInflation} is deciding whether to continue
+         * loading the native library immediately.
          * @return Whether or not native initialization should proceed immediately.
          */
         boolean shouldDelayNativeInitialization() {
@@ -71,7 +76,6 @@ public class SearchActivity extends AsyncInitializationActivity
         }
     }
 
-    private static final String TAG = "searchwidget";
     private static final Object DELEGATE_LOCK = new Object();
 
     /** Notified about events happening for the SearchActivity. */
@@ -115,7 +119,7 @@ public class SearchActivity extends AsyncInitializationActivity
     }
 
     @Override
-    protected void setContentView() {
+    protected void triggerLayoutInflation() {
         mSnackbarManager = new SnackbarManager(this, null);
         mSearchBoxDataProvider = new SearchBoxDataProvider();
 
@@ -142,6 +146,7 @@ public class SearchActivity extends AsyncInitializationActivity
                 }
             });
         }
+        onInitialLayoutInflationComplete();
     }
 
     @Override
@@ -153,7 +158,7 @@ public class SearchActivity extends AsyncInitializationActivity
                 null, null);
         mTab.initialize(WebContentsFactory.createWebContents(false, false), null,
                 new TabDelegateFactory(), false, false);
-        mTab.loadUrl(new LoadUrlParams("about:blank"));
+        mTab.loadUrl(new LoadUrlParams(ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL));
 
         mSearchBoxDataProvider.onNativeLibraryReady(mTab);
         mSearchBox.onNativeLibraryReady();
@@ -189,6 +194,9 @@ public class SearchActivity extends AsyncInitializationActivity
         if (mQueuedUrl != null) loadUrl(mQueuedUrl);
 
         AutocompleteController.nativePrefetchZeroSuggestResults();
+        // TODO(tedchoc): Warmup triggers the CustomTab layout to be inflated, but this widget
+        //                will navigate to Tabbed mode.  Investigate whether this can inflate
+        //                the tabbed mode layout in the background instead of CCTs.
         CustomTabsConnection.getInstance().warmup(0);
         mSearchBox.onDeferredStartup(isVoiceSearchIntent());
         RecordUserAction.record("SearchWidget.WidgetSelected");
@@ -218,8 +226,12 @@ public class SearchActivity extends AsyncInitializationActivity
                 getIntent(), SearchWidgetProvider.EXTRA_START_VOICE_SEARCH, false);
     }
 
+    private String getOptionalIntentQuery() {
+        return IntentUtils.safeGetStringExtra(getIntent(), SearchManager.QUERY);
+    }
+
     private void beginQuery() {
-        mSearchBox.beginQuery(isVoiceSearchIntent());
+        mSearchBox.beginQuery(isVoiceSearchIntent(), getOptionalIntentQuery());
     }
 
     @Override

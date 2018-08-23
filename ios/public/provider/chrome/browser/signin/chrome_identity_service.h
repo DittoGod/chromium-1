@@ -162,7 +162,6 @@ class ChromeIdentityService {
   // Asynchronously retrieves access tokens for the given identity and scopes.
   virtual void GetAccessToken(ChromeIdentity* identity,
                               const std::string& client_id,
-                              const std::string& client_secret,
                               const std::set<std::string>& scopes,
                               AccessTokenCallback callback);
 
@@ -217,7 +216,7 @@ class ChromeIdentityService {
   void FireProfileDidUpdate(ChromeIdentity* identity);
 
  private:
-  base::ObserverList<Observer, true> observer_list_;
+  base::ObserverList<Observer, true>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeIdentityService);
 };

@@ -7,17 +7,16 @@
 #include <memory>
 #include <utility>
 
-#include "base/ios/ios_util.h"
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#import "base/mac/bind_objc_block.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_block.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/search_engines/template_url_service.h"
 #include "ios/chrome/browser/application_context.h"
 #import "ios/chrome/browser/procedural_block_types.h"
@@ -360,7 +359,7 @@ dismissPaneWithJavascriptCompletionHandler:(ProceduralBlock)completionHandler
                 action:@selector(handleLongPressFrom:)];
 
     __weak ContextualSearchController* weakself = self;
-    auto callback = base::BindBlockArc(
+    auto callback = base::BindRepeating(
         ^(ContextualSearchDelegate::SearchResolution resolution) {
           [weakself updateForResolvedSearch:resolution];
         });
@@ -438,9 +437,13 @@ dismissPaneWithJavascriptCompletionHandler:(ProceduralBlock)completionHandler
       DOMAlteringLock::CreateForWebState([self webState]);
 
       __weak ContextualSearchController* weakSelf = self;
-      auto callback = base::BindBlockArc(
+      auto callback = base::BindRepeating(
           ^bool(const base::DictionaryValue& JSON, const GURL& originURL,
-                bool userIsInteracting) {
+                bool userIsInteracting, bool isMainFrame) {
+            if (!isMainFrame) {
+              // Contextual search is only supported on main frame.
+              return false;
+            }
             ContextualSearchController* strongSelf = weakSelf;
             // |originURL| and |isInteracting| aren't used.
             return [strongSelf handleScriptCommand:JSON];

@@ -13,6 +13,7 @@
 
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/ui/passwords/password_manager_presenter.h"
@@ -29,6 +30,17 @@ class CredentialProviderInterface;
 // PasswordManagerPresenter.
 class PasswordUIViewAndroid : public PasswordUIView {
  public:
+  // Result of transforming a vector of PasswordForms into their CSV
+  // description and writing that to disk.
+  struct SerializationResult {
+    // The number of password entries written. 0 if error encountered.
+    int entries_count;
+
+    // The system error code recorded after the last write operation. 0 if no
+    // error encountered.
+    logging::SystemErrorCode error;
+  };
+
   PasswordUIViewAndroid(JNIEnv* env, jobject);
   ~PasswordUIViewAndroid() override;
 
@@ -46,30 +58,31 @@ class PasswordUIViewAndroid : public PasswordUIView {
   // Calls from Java.
   base::android::ScopedJavaLocalRef<jobject> GetSavedPasswordEntry(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&,
+      const base::android::JavaRef<jobject>&,
       int index);
   base::android::ScopedJavaLocalRef<jstring> GetSavedPasswordException(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&,
+      const base::android::JavaRef<jobject>&,
       int index);
-  void UpdatePasswordLists(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>&);
-  void HandleRemoveSavedPasswordEntry(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&,
-      int index);
+  void UpdatePasswordLists(JNIEnv* env, const base::android::JavaRef<jobject>&);
+  void HandleRemoveSavedPasswordEntry(JNIEnv* env,
+                                      const base::android::JavaRef<jobject>&,
+                                      int index);
   void HandleRemoveSavedPasswordException(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&,
+      const base::android::JavaRef<jobject>&,
       int index);
   void HandleSerializePasswords(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&,
-      const base::android::JavaParamRef<jobject>& callback);
+      const base::android::JavaRef<jobject>&,
+      const base::android::JavaRef<jstring>& java_target_path,
+      const base::android::JavaRef<jobject>& success_callback,
+      const base::android::JavaRef<jobject>& error_callback);
   // Destroy the native implementation.
-  void Destroy(JNIEnv*, const base::android::JavaParamRef<jobject>&);
+  void Destroy(JNIEnv*, const base::android::JavaRef<jobject>&);
 
-  void set_export_target_for_testing(std::string* export_target_for_testing) {
+  void set_export_target_for_testing(
+      SerializationResult* export_target_for_testing) {
     export_target_for_testing_ = export_target_for_testing;
   }
 
@@ -97,15 +110,20 @@ class PasswordUIViewAndroid : public PasswordUIView {
   //     of the pending task.
   enum class State { ALIVE, ALIVE_SERIALIZATION_PENDING, DELETION_PENDING };
 
-  // Calls |password_manager_presenter_| to retrieve cached PasswordForm objects
-  // and then PasswordCSVWriter to serialize them. It returns the serialized
-  // value. Both steps involve a lot of memory allocation and copying, so this
-  // method should be executed on a suitable task runner.
-  std::string ObtainAndSerializePasswords();
+  // Calls |password_manager_presenter_| to retrieve cached PasswordForm
+  // objects, then PasswordCSVWriter to serialize them, and finally writes them
+  // to |target_path|. The steps involve a lot of memory allocation and copying,
+  // as well as I/O operations, so this method should be executed on a suitable
+  // task runner.
+  SerializationResult ObtainAndSerializePasswords(
+      const base::FilePath& target_path);
 
-  // Sends |serialized_passwords| to Java via |callback|.
-  void PostSerializedPasswords(const base::android::JavaRef<jobject>& callback,
-                               std::string serialized_passwords);
+  // Sends |serialization_result| to Java via |success_callback| or
+  // |error_callback|, depending on whether the result is a success or an error.
+  void PostSerializedPasswords(
+      const base::android::JavaRef<jobject>& success_callback,
+      const base::android::JavaRef<jobject>& error_callback,
+      SerializationResult serialization_result);
 
   // The |state_| must only be accessed on the main task runner.
   State state_ = State::ALIVE;
@@ -113,7 +131,7 @@ class PasswordUIViewAndroid : public PasswordUIView {
   // If not null, PostSerializedPasswords will write the serialized passwords to
   // |*export_target_for_testing_| instead of passing them to Java. This must
   // remain null in production code.
-  std::string* export_target_for_testing_ = nullptr;
+  SerializationResult* export_target_for_testing_ = nullptr;
 
   PasswordManagerPresenter password_manager_presenter_;
 

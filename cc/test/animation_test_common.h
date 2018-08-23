@@ -7,6 +7,7 @@
 
 #include "cc/animation/animation_curve.h"
 #include "cc/animation/animation_timeline.h"
+#include "cc/animation/keyframe_effect.h"
 #include "cc/animation/keyframe_model.h"
 #include "cc/animation/transform_operations.h"
 #include "cc/paint/filter_operations.h"
@@ -18,8 +19,6 @@ class ScrollOffset;
 }
 
 namespace cc {
-
-class SingleKeyframeEffectAnimationPlayer;
 
 class FakeFloatAnimationCurve : public FloatAnimationCurve {
  public:
@@ -42,8 +41,6 @@ class FakeTransformTransition : public TransformAnimationCurve {
 
   base::TimeDelta Duration() const override;
   TransformOperations GetValue(base::TimeDelta time) const override;
-  bool AnimatedBoundsForBox(const gfx::BoxF& box,
-                            gfx::BoxF* bounds) const override;
   bool IsTranslation() const override;
   bool PreservesAxisAlignment() const override;
   bool AnimationStartScale(bool forward_direction,
@@ -73,40 +70,44 @@ class FakeFloatTransition : public FloatAnimationCurve {
   float to_;
 };
 
-int AddScrollOffsetAnimationToPlayer(
-    SingleKeyframeEffectAnimationPlayer* player,
-    gfx::ScrollOffset initial_value,
-    gfx::ScrollOffset target_value,
-    bool impl_only);
+int AddScrollOffsetAnimationToAnimation(Animation* animation,
+                                        gfx::ScrollOffset initial_value,
+                                        gfx::ScrollOffset target_value,
+                                        KeyframeEffectId effect_id = 0);
 
-int AddAnimatedTransformToPlayer(SingleKeyframeEffectAnimationPlayer* player,
+int AddAnimatedTransformToAnimation(Animation* animation,
+                                    double duration,
+                                    int delta_x,
+                                    int delta_y,
+                                    KeyframeEffectId effect_id = 0);
+
+int AddAnimatedTransformToAnimation(Animation* animation,
+                                    double duration,
+                                    TransformOperations start_operations,
+                                    TransformOperations operations,
+                                    KeyframeEffectId effect_id = 0);
+
+int AddOpacityTransitionToAnimation(Animation* animation,
+                                    double duration,
+                                    float start_opacity,
+                                    float end_opacity,
+                                    bool use_timing_function,
+                                    KeyframeEffectId effect_id = 0);
+
+int AddAnimatedFilterToAnimation(Animation* animation,
                                  double duration,
-                                 int delta_x,
-                                 int delta_y);
+                                 float start_brightness,
+                                 float end_brightness,
+                                 KeyframeEffectId effect_id = 0);
 
-int AddAnimatedTransformToPlayer(SingleKeyframeEffectAnimationPlayer* player,
-                                 double duration,
-                                 TransformOperations start_operations,
-                                 TransformOperations operations);
+int AddOpacityStepsToAnimation(Animation* animation,
+                               double duration,
+                               float start_opacity,
+                               float end_opacity,
+                               int num_steps,
+                               KeyframeEffectId effect_id = 0);
 
-int AddOpacityTransitionToPlayer(SingleKeyframeEffectAnimationPlayer* player,
-                                 double duration,
-                                 float start_opacity,
-                                 float end_opacity,
-                                 bool use_timing_function);
-
-int AddAnimatedFilterToPlayer(SingleKeyframeEffectAnimationPlayer* player,
-                              double duration,
-                              float start_brightness,
-                              float end_brightness);
-
-int AddOpacityStepsToPlayer(SingleKeyframeEffectAnimationPlayer* player,
-                            double duration,
-                            float start_opacity,
-                            float end_opacity,
-                            int num_steps);
-
-void AddKeyframeModelToElementWithPlayer(
+void AddKeyframeModelToElementWithAnimation(
     ElementId element_id,
     scoped_refptr<AnimationTimeline> timeline,
     std::unique_ptr<KeyframeModel> keyframe_model);
@@ -125,28 +126,28 @@ KeyframeModel* GetKeyframeModelFromElementWithExistingKeyframeEffect(
     scoped_refptr<AnimationTimeline> timeline,
     int keyframe_model_id);
 
-int AddAnimatedFilterToElementWithPlayer(
+int AddAnimatedFilterToElementWithAnimation(
     ElementId element_id,
     scoped_refptr<AnimationTimeline> timeline,
     double duration,
     float start_brightness,
     float end_brightness);
 
-int AddAnimatedTransformToElementWithPlayer(
+int AddAnimatedTransformToElementWithAnimation(
     ElementId element_id,
     scoped_refptr<AnimationTimeline> timeline,
     double duration,
     int delta_x,
     int delta_y);
 
-int AddAnimatedTransformToElementWithPlayer(
+int AddAnimatedTransformToElementWithAnimation(
     ElementId element_id,
     scoped_refptr<AnimationTimeline> timeline,
     double duration,
     TransformOperations start_operations,
     TransformOperations operations);
 
-int AddOpacityTransitionToElementWithPlayer(
+int AddOpacityTransitionToElementWithAnimation(
     ElementId element_id,
     scoped_refptr<AnimationTimeline> timeline,
     double duration,

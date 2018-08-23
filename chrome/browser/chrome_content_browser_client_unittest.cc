@@ -11,8 +11,6 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
@@ -35,7 +33,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -122,8 +120,6 @@ TEST_F(ChromeContentBrowserClientWindowTest, OpenURL) {
 
 #endif  // !defined(OS_ANDROID)
 
-#if BUILDFLAG(ENABLE_WEBRTC)
-
 // NOTE: Any updates to the expectations in these tests should also be done in
 // the browser test WebRtcDisableEncryptionFlagBrowserTest.
 class DisableWebRtcEncryptionFlagTest : public testing::Test {
@@ -180,12 +176,9 @@ TEST_F(DisableWebRtcEncryptionFlagTest, StableChannel) {
   EXPECT_FALSE(to_command_line_.HasSwitch(switches::kDisableWebRtcEncryption));
 }
 
-#endif  // ENABLE_WEBRTC
-
 class BlinkSettingsFieldTrialTest : public testing::Test {
  public:
   static const char kDisallowFetchFieldTrialName[];
-  static const char kCSSExternalScannerFieldTrialName[];
   static const char kFakeGroupName[];
 
   BlinkSettingsFieldTrialTest()
@@ -241,8 +234,6 @@ class BlinkSettingsFieldTrialTest : public testing::Test {
 
 const char BlinkSettingsFieldTrialTest::kDisallowFetchFieldTrialName[] =
     "DisallowFetchForDocWrittenScriptsInMainFrame";
-const char BlinkSettingsFieldTrialTest::kCSSExternalScannerFieldTrialName[] =
-    "CSSExternalScanner";
 const char BlinkSettingsFieldTrialTest::kFakeGroupName[] = "FakeGroup";
 
 TEST_F(BlinkSettingsFieldTrialTest, NoFieldTrial) {
@@ -275,28 +266,6 @@ TEST_F(BlinkSettingsFieldTrialTest, FieldTrialEnabled) {
             command_line().GetSwitchValueASCII(switches::kBlinkSettings));
 }
 
-TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsEnabled) {
-  CreateFieldTrialWithParams(kDisallowFetchFieldTrialName, kFakeGroupName,
-                             "key1", "value1", "key2", "value2");
-  CreateFieldTrialWithParams(kCSSExternalScannerFieldTrialName, kFakeGroupName,
-                             "keyA", "valueA", "keyB", "valueB");
-  AppendContentBrowserClientSwitches();
-  EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
-  EXPECT_EQ("key1=value1,key2=value2,keyA=valueA,keyB=valueB",
-            command_line().GetSwitchValueASCII(switches::kBlinkSettings));
-}
-
-TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsDuplicateKeys) {
-  CreateFieldTrialWithParams(kDisallowFetchFieldTrialName, kFakeGroupName,
-                             "key1", "value1", "key2", "value2");
-  CreateFieldTrialWithParams(kCSSExternalScannerFieldTrialName, kFakeGroupName,
-                             "key2", "duplicate", "key3", "value3");
-  AppendContentBrowserClientSwitches();
-  EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
-  EXPECT_EQ("key1=value1,key2=value2,key2=duplicate,key3=value3",
-            command_line().GetSwitchValueASCII(switches::kBlinkSettings));
-}
-
 #if !defined(OS_ANDROID)
 namespace content {
 
@@ -305,7 +274,7 @@ class InstantNTPURLRewriteTest : public BrowserWithTestWindowTest {
   void SetUp() override {
     BrowserWithTestWindowTest::SetUp();
     field_trial_list_.reset(new base::FieldTrialList(
-        base::MakeUnique<variations::SHA1EntropyProvider>("42")));
+        std::make_unique<variations::SHA1EntropyProvider>("42")));
   }
 
   void InstallTemplateURLWithNewTabPage(GURL new_tab_page_url) {
@@ -320,7 +289,7 @@ class InstantNTPURLRewriteTest : public BrowserWithTestWindowTest {
     data.SetURL("http://foo.com/url?bar={searchTerms}");
     data.new_tab_url = new_tab_page_url.spec();
     TemplateURL* template_url =
-        template_url_service->Add(base::MakeUnique<TemplateURL>(data));
+        template_url_service->Add(std::make_unique<TemplateURL>(data));
     template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
   }
 
@@ -413,8 +382,6 @@ TEST(ChromeContentBrowserClientTest, GetMetricSuffixForURL) {
 
 #if defined(OS_CHROMEOS)
 
-// This behavior only matters on Chrome OS, which is why this isn't wrapped in
-// ENABLE_MASH_PACKAGED_SERVICES (which is used for Linux Ozone).
 TEST(ChromeContentBrowserClientTest, ShouldTerminateOnServiceQuit) {
   const struct {
     std::string service_name;

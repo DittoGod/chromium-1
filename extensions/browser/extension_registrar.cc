@@ -5,6 +5,7 @@
 #include "extensions/browser/extension_registrar.h"
 
 #include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -20,6 +21,7 @@
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/renderer_startup_helper.h"
 #include "extensions/browser/runtime_data.h"
+#include "extensions/browser/service_worker_task_queue.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 
 using content::DevToolsAgentHost;
@@ -58,8 +60,25 @@ void ExtensionRegistrar::AddExtension(
     int version_compare_result = extension->version().CompareTo(old->version());
     is_extension_upgrade = version_compare_result > 0;
     // Other than for unpacked extensions, we should not be downgrading.
-    if (!Manifest::IsUnpackedLocation(extension->location()))
-      CHECK_GE(version_compare_result, 0);
+    if (!Manifest::IsUnpackedLocation(extension->location()) &&
+        version_compare_result < 0) {
+      UMA_HISTOGRAM_ENUMERATION(
+          "Extensions.AttemptedToDowngradeVersionLocation",
+          extension->location(), Manifest::NUM_LOCATIONS);
+      UMA_HISTOGRAM_ENUMERATION("Extensions.AttemptedToDowngradeVersionType",
+                                extension->GetType(), Manifest::NUM_LOAD_TYPES);
+
+      // TODO(https://crbug.com/810799): It would be awfully nice to CHECK this,
+      // but that's caused problems. There are apparently times when this
+      // happens that we aren't accounting for. We should track those down and
+      // fix them, but it can be tricky.
+      NOTREACHED() << "Attempted to downgrade extension."
+                   << "\nID: " << extension->id()
+                   << "\nOld Version: " << old->version()
+                   << "\nNew Version: " << extension->version()
+                   << "\nLocation: " << extension->location();
+      return;
+    }
   }
 
   // If the extension was disabled for a reload, we will enable it.
@@ -418,6 +437,14 @@ void ExtensionRegistrar::ActivateExtension(const Extension* extension,
 
   renderer_helper_->OnExtensionLoaded(*extension);
 
+  // TODO(lazyboy): We should move all logic that is required to start up an
+  // extension to a separate class, instead of calling adhoc methods like
+  // service worker ones below.
+  if (BackgroundInfo::IsServiceWorkerBased(extension)) {
+    DCHECK(extension->is_extension());
+    ServiceWorkerTaskQueue::Get(browser_context_)->ActivateExtension(extension);
+  }
+
   // Tell subsystems that use the ExtensionRegistryObserver::OnExtensionLoaded
   // about the new extension.
   //
@@ -441,6 +468,10 @@ void ExtensionRegistrar::DeactivateExtension(const Extension* extension,
   renderer_helper_->OnExtensionUnloaded(*extension);
   extension_system_->UnregisterExtensionWithRequestContexts(extension->id(),
                                                             reason);
+  if (BackgroundInfo::IsServiceWorkerBased(extension)) {
+    ServiceWorkerTaskQueue::Get(browser_context_)
+        ->DeactivateExtension(extension);
+  }
   delegate_->PostDeactivateExtension(extension);
 }
 

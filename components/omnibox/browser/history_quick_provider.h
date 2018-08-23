@@ -50,10 +50,11 @@ class HistoryQuickProvider : public HistoryProvider {
                            DontTrimHttpSchemeIfInputHasScheme);
   FRIEND_TEST_ALL_PREFIXES(HistoryQuickProviderTest,
                            DontTrimHttpSchemeIfInputMatches);
-  FRIEND_TEST_ALL_PREFIXES(HistoryQuickProviderTest, DontTrimHttpsScheme);
   FRIEND_TEST_ALL_PREFIXES(HistoryQuickProviderTest,
-                           DontTrimHttpsSchemeDespiteFlag);
-  FRIEND_TEST_ALL_PREFIXES(HistoryQuickProviderTest, DoTrimHttpsSchemeIfFlag);
+                           DontTrimHttpsSchemeIfInputHasScheme);
+  FRIEND_TEST_ALL_PREFIXES(HistoryQuickProviderTest, DoTrimHttpsScheme);
+  FRIEND_TEST_ALL_PREFIXES(HistoryQuickProviderTest,
+                           CorrectAutocompleteWithTrailingSlash);
 
   ~HistoryQuickProvider() override;
 

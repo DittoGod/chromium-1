@@ -8,12 +8,12 @@
 
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
-#include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/win/registry.h"
@@ -39,7 +39,7 @@ void ReadShellExtensions(
     if (clsid.ReadValue(L"", &dll) != ERROR_SUCCESS)
       continue;
 
-    nb_shell_extensions++;
+    (*nb_shell_extensions)++;
     callback.Run(base::FilePath(dll));
   }
 }
@@ -64,7 +64,7 @@ void EnumerateShellExtensionsOnBlockingSequence(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     OnShellExtensionEnumeratedCallback on_shell_extension_enumerated,
     base::OnceClosure on_enumeration_finished) {
-  EnumerateShellExtensionPaths(
+  internal::EnumerateShellExtensionPaths(
       base::BindRepeating(&OnShellExtensionPathEnumerated, task_runner,
                           std::move(on_shell_extension_enumerated)));
 
@@ -76,6 +76,21 @@ void EnumerateShellExtensionsOnBlockingSequence(
 const wchar_t kShellExtensionRegistryKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved";
 
+void EnumerateShellExtensions(
+    OnShellExtensionEnumeratedCallback on_shell_extension_enumerated,
+    base::OnceClosure on_enumeration_finished) {
+  base::PostTaskWithTraits(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&EnumerateShellExtensionsOnBlockingSequence,
+                     base::SequencedTaskRunnerHandle::Get(),
+                     std::move(on_shell_extension_enumerated),
+                     std::move(on_enumeration_finished)));
+}
+
+namespace internal {
+
 void EnumerateShellExtensionPaths(
     const base::RepeatingCallback<void(const base::FilePath&)>& callback) {
   base::AssertBlockingAllowed();
@@ -84,19 +99,8 @@ void EnumerateShellExtensionPaths(
   ReadShellExtensions(HKEY_LOCAL_MACHINE, callback, &nb_shell_extensions);
   ReadShellExtensions(HKEY_CURRENT_USER, callback, &nb_shell_extensions);
 
-  base::UmaHistogramCounts100("ThirdPartyModules.ShellExtensionsCount",
-                              nb_shell_extensions);
+  UMA_HISTOGRAM_COUNTS_100("ThirdPartyModules.ShellExtensionsCount2",
+                           nb_shell_extensions);
 }
 
-void EnumerateShellExtensions(
-    OnShellExtensionEnumeratedCallback on_shell_extension_enumerated,
-    base::OnceClosure on_enumeration_finished) {
-  base::PostTaskWithTraits(
-      FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
-       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::BindOnce(&EnumerateShellExtensionsOnBlockingSequence,
-                     base::SequencedTaskRunnerHandle::Get(),
-                     std::move(on_shell_extension_enumerated),
-                     std::move(on_enumeration_finished)));
-}
+}  // namespace internal

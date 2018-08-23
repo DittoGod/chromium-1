@@ -12,12 +12,13 @@
 #include "content/common/content_export.h"
 #include "content/common/navigation_params.h"
 #include "content/public/common/url_loader_throttle.h"
+#include "content/renderer/loader/frame_request_blocker.h"
+#include "content/renderer/loader/navigation_response_override_parameters.h"
 #include "content/renderer/loader/web_url_loader_impl.h"
-#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
+#include "third_party/blink/public/mojom/page/page_visibility_state.mojom.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url_request.h"
 #include "ui/base/page_transition_types.h"
-#include "url/origin.h"
 
 namespace network {
 struct ResourceRequest;
@@ -43,20 +44,12 @@ class CONTENT_EXPORT RequestExtraData : public blink::WebURLRequest::ExtraData {
   void set_is_main_frame(bool is_main_frame) {
     is_main_frame_ = is_main_frame;
   }
-  url::Origin frame_origin() const { return frame_origin_; }
-  void set_frame_origin(const url::Origin& frame_origin) {
-    frame_origin_ = frame_origin;
-  }
   void set_allow_download(bool allow_download) {
     allow_download_ = allow_download;
   }
   ui::PageTransition transition_type() const { return transition_type_; }
   void set_transition_type(ui::PageTransition transition_type) {
     transition_type_ = transition_type;
-  }
-  void set_should_replace_current_entry(
-      bool should_replace_current_entry) {
-    should_replace_current_entry_ = should_replace_current_entry;
   }
   int service_worker_provider_id() const {
     return service_worker_provider_id_;
@@ -87,15 +80,25 @@ class CONTENT_EXPORT RequestExtraData : public blink::WebURLRequest::ExtraData {
     requested_with_ = requested_with;
   }
 
-  // PlzNavigate: |stream_override| is used to override certain parameters of
-  // navigation requests.
-  std::unique_ptr<StreamOverrideParameters> TakeStreamOverrideOwnership() {
-    return std::move(stream_override_);
+  // PlzNavigate: |navigation_response_override| is used to override certain
+  // parameters of navigation requests.
+  std::unique_ptr<NavigationResponseOverrideParameters>
+  TakeNavigationResponseOverrideOwnership() {
+    return std::move(navigation_response_override_);
   }
 
-  void set_stream_override(
-      std::unique_ptr<StreamOverrideParameters> stream_override) {
-    stream_override_ = std::move(stream_override);
+  void set_navigation_response_override(
+      std::unique_ptr<NavigationResponseOverrideParameters> response_override) {
+    navigation_response_override_ = std::move(response_override);
+  }
+
+  // |continue_navigation| is used to continue a navigation on the renderer
+  // process that has already been started on the browser process.
+  base::OnceClosure TakeContinueNavigationFunctionOwnerShip() {
+    return std::move(continue_navigation_function_);
+  }
+  void set_continue_navigation_function(base::OnceClosure continue_navigation) {
+    continue_navigation_function_ = std::move(continue_navigation);
   }
 
   void set_initiated_in_secure_context(bool secure) {
@@ -135,6 +138,13 @@ class CONTENT_EXPORT RequestExtraData : public blink::WebURLRequest::ExtraData {
     navigation_initiated_by_renderer_ = navigation_by_renderer;
   }
 
+  // Determines whether SameSite cookies will be attached to the request
+  // even when the request looks cross-site.
+  bool attach_same_site_cookies() const { return attach_same_site_cookies_; }
+  void set_attach_same_site_cookies(bool attach) {
+    attach_same_site_cookies_ = attach;
+  }
+
   std::vector<std::unique_ptr<URLLoaderThrottle>> TakeURLLoaderThrottles() {
     return std::move(url_loader_throttles_);
   }
@@ -143,27 +153,40 @@ class CONTENT_EXPORT RequestExtraData : public blink::WebURLRequest::ExtraData {
     url_loader_throttles_ = std::move(throttles);
   }
 
+  void set_frame_request_blocker(
+      scoped_refptr<FrameRequestBlocker> frame_request_blocker) {
+    frame_request_blocker_ = frame_request_blocker;
+  }
+
+  scoped_refptr<FrameRequestBlocker> frame_request_blocker() {
+    return frame_request_blocker_;
+  }
+
   void CopyToResourceRequest(network::ResourceRequest* request) const;
 
  private:
   blink::mojom::PageVisibilityState visibility_state_;
   int render_frame_id_;
   bool is_main_frame_;
-  url::Origin frame_origin_;
   bool allow_download_;
   ui::PageTransition transition_type_;
-  bool should_replace_current_entry_;
   int service_worker_provider_id_;
   bool originated_from_service_worker_;
   blink::WebString custom_user_agent_;
   blink::WebString requested_with_;
-  std::unique_ptr<StreamOverrideParameters> stream_override_;
+  std::unique_ptr<NavigationResponseOverrideParameters>
+      navigation_response_override_;
+  // TODO(arthursonzogni): Move most of the |navigation_response_override_|
+  // content as parameters of this function.
+  base::OnceClosure continue_navigation_function_;
   bool initiated_in_secure_context_;
   bool is_for_no_state_prefetch_;
   bool download_to_network_cache_only_;
   bool block_mixed_plugin_content_;
   bool navigation_initiated_by_renderer_;
+  bool attach_same_site_cookies_;
   std::vector<std::unique_ptr<URLLoaderThrottle>> url_loader_throttles_;
+  scoped_refptr<FrameRequestBlocker> frame_request_blocker_;
 
   DISALLOW_COPY_AND_ASSIGN(RequestExtraData);
 };

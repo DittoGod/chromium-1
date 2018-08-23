@@ -28,7 +28,7 @@
 #include "content/common/content_switches_internal.h"
 #include "content/common/frame_owner_properties.h"
 #include "content/common/input_messages.h"
-#include "third_party/WebKit/public/common/frame/frame_policy.h"
+#include "third_party/blink/public/common/frame/frame_policy.h"
 
 namespace content {
 
@@ -183,7 +183,8 @@ bool FrameTree::AddFrame(
     bool is_created_by_script,
     const base::UnguessableToken& devtools_frame_token,
     const blink::FramePolicy& frame_policy,
-    const FrameOwnerProperties& frame_owner_properties) {
+    const FrameOwnerProperties& frame_owner_properties,
+    bool was_discarded) {
   CHECK_NE(new_routing_id, MSG_ROUTING_NONE);
 
   // A child frame always starts with an initial empty document, which means
@@ -206,6 +207,9 @@ bool FrameTree::AddFrame(
   // RenderFrameProxy objects when the RenderFrameHost is created.
   new_node->SetPendingFramePolicy(frame_policy);
   new_node->CommitPendingFramePolicy();
+
+  if (was_discarded)
+    new_node->set_was_discarded();
 
   // Add the new node to the FrameTree, creating the RenderFrameHost.
   FrameTreeNode* added_node =
@@ -349,6 +353,7 @@ RenderViewHostImpl* FrameTree::CreateRenderViewHost(
     SiteInstance* site_instance,
     int32_t routing_id,
     int32_t main_frame_routing_id,
+    int32_t widget_routing_id,
     bool swapped_out,
     bool hidden) {
   RenderViewHostMap::iterator iter =
@@ -359,7 +364,8 @@ RenderViewHostImpl* FrameTree::CreateRenderViewHost(
   RenderViewHostImpl* rvh =
       static_cast<RenderViewHostImpl*>(RenderViewHostFactory::Create(
           site_instance, render_view_delegate_, render_widget_delegate_,
-          routing_id, main_frame_routing_id, swapped_out, hidden));
+          routing_id, main_frame_routing_id, widget_routing_id, swapped_out,
+          hidden));
 
   render_view_host_map_[site_instance->GetId()] = rvh;
   return rvh;

@@ -8,15 +8,12 @@
   "incognito" : "split",
   "icons": {
     "16": "common/images/icon16.png",
-    "32": "common/images/icon32.png",
     "48": "common/images/icon48.png",
-    "64": "common/images/icon64.png",
     "96": "common/images/icon96.png",
     "128": "common/images/icon128.png",
-    "256": "common/images/icon256.png"
+    "192": "common/images/icon192.png"
   },
   "permissions": [
-    // Comment out chrome:// permissions to debug on a desktop browser.
     "chrome://extension-icon/",
     "chrome://resources/",
     "chrome://theme/",
@@ -137,6 +134,14 @@
       "default_icon": "common/images/file_types/200/generic.png",
       "file_filters": [
         "filesystem:*.gslides"
+      ]
+    },
+    {
+      "id": "install-linux-package",
+      "default_title": "__MSG_INSTALL_LINUX_PACKAGE__",
+      "default_icon": "common/images/file_types/200/generic.png",
+      "file_filters": [
+        "filesystem:*.deb"
       ]
     },
     // The following handlers are used only internally, therefore they do not

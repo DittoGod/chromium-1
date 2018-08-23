@@ -14,7 +14,7 @@
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace chromeos {
@@ -70,7 +70,7 @@ class FreezerCgroupProcessManager::FileWorker {
     // start up with renderers in frozen state, for example after the previous
     // Chrome process crashed at a point in time after suspend where it still
     // hadn't thawed renderers yet.
-    ThawRenderers(base::Bind([](bool) {}));
+    ThawRenderers(base::DoNothing());
   }
 
   void SetShouldFreezeRenderer(base::ProcessHandle handle, bool frozen) {
@@ -157,7 +157,7 @@ class FreezerCgroupProcessManager::FileWorker {
 
 FreezerCgroupProcessManager::FreezerCgroupProcessManager()
     : file_thread_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::TaskPriority::BACKGROUND, base::MayBlock()})),
+          {base::TaskPriority::BEST_EFFORT, base::MayBlock()})),
       file_worker_(new FileWorker(file_thread_)) {
   file_thread_->PostTask(FROM_HERE,
                          base::Bind(&FileWorker::Start,

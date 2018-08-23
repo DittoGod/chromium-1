@@ -51,12 +51,14 @@ class WebContentsObserverProxy : public WebContentsObserver {
   void DocumentLoadedInFrame(RenderFrameHost* render_frame_host) override;
   void NavigationEntryCommitted(
       const LoadCommittedDetails& load_details) override;
+  void NavigationEntriesDeleted() override;
   void WebContentsDestroyed() override;
   void DidAttachInterstitialPage() override;
   void DidDetachInterstitialPage() override;
   void DidChangeThemeColor(SkColor color) override;
   void MediaEffectivelyFullscreenChanged(bool is_fullscreen) override;
   void SetToBaseURLForDataURLIfNeeded(std::string* url);
+  void ViewportFitChanged(blink::mojom::ViewportFit value) override;
 
   base::android::ScopedJavaGlobalRef<jobject> java_observer_;
   GURL base_url_of_last_started_data_url_;

@@ -13,6 +13,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "chrome/browser/chromeos/policy/cached_policy_key_loader_chromeos.h"
+#include "chrome/browser/chromeos/policy/value_validation/onc_user_policy_value_validator.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "google_apis/gaia/gaia_auth_util.h"
@@ -40,7 +41,8 @@ UserCloudPolicyStoreChromeOS::UserCloudPolicyStoreChromeOS(
     const AccountId& account_id,
     const base::FilePath& user_policy_key_dir,
     bool is_active_directory)
-    : UserCloudPolicyStoreBase(background_task_runner),
+    : UserCloudPolicyStoreBase(background_task_runner,
+                               PolicyScope::POLICY_SCOPE_USER),
       session_manager_client_(session_manager_client),
       account_id_(account_id),
       is_active_directory_(is_active_directory),
@@ -59,6 +61,7 @@ void UserCloudPolicyStoreChromeOS::Store(
 
   // Cancel all pending requests.
   weak_factory_.InvalidateWeakPtrs();
+
   std::unique_ptr<em::PolicyFetchResponse> response(
       new em::PolicyFetchResponse(policy));
   cached_policy_key_loader_->EnsurePolicyKeyLoaded(
@@ -69,10 +72,21 @@ void UserCloudPolicyStoreChromeOS::Store(
 void UserCloudPolicyStoreChromeOS::Load() {
   // Cancel all pending requests.
   weak_factory_.InvalidateWeakPtrs();
+
   session_manager_client_->RetrievePolicyForUser(
-      cryptohome::Identification(account_id_),
+      cryptohome::CreateAccountIdentifierFromAccountId(account_id_),
       base::BindOnce(&UserCloudPolicyStoreChromeOS::OnPolicyRetrieved,
                      weak_factory_.GetWeakPtr()));
+}
+
+std::unique_ptr<UserCloudPolicyValidator>
+UserCloudPolicyStoreChromeOS::CreateValidator(
+    std::unique_ptr<em::PolicyFetchResponse> policy,
+    CloudPolicyValidatorBase::ValidateTimestampOption option) {
+  auto validator =
+      UserCloudPolicyStoreBase::CreateValidator(std::move(policy), option);
+  validator->ValidateValues(std::make_unique<ONCUserPolicyValueValidator>());
+  return validator;
 }
 
 void UserCloudPolicyStoreChromeOS::LoadImmediately() {
@@ -87,7 +101,8 @@ void UserCloudPolicyStoreChromeOS::LoadImmediately() {
   std::string policy_blob;
   RetrievePolicyResponseType response_type =
       session_manager_client_->BlockingRetrievePolicyForUser(
-          cryptohome::Identification(account_id_), &policy_blob);
+          cryptohome::CreateAccountIdentifierFromAccountId(account_id_),
+          &policy_blob);
 
   if (response_type == RetrievePolicyResponseType::GET_SERVICE_FAIL) {
     LOG(ERROR)
@@ -130,7 +145,7 @@ void UserCloudPolicyStoreChromeOS::ValidatePolicyForStore(
   // Create and configure a validator.
   std::unique_ptr<UserCloudPolicyValidator> validator = CreateValidator(
       std::move(policy), CloudPolicyValidatorBase::TIMESTAMP_VALIDATED);
-  validator->ValidateUsername(account_id_.GetUserEmail(), true);
+  validator->ValidateUser(account_id_);
   const std::string& cached_policy_key =
       cached_policy_key_loader_->cached_policy_key();
   if (cached_policy_key.empty()) {
@@ -151,13 +166,11 @@ void UserCloudPolicyStoreChromeOS::OnPolicyToStoreValidated(
     UserCloudPolicyValidator* validator) {
   DCHECK(!is_active_directory_);
 
-  validation_status_ = validator->status();
+  UMA_HISTOGRAM_ENUMERATION("Enterprise.UserPolicyValidationStoreStatus",
+                            validator->status(),
+                            UserCloudPolicyValidator::VALIDATION_STATUS_SIZE);
 
-  UMA_HISTOGRAM_ENUMERATION(
-      "Enterprise.UserPolicyValidationStoreStatus",
-      validation_status_,
-      UserCloudPolicyValidator::VALIDATION_STATUS_SIZE);
-
+  validation_result_ = validator->GetValidationResult();
   if (!validator->success()) {
     status_ = STATUS_VALIDATION_ERROR;
     NotifyStoreError();
@@ -172,7 +185,8 @@ void UserCloudPolicyStoreChromeOS::OnPolicyToStoreValidated(
   }
 
   session_manager_client_->StorePolicyForUser(
-      cryptohome::Identification(account_id_), policy_blob,
+      cryptohome::CreateAccountIdentifierFromAccountId(account_id_),
+      policy_blob,
       base::Bind(&UserCloudPolicyStoreChromeOS::OnPolicyStored,
                  weak_factory_.GetWeakPtr()));
 }
@@ -245,13 +259,11 @@ void UserCloudPolicyStoreChromeOS::ValidateRetrievedPolicy(
 
 void UserCloudPolicyStoreChromeOS::OnRetrievedPolicyValidated(
     UserCloudPolicyValidator* validator) {
-  validation_status_ = validator->status();
+  UMA_HISTOGRAM_ENUMERATION("Enterprise.UserPolicyValidationLoadStatus",
+                            validator->status(),
+                            UserCloudPolicyValidator::VALIDATION_STATUS_SIZE);
 
-  UMA_HISTOGRAM_ENUMERATION(
-      "Enterprise.UserPolicyValidationLoadStatus",
-      validation_status_,
-      UserCloudPolicyValidator::VALIDATION_STATUS_SIZE);
-
+  validation_result_ = validator->GetValidationResult();
   if (!validator->success()) {
     status_ = STATUS_VALIDATION_ERROR;
     NotifyStoreError();
@@ -279,7 +291,7 @@ UserCloudPolicyStoreChromeOS::CreateValidatorForLoad(
     validator->ValidateDeviceId(
         std::string(), CloudPolicyValidatorBase::DEVICE_ID_NOT_REQUIRED);
   } else {
-    validator->ValidateUsername(account_id_.GetUserEmail(), true);
+    validator->ValidateUser(account_id_);
     // The policy loaded from session manager need not be validated using the
     // verification key since it is secure, and since there may be legacy policy
     // data that was stored without a verification key.

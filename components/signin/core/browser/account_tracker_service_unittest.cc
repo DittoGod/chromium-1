@@ -7,8 +7,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/message_loop/message_loop.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
 #include "components/image_fetcher/core/image_data_fetcher.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -17,16 +19,16 @@
 #include "components/signin/core/browser/account_fetcher_service.h"
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/account_tracker_service.h"
+#include "components/signin/core/browser/avatar_icon_util.h"
 #include "components/signin/core/browser/child_account_info_fetcher.h"
 #include "components/signin/core/browser/fake_account_fetcher_service.h"
 #include "components/signin/core/browser/signin_pref_names.h"
 #include "components/signin/core/browser/test_signin_client.h"
 #include "google_apis/gaia/fake_oauth2_token_service.h"
 #include "google_apis/gaia/gaia_oauth_client.h"
+#include "google_apis/gaia/gaia_urls.h"
 #include "net/http/http_status_code.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_fetcher_delegate.h"
-#include "net/url_request/url_request_test_util.h"
+#include "services/network/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -78,6 +80,14 @@ std::string AccountIdToLocale(const std::string& account_id) {
 std::string AccountIdToPictureURL(const std::string& account_id) {
   return "https://example.com/-" + account_id +
          "/AAAAAAAAAAI/AAAAAAAAACQ/Efg/photo.jpg";
+}
+
+std::string AccountIdToPictureURLWithSize(const std::string& account_id) {
+  return signin::GetAvatarImageURLWithOptions(
+             GURL(AccountIdToPictureURL(account_id)),
+             AccountFetcherService::kAccountImageDownloadSize,
+             true /* no_silhouette */)
+      .spec();
 }
 
 void CheckAccountDetails(const std::string& account_id,
@@ -266,9 +276,7 @@ testing::AssertionResult AccountTrackerObserver::CheckEvents(
 
 class AccountTrackerServiceTest : public testing::Test {
  public:
-  AccountTrackerServiceTest()
-      : next_image_data_fetcher_id_(
-            image_fetcher::ImageDataFetcher::kFirstUrlFetcherId) {}
+  AccountTrackerServiceTest() {}
 
   ~AccountTrackerServiceTest() override {}
 
@@ -285,11 +293,9 @@ class AccountTrackerServiceTest : public testing::Test {
     pref_service_.registry()->RegisterInt64Pref(
         AccountFetcherService::kLastUpdatePref, 0);
     signin_client_.reset(new TestSigninClient(&pref_service_));
-    signin_client_.get()->SetURLRequestContext(
-        new net::TestURLRequestContextGetter(message_loop_.task_runner()));
 
     account_tracker_.reset(new AccountTrackerService());
-    account_tracker_->Initialize(signin_client_.get());
+    account_tracker_->Initialize(&pref_service_, base::FilePath());
 
     account_fetcher_.reset(new AccountFetcherService());
     account_fetcher_->Initialize(
@@ -342,73 +348,81 @@ class AccountTrackerServiceTest : public testing::Test {
   void ReturnAccountImageFetchSuccess(const std::string& account_id);
   void ReturnAccountImageFetchFailure(const std::string& account_id);
 
-  net::TestURLFetcherFactory* test_fetcher_factory() {
-    return &test_fetcher_factory_;
-  }
   AccountFetcherService* account_fetcher() { return account_fetcher_.get(); }
   AccountTrackerService* account_tracker() { return account_tracker_.get(); }
   OAuth2TokenService* token_service() {
     return fake_oauth2_token_service_.get();
   }
   SigninClient* signin_client() { return signin_client_.get(); }
+  PrefService* prefs() { return &pref_service_; }
+
+  network::TestURLLoaderFactory* test_url_loader_factory() {
+    return signin_client_->test_url_loader_factory();
+  }
+
+ protected:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
  private:
-  void ReturnFetchResults(int fetcher_id,
-                          net::HttpStatusCode response_code,
+  void ReturnFetchResults(net::HttpStatusCode response_code,
                           const std::string& response_string);
 
-  base::MessageLoopForIO message_loop_;
-  net::TestURLFetcherFactory test_fetcher_factory_;
   std::unique_ptr<FakeOAuth2TokenService> fake_oauth2_token_service_;
   TestingPrefServiceSimple pref_service_;
   std::unique_ptr<AccountFetcherService> account_fetcher_;
   std::unique_ptr<AccountTrackerService> account_tracker_;
   std::unique_ptr<TestSigninClient> signin_client_;
-
-  int next_image_data_fetcher_id_;
 };
 
 void AccountTrackerServiceTest::ReturnFetchResults(
-    int fetcher_id,
     net::HttpStatusCode response_code,
     const std::string& response_string) {
-  net::TestURLFetcher* fetcher =
-      test_fetcher_factory_.GetFetcherByID(fetcher_id);
-  ASSERT_TRUE(fetcher);
-  fetcher->set_response_code(response_code);
-  fetcher->SetResponseString(response_string);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+  GURL url = GaiaUrls::GetInstance()->oauth_user_info_url();
+  EXPECT_TRUE(test_url_loader_factory()->IsPending(url.spec()));
+
+  // It's possible for multiple requests to be pending, since some tests have
+  // a local AccountFetcherService which shares token_service() with fixture's
+  // |account_fetcher_service_|, so when they make tokens available, both end up
+  // doing fetches. Respond to all of them.
+  while (test_url_loader_factory()->IsPending(url.spec())) {
+    test_url_loader_factory()->SimulateResponseForPendingRequest(
+        url, network::URLLoaderCompletionStatus(net::OK),
+        network::CreateResourceResponseHead(response_code), response_string,
+        network::TestURLLoaderFactory::kMostRecentMatch);
+  }
 }
 
 void AccountTrackerServiceTest::ReturnAccountInfoFetchSuccess(
     const std::string& account_id) {
   IssueAccessToken(account_id);
-  ReturnFetchResults(gaia::GaiaOAuthClient::kUrlFetcherId, net::HTTP_OK,
-                     GenerateValidTokenInfoResponse(account_id));
+  ReturnFetchResults(net::HTTP_OK, GenerateValidTokenInfoResponse(account_id));
 }
 
 void AccountTrackerServiceTest::ReturnAccountInfoFetchSuccessIncomplete(
     const std::string& account_id) {
   IssueAccessToken(account_id);
-  ReturnFetchResults(gaia::GaiaOAuthClient::kUrlFetcherId, net::HTTP_OK,
+  ReturnFetchResults(net::HTTP_OK,
                      GenerateIncompleteTokenInfoResponse(account_id));
 }
 
 void AccountTrackerServiceTest::ReturnAccountInfoFetchFailure(
     const std::string& account_id) {
   IssueAccessToken(account_id);
-  ReturnFetchResults(gaia::GaiaOAuthClient::kUrlFetcherId,
-                     net::HTTP_BAD_REQUEST, "");
+  ReturnFetchResults(net::HTTP_BAD_REQUEST, "");
 }
 
 void AccountTrackerServiceTest::ReturnAccountImageFetchSuccess(
     const std::string& account_id) {
-  ReturnFetchResults(next_image_data_fetcher_id_++, net::HTTP_OK, "image data");
+  test_url_loader_factory()->AddResponse(
+      AccountIdToPictureURLWithSize(account_id), "image data");
+  scoped_task_environment_.RunUntilIdle();
 }
 
 void AccountTrackerServiceTest::ReturnAccountImageFetchFailure(
     const std::string& account_id) {
-  ReturnFetchResults(next_image_data_fetcher_id_++, net::HTTP_BAD_REQUEST, "");
+  test_url_loader_factory()->AddResponse(
+      AccountIdToPictureURLWithSize(account_id), "", net::HTTP_BAD_REQUEST);
+  scoped_task_environment_.RunUntilIdle();
 }
 
 TEST_F(AccountTrackerServiceTest, Basic) {
@@ -507,7 +521,7 @@ TEST_F(AccountTrackerServiceTest, TokenAlreadyExists) {
   AccountFetcherService fetcher;
 
   tracker.AddObserver(&observer);
-  tracker.Initialize(signin_client());
+  tracker.Initialize(prefs(), base::FilePath());
 
   fetcher.Initialize(signin_client(), token_service(), &tracker,
                      std::make_unique<TestImageDecoder>());
@@ -589,7 +603,7 @@ TEST_F(AccountTrackerServiceTest, GetAccountInfo_TokenAvailable_EnableNetwork) {
   // Create an account tracker and an account fetcher service but do not enable
   // network fetches.
   AccountTrackerService tracker;
-  tracker.Initialize(signin_client());
+  tracker.Initialize(prefs(), base::FilePath());
 
   AccountFetcherService fetcher_service;
   fetcher_service.Initialize(signin_client(), token_service(), &tracker,
@@ -598,9 +612,7 @@ TEST_F(AccountTrackerServiceTest, GetAccountInfo_TokenAvailable_EnableNetwork) {
   SimulateTokenAvailable("alpha");
   IssueAccessToken("alpha");
   // No fetcher has been created yet.
-  net::TestURLFetcher* fetcher = test_fetcher_factory()->GetFetcherByID(
-      gaia::GaiaOAuthClient::kUrlFetcherId);
-  ASSERT_FALSE(fetcher);
+  EXPECT_EQ(0, test_url_loader_factory()->NumPending());
 
   // Enable the network to create the fetcher then issue the access token.
   fetcher_service.EnableNetworkFetchesForTest();
@@ -651,27 +663,37 @@ TEST_F(AccountTrackerServiceTest, FindAccountInfoByEmail) {
 }
 
 TEST_F(AccountTrackerServiceTest, Persistence) {
+  // Define a user data directory for the account image storage.
+  base::ScopedTempDir scoped_user_data_dir;
+  ASSERT_TRUE(scoped_user_data_dir.CreateUniqueTempDir());
   // Create a tracker and add two accounts.  This should cause the accounts
   // to be saved to persistence.
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), scoped_user_data_dir.GetPath());
     SimulateTokenAvailable("alpha");
     ReturnAccountInfoFetchSuccess("alpha");
+    ReturnAccountImageFetchSuccess("alpha");
     SimulateTokenAvailable("beta");
     ReturnAccountInfoFetchSuccess("beta");
+    ReturnAccountImageFetchSuccess("beta");
     tracker.Shutdown();
   }
 
-  // Create a new tracker and make sure it loads the accounts correctly from
-  // persistence.
+  // Create a new tracker and make sure it loads the accounts (including the
+  // images) correctly from persistence.
   {
     AccountTrackerService tracker;
     AccountTrackerObserver observer;
     tracker.AddObserver(&observer);
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), scoped_user_data_dir.GetPath());
     ASSERT_TRUE(observer.CheckEvents(TrackingEvent(UPDATED, "alpha"),
                                      TrackingEvent(UPDATED, "beta")));
+    // Wait until all account images are loaded.
+    scoped_task_environment_.RunUntilIdle();
+    ASSERT_TRUE(observer.CheckEvents(TrackingEvent(IMAGE_UPDATED, "alpha"),
+                                     TrackingEvent(IMAGE_UPDATED, "beta")));
+
     tracker.RemoveObserver(&observer);
 
     std::vector<AccountInfo> infos = tracker.GetAccounts();
@@ -693,6 +715,10 @@ TEST_F(AccountTrackerServiceTest, Persistence) {
     tracker.SetIsChildAccount("beta", true);
 #endif
 
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID) && !defined(OS_IOS)
+    tracker.SetIsAdvancedProtectionAccount("beta", true);
+#endif
+
     fetcher.Shutdown();
     tracker.Shutdown();
   }
@@ -701,12 +727,17 @@ TEST_F(AccountTrackerServiceTest, Persistence) {
   // persistence. Also verify it is a child account.
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
 
     std::vector<AccountInfo> infos = tracker.GetAccounts();
     ASSERT_EQ(1u, infos.size());
     CheckAccountDetails("beta", infos[0]);
     ASSERT_TRUE(infos[0].is_child_account);
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID) && !defined(OS_IOS)
+    ASSERT_TRUE(infos[0].is_under_advanced_protection);
+#else
+    ASSERT_FALSE(infos[0].is_under_advanced_protection);
+#endif
     tracker.Shutdown();
   }
 }
@@ -777,7 +808,7 @@ TEST_F(AccountTrackerServiceTest, UpgradeToFullAccountInfo) {
   // prefs.
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
     AccountFetcherService fetcher;
     fetcher.Initialize(signin_client(), token_service(), &tracker,
                        std::make_unique<TestImageDecoder>());
@@ -790,7 +821,7 @@ TEST_F(AccountTrackerServiceTest, UpgradeToFullAccountInfo) {
 
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
     AccountFetcherService fetcher;
     fetcher.Initialize(signin_client(), token_service(), &tracker,
                        std::make_unique<TestImageDecoder>());
@@ -819,7 +850,7 @@ TEST_F(AccountTrackerServiceTest, UpgradeToFullAccountInfo) {
     AccountTrackerService tracker;
     AccountTrackerObserver observer;
     tracker.AddObserver(&observer);
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
     AccountFetcherService fetcher;
     fetcher.Initialize(signin_client(), token_service(), &tracker,
                        std::make_unique<TestImageDecoder>());
@@ -846,7 +877,7 @@ TEST_F(AccountTrackerServiceTest, TimerRefresh) {
   // prefs.
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
     AccountFetcherService fetcher;
     fetcher.Initialize(signin_client(), token_service(), &tracker,
                        std::make_unique<TestImageDecoder>());
@@ -870,7 +901,7 @@ TEST_F(AccountTrackerServiceTest, TimerRefresh) {
   // and that no network fetches happen.
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
     AccountFetcherService fetcher;
     fetcher.Initialize(signin_client(), token_service(), &tracker,
                        std::make_unique<TestImageDecoder>());
@@ -897,7 +928,7 @@ TEST_F(AccountTrackerServiceTest, TimerRefresh) {
   // are still valid, the network fetches are started.
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
     AccountFetcherService fetcher;
     fetcher.Initialize(signin_client(), token_service(), &tracker,
                        std::make_unique<TestImageDecoder>());
@@ -921,7 +952,7 @@ TEST_F(AccountTrackerServiceTest, LegacyDottedAccountIds) {
   // a correct non-dotted account id for the same account.
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
     AccountFetcherService fetcher;
     fetcher.Initialize(signin_client(), token_service(), &tracker,
                        std::make_unique<TestImageDecoder>());
@@ -942,7 +973,7 @@ TEST_F(AccountTrackerServiceTest, LegacyDottedAccountIds) {
   // it is the correct non dotted one.
   {
     AccountTrackerService tracker;
-    tracker.Initialize(signin_client());
+    tracker.Initialize(prefs(), base::FilePath());
     AccountFetcherService fetcher;
     fetcher.Initialize(signin_client(), token_service(), &tracker,
                        std::make_unique<TestImageDecoder>());
@@ -987,9 +1018,7 @@ TEST_F(AccountTrackerServiceTest, MigrateAccountIdToGaiaId) {
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_beta));
     update->Append(std::move(dict));
 
-    std::unique_ptr<TestSigninClient> client;
-    client.reset(new TestSigninClient(&pref));
-    tracker.Initialize(client.get());
+    tracker.Initialize(&pref, base::FilePath());
 
     ASSERT_EQ(tracker.GetMigrationState(),
               AccountTrackerService::MIGRATION_IN_PROGRESS);
@@ -1039,9 +1068,7 @@ TEST_F(AccountTrackerServiceTest, CanNotMigrateAccountIdToGaiaId) {
     dict->SetString("gaia", base::UTF8ToUTF16(std::string()));
     update->Append(std::move(dict));
 
-    std::unique_ptr<TestSigninClient> client;
-    client.reset(new TestSigninClient(&pref));
-    tracker.Initialize(client.get());
+    tracker.Initialize(&pref, base::FilePath());
 
     ASSERT_EQ(tracker.GetMigrationState(),
               AccountTrackerService::MIGRATION_NOT_STARTED);
@@ -1098,9 +1125,7 @@ TEST_F(AccountTrackerServiceTest, GaiaIdMigrationCrashInTheMiddle) {
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_alpha));
     update->Append(std::move(dict));
 
-    std::unique_ptr<TestSigninClient> client;
-    client.reset(new TestSigninClient(&pref));
-    tracker.Initialize(client.get());
+    tracker.Initialize(&pref, base::FilePath());
 
     ASSERT_EQ(tracker.GetMigrationState(),
               AccountTrackerService::MIGRATION_IN_PROGRESS);
@@ -1120,7 +1145,7 @@ TEST_F(AccountTrackerServiceTest, GaiaIdMigrationCrashInTheMiddle) {
 
     tracker.SetMigrationDone();
     tracker.Shutdown();
-    tracker.Initialize(client.get());
+    tracker.Initialize(&pref, base::FilePath());
 
     ASSERT_EQ(tracker.GetMigrationState(),
               AccountTrackerService::MIGRATION_DONE);
@@ -1143,7 +1168,7 @@ TEST_F(AccountTrackerServiceTest, GaiaIdMigrationCrashInTheMiddle) {
 
 TEST_F(AccountTrackerServiceTest, ChildAccountBasic) {
   AccountTrackerService tracker;
-  tracker.Initialize(signin_client());
+  tracker.Initialize(prefs(), base::FilePath());
   FakeAccountFetcherService fetcher;
   fetcher.Initialize(signin_client(), token_service(), &tracker,
                      std::make_unique<TestImageDecoder>());
@@ -1173,7 +1198,7 @@ TEST_F(AccountTrackerServiceTest, ChildAccountBasic) {
 
 TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedAndRevoked) {
   AccountTrackerService tracker;
-  tracker.Initialize(signin_client());
+  tracker.Initialize(prefs(), base::FilePath());
   FakeAccountFetcherService fetcher;
   fetcher.Initialize(signin_client(), token_service(), &tracker,
                      std::make_unique<TestImageDecoder>());
@@ -1203,7 +1228,7 @@ TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedAndRevoked) {
 
 TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedAndRevokedWithUpdate) {
   AccountTrackerService tracker;
-  tracker.Initialize(signin_client());
+  tracker.Initialize(prefs(), base::FilePath());
   FakeAccountFetcherService fetcher;
   fetcher.Initialize(signin_client(), token_service(), &tracker,
                      std::make_unique<TestImageDecoder>());
@@ -1239,7 +1264,7 @@ TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedAndRevokedWithUpdate) {
 
 TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedTwiceThenRevoked) {
   AccountTrackerService tracker;
-  tracker.Initialize(signin_client());
+  tracker.Initialize(prefs(), base::FilePath());
   FakeAccountFetcherService fetcher;
   fetcher.Initialize(signin_client(), token_service(), &tracker,
                      std::make_unique<TestImageDecoder>());
@@ -1277,7 +1302,7 @@ TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedTwiceThenRevoked) {
 
 TEST_F(AccountTrackerServiceTest, ChildAccountGraduation) {
   AccountTrackerService tracker;
-  tracker.Initialize(signin_client());
+  tracker.Initialize(prefs(), base::FilePath());
   FakeAccountFetcherService fetcher;
   fetcher.Initialize(signin_client(), token_service(), &tracker,
                      std::make_unique<TestImageDecoder>());
@@ -1332,3 +1357,30 @@ TEST_F(AccountTrackerServiceTest, RemoveAccountBeforeImageFetchDone) {
 
   account_tracker()->RemoveObserver(&observer);
 }
+
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS) && !defined(OS_IOS)
+TEST_F(AccountTrackerServiceTest, AdvancedProtectionAccountBasic) {
+  AccountTrackerService tracker;
+  tracker.Initialize(prefs(), base::FilePath());
+  FakeAccountFetcherService fetcher;
+  fetcher.Initialize(signin_client(), token_service(), &tracker,
+                     std::make_unique<TestImageDecoder>());
+  fetcher.EnableNetworkFetchesForTest();
+  std::string account_id("advanced_protection");
+  SimulateTokenAvailable(account_id);
+  IssueAccessToken(account_id);
+
+  tracker.SetIsAdvancedProtectionAccount(account_id, true);
+  AccountInfo info = tracker.GetAccountInfo(account_id);
+  EXPECT_TRUE(info.is_under_advanced_protection);
+
+  tracker.SetIsAdvancedProtectionAccount(account_id, false);
+  info = tracker.GetAccountInfo(account_id);
+  EXPECT_FALSE(info.is_under_advanced_protection);
+
+  SimulateTokenRevoked(account_id);
+  fetcher.Shutdown();
+  tracker.Shutdown();
+}
+
+#endif

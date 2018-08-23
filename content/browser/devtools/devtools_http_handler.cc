@@ -22,7 +22,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -41,6 +41,7 @@
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
+#include "net/base/url_util.h"
 #include "net/server/http_server.h"
 #include "net/server/http_server_request_info.h"
 #include "net/server/http_server_response_info.h"
@@ -100,6 +101,16 @@ constexpr net::NetworkTrafficAnnotationTag
         policy_exception_justification:
           "Not implemented, only used in Devtools and is behind a switch."
       })");
+
+bool RequestIsSafeToServe(const net::HttpServerRequestInfo& info) {
+  // For browser-originating requests, serve only those that are coming from
+  // pages loaded off localhost or fixed IPs.
+  std::string header = info.headers["host"];
+  if (header.empty())
+    return true;
+  GURL url = GURL("http://" + header);
+  return url.HostIsIPAddress() || net::IsLocalHostname(url.host(), nullptr);
+}
 
 }  // namespace
 
@@ -211,7 +222,7 @@ void TerminateOnUI(std::unique_ptr<base::Thread> thread,
     thread->task_runner()->DeleteSoon(FROM_HERE, std::move(socket_factory));
   if (thread) {
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         BindOnce([](std::unique_ptr<base::Thread>) {}, std::move(thread)));
   }
 }
@@ -266,7 +277,7 @@ void StartServerOnHandlerThread(
     fflush(stderr);
 
     // Write this port to a well-known file in the profile directory
-    // so Telemetry can pick it up.
+    // so Telemetry, ChromeDriver, etc. can pick it up.
     if (!output_directory.empty()) {
       base::FilePath path =
           output_directory.Append(kDevToolsActivePortFileName);
@@ -278,7 +289,10 @@ void StartServerOnHandlerThread(
       }
     }
   } else {
-    LOG(ERROR) << "Cannot start http server for devtools. Stop devtools.";
+#if !defined(OS_ANDROID)
+    // Android uses UNIX domain sockets which don't have an IP address.
+    LOG(ERROR) << "Cannot start http server for devtools.";
+#endif
   }
 
   BrowserThread::PostTask(
@@ -358,6 +372,10 @@ static bool TimeComparator(scoped_refptr<DevToolsAgentHost> host1,
 // DevToolsHttpHandler -------------------------------------------------------
 
 DevToolsHttpHandler::~DevToolsHttpHandler() {
+  // Disconnecting sessions might lead to the last minute messages generated
+  // by the targets. It is essential that this happens before we issue delete
+  // soon for the server wrapper.
+  connection_to_client_.clear();
   TerminateOnUI(std::move(thread_), std::move(server_wrapper_),
                 std::move(socket_factory_));
 }
@@ -399,6 +417,12 @@ static std::string GetMimeType(const std::string& filename) {
 
 void ServerWrapper::OnHttpRequest(int connection_id,
                                   const net::HttpServerRequestInfo& info) {
+  if (!RequestIsSafeToServe(info)) {
+    Send500(connection_id,
+            "Host header is specified and is not an IP address or localhost.");
+    return;
+  }
+
   server_->SetSendBufferSize(connection_id, kSendBufferSizeForDevTools);
 
   if (base::StartsWith(info.path, "/json", base::CompareCase::SENSITIVE)) {
@@ -551,8 +575,9 @@ void DevToolsHttpHandler::OnJsonRequest(
         kTargetWebSocketDebuggerUrlField,
         base::StringPrintf("ws://%s%s", host.c_str(), browser_guid_.c_str()));
 #if defined(OS_ANDROID)
-    version.SetString("Android-Package",
-        base::android::BuildInfo::GetInstance()->package_name());
+    version.SetString(
+        "Android-Package",
+        base::android::BuildInfo::GetInstance()->host_package_name());
 #endif
     SendJson(connection_id, net::HTTP_OK, &version, std::string());
     return;

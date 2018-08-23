@@ -47,8 +47,9 @@ class FakeProfileOAuth2TokenService : public ProfileOAuth2TokenService {
     base::WeakPtr<RequestImpl> request;
   };
 
-  FakeProfileOAuth2TokenService();
+  FakeProfileOAuth2TokenService(PrefService* user_prefs);
   explicit FakeProfileOAuth2TokenService(
+      PrefService* user_prefs,
       std::unique_ptr<OAuth2TokenServiceDelegate> delegate);
   ~FakeProfileOAuth2TokenService() override;
 
@@ -81,14 +82,23 @@ class FakeProfileOAuth2TokenService : public ProfileOAuth2TokenService {
     auto_post_fetch_response_on_message_loop_ = auto_post_response;
   }
 
+  // Calls ProfileOAuth2TokenService::UpdateAuthError(). Exposed for testing.
+  void UpdateAuthErrorForTesting(const std::string& account_id,
+                                 const GoogleServiceAuthError& error);
+
  protected:
   // OAuth2TokenService overrides.
-  void FetchOAuth2Token(RequestImpl* request,
-                        const std::string& account_id,
-                        net::URLRequestContextGetter* getter,
-                        const std::string& client_id,
-                        const std::string& client_secret,
-                        const ScopeSet& scopes) override;
+  void CancelAllRequests() override;
+
+  void CancelRequestsForAccount(const std::string& account_id) override;
+
+  void FetchOAuth2Token(
+      RequestImpl* request,
+      const std::string& account_id,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      const std::string& client_id,
+      const std::string& client_secret,
+      const ScopeSet& scopes) override;
 
   void InvalidateAccessTokenImpl(const std::string& account_id,
                                  const std::string& client_id,

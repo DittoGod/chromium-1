@@ -17,7 +17,7 @@
 #include "content/renderer/media/stream/media_stream_track.h"
 #include "content/renderer/media/stream/media_stream_video_source.h"
 #include "content/renderer/media/stream/secure_display_link_tracker.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
 
 namespace content {
 
@@ -97,7 +97,6 @@ class CONTENT_EXPORT MediaStreamVideoTrack : public MediaStreamTrack {
   const VideoTrackAdapterSettings& adapter_settings() const {
     return *adapter_settings_;
   }
-  blink::WebMediaStreamTrack::FacingMode FacingMode() const;
 
   // Setting information about the track size.
   // Called from MediaStreamVideoSource at track initialization.
@@ -115,6 +114,8 @@ class CONTENT_EXPORT MediaStreamVideoTrack : public MediaStreamTrack {
   friend class MediaStreamVideoSink;
   FRIEND_TEST_ALL_PREFIXES(MediaStreamRemoteVideoSourceTest, StartTrack);
   FRIEND_TEST_ALL_PREFIXES(MediaStreamRemoteVideoSourceTest, RemoteTrackStop);
+  FRIEND_TEST_ALL_PREFIXES(MediaStreamRemoteVideoSourceTest,
+                           PreservesColorSpace);
   FRIEND_TEST_ALL_PREFIXES(PepperToVideoTrackAdapterTest, PutFrame);
 
   // Add |sink| to receive state changes on the main render thread and video

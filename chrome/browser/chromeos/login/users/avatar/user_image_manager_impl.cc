@@ -18,8 +18,8 @@
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -491,7 +491,7 @@ void UserImageManagerImpl::Job::SaveImageAndUpdateLocalState(
   }
 
   base::FilePath user_data_dir;
-  PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   // TODO(crbug.com/670557): Use GetAccountIdKey() instead of user_id().
   image_path_ = user_data_dir.AppendASCII(
       user_id() + ChooseExtensionFromImageFormat(image_format));
@@ -563,7 +563,7 @@ UserImageManagerImpl::UserImageManagerImpl(
       has_managed_image_(false),
       weak_factory_(this) {
   background_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN});
 }
 
@@ -792,8 +792,8 @@ Profile* UserImageManagerImpl::GetBrowserProfile() {
   return ProfileHelper::Get()->GetProfileByUserUnsafe(GetUser());
 }
 
-std::string UserImageManagerImpl::GetCachedPictureURL() const {
-  return profile_image_url_.spec();
+GURL UserImageManagerImpl::GetCachedPictureURL() const {
+  return profile_image_url_;
 }
 
 bool UserImageManagerImpl::IsPreSignin() const {
@@ -855,7 +855,8 @@ void UserImageManagerImpl::OnProfileDownloadSuccess(
 
   downloaded_profile_image_ =
       gfx::ImageSkia::CreateFrom1xBitmap(downloader->GetProfilePicture());
-  profile_image_url_ = GURL(downloader->GetProfilePictureURL());
+  profile_image_url_ = downloader->GetProfilePictureURL();
+  DCHECK(profile_image_url_.is_valid());
 
   if (user->image_index() == user_manager::User::USER_IMAGE_PROFILE) {
     VLOG(1) << "Updating profile image for logged-in user.";

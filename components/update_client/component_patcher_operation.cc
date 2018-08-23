@@ -13,9 +13,9 @@
 #include "base/files/memory_mapped_file.h"
 #include "base/location.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "components/patch_service/public/cpp/patch.h"
+#include "components/services/patch/public/cpp/patch.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
 #include "components/update_client/utils.h"
@@ -193,8 +193,8 @@ UnpackerError DeltaUpdateOpPatch::DoParseArguments(
 void DeltaUpdateOpPatch::DoRun(ComponentPatcher::Callback callback) {
   patch::Patch(connector_, operation_, input_abs_path_, patch_abs_path_,
                output_abs_path_,
-               base::Bind(&DeltaUpdateOpPatch::DonePatching, this,
-                          base::Passed(&callback)));
+               base::BindOnce(&DeltaUpdateOpPatch::DonePatching, this,
+                              std::move(callback)));
 }
 
 void DeltaUpdateOpPatch::DonePatching(ComponentPatcher::Callback callback,

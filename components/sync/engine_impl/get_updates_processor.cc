@@ -62,9 +62,8 @@ void PartitionUpdatesByType(const sync_pb::GetUpdatesResponse& gu_response,
                             ModelTypeSet requested_types,
                             TypeSyncEntityMap* updates_by_type) {
   int update_count = gu_response.entries().size();
-  for (ModelTypeSet::Iterator it = requested_types.First(); it.Good();
-       it.Inc()) {
-    updates_by_type->insert(std::make_pair(it.Get(), SyncEntityList()));
+  for (ModelType type : requested_types) {
+    updates_by_type->insert(std::make_pair(type, SyncEntityList()));
   }
   for (int i = 0; i < update_count; ++i) {
     const sync_pb::SyncEntity& update = gu_response.entries(i);
@@ -152,7 +151,6 @@ void InitDownloadUpdatesContext(SyncCycle* cycle,
   bool need_encryption_key = ShouldRequestEncryptionKey(cycle->context());
   get_updates->set_need_encryption_key(need_encryption_key);
 
-  // Set legacy GetUpdatesMessage.GetUpdatesCallerInfo information.
   get_updates->mutable_caller_info()->set_notifications_enabled(
       cycle->context()->notifications_enabled());
 }
@@ -185,10 +183,10 @@ void GetUpdatesProcessor::PrepareGetUpdates(
     sync_pb::ClientToServerMessage* message) {
   sync_pb::GetUpdatesMessage* get_updates = message->mutable_get_updates();
 
-  for (ModelTypeSet::Iterator it = gu_types.First(); it.Good(); it.Inc()) {
-    UpdateHandlerMap::iterator handler_it = update_handler_map_->find(it.Get());
+  for (ModelType type : gu_types) {
+    UpdateHandlerMap::iterator handler_it = update_handler_map_->find(type);
     DCHECK(handler_it != update_handler_map_->end())
-        << "Failed to look up handler for " << ModelTypeToString(it.Get());
+        << "Failed to look up handler for " << ModelTypeToString(type);
     sync_pb::DataTypeProgressMarker* progress_marker =
         get_updates->add_from_progress_marker();
     handler_it->second->GetDownloadProgress(progress_marker);

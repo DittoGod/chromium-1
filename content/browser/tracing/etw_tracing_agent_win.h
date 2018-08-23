@@ -15,8 +15,8 @@
 #include "base/values.h"
 #include "base/win/event_trace_consumer.h"
 #include "base/win/event_trace_controller.h"
-#include "services/resource_coordinator/public/cpp/tracing/base_agent.h"
-#include "services/resource_coordinator/public/mojom/tracing/tracing.mojom.h"
+#include "services/tracing/public/cpp/base_agent.h"
+#include "services/tracing/public/mojom/tracing.mojom.h"
 
 namespace service_manager {
 class Connector;
@@ -43,7 +43,7 @@ class EtwTracingAgent : public base::win::EtwTraceConsumerBase<EtwTracingAgent>,
   // tracing::mojom::Agent. Called by Mojo internals on the UI thread.
   void StartTracing(const std::string& config,
                     base::TimeTicks coordinator_time,
-                    const Agent::StartTracingCallback& callback) override;
+                    Agent::StartTracingCallback callback) override;
   void StopAndFlush(tracing::mojom::RecorderPtr recorder) override;
 
   // Static override of EtwTraceConsumerBase::ProcessEvent.

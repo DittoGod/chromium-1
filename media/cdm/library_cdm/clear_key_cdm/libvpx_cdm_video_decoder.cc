@@ -6,17 +6,9 @@
 
 #include "base/logging.h"
 #include "media/base/limits.h"
-#include "media/cdm/library_cdm/clear_key_cdm/cdm_host_proxy.h"
-
-// Include libvpx header files.
-// VPX_CODEC_DISABLE_COMPAT excludes parts of the libvpx API that provide
-// backwards compatibility for legacy applications using the library.
-#define VPX_CODEC_DISABLE_COMPAT 1
-extern "C" {
-// Note: vpx_decoder.h must be first or compile will fail.
+#include "media/cdm/library_cdm/cdm_host_proxy.h"
 #include "third_party/libvpx/source/libvpx/vpx/vp8dx.h"
-#include "third_party/libvpx/source/libvpx/vpx/vpx_decoder.h"  // NOLINT
-}
+#include "third_party/libvpx/source/libvpx/vpx/vpx_decoder.h"
 
 // Enable USE_COPYPLANE_WITH_LIBVPX to use |CopyPlane()| instead of memcpy to
 // copy video frame data.
@@ -33,7 +25,8 @@ LibvpxCdmVideoDecoder::~LibvpxCdmVideoDecoder() {
   Deinitialize();
 }
 
-bool LibvpxCdmVideoDecoder::Initialize(const cdm::VideoDecoderConfig& config) {
+bool LibvpxCdmVideoDecoder::Initialize(
+    const cdm::VideoDecoderConfig_2& config) {
   DVLOG(1) << "Initialize()";
 
   if (!IsValidOutputConfig(config.format, config.coded_size)) {
@@ -52,8 +45,10 @@ bool LibvpxCdmVideoDecoder::Initialize(const cdm::VideoDecoderConfig& config) {
   vpx_config.h = config.coded_size.height;
   vpx_config.threads = kDecodeThreads;
 
-  vpx_codec_err_t status =
-      vpx_codec_dec_init(vpx_codec_, vpx_codec_vp8_dx(), &vpx_config, 0);
+  vpx_codec_err_t status = vpx_codec_dec_init(
+      vpx_codec_,
+      config.codec == cdm::kCodecVp9 ? vpx_codec_vp9_dx() : vpx_codec_vp8_dx(),
+      &vpx_config, 0);
   if (status != VPX_CODEC_OK) {
     LOG(ERROR) << "InitializeLibvpx(): vpx_codec_dec_init failed, ret="
                << status;
@@ -95,7 +90,7 @@ cdm::Status LibvpxCdmVideoDecoder::DecodeFrame(const uint8_t* compressed_frame,
                                                int32_t compressed_frame_size,
                                                int64_t timestamp,
                                                cdm::VideoFrame* decoded_frame) {
-  DVLOG(1) << "DecodeFrame()";
+  DVLOG(3) << __func__ << ": frame size = " << compressed_frame_size;
   DCHECK(decoded_frame);
 
   // Pass |compressed_frame| to libvpx.

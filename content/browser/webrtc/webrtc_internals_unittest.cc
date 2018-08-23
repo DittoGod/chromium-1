@@ -7,9 +7,7 @@
 #include <memory>
 #include <string>
 
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "content/browser/webrtc/webrtc_internals_ui_observer.h"
 #include "content/public/test/test_browser_thread.h"
@@ -80,9 +78,7 @@ class WebRTCInternalsForTest : public WebRTCInternals {
  public:
   WebRTCInternalsForTest()
       : WebRTCInternals(1, true),
-        mock_wake_lock_(mojo::MakeRequest(&wake_lock_)),
-        synchronous_webrtc_event_log_manager_(
-            base::ThreadTaskRunnerHandle::Get()) {}
+        mock_wake_lock_(mojo::MakeRequest(&wake_lock_)) {}
 
   ~WebRTCInternalsForTest() override {}
 
@@ -90,7 +86,6 @@ class WebRTCInternalsForTest : public WebRTCInternals {
 
  private:
   MockWakeLock mock_wake_lock_;
-  WebRtcEventLogManager synchronous_webrtc_event_log_manager_;
 };
 
 class WebRtcInternalsTest : public testing::Test {
@@ -501,5 +496,8 @@ TEST_F(WebRtcInternalsTest, WakeLock) {
 
   base::RunLoop().RunUntilIdle();
 }
+
+// TODO(eladalon): Add tests that WebRtcEventLogger::Enable/Disable is
+// correctly called. https://crbug.com/775415
 
 }  // namespace content

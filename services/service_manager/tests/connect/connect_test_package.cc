@@ -10,7 +10,6 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/threading/simple_thread.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
@@ -149,7 +148,7 @@ class ProvidedService : public Service,
 
   void OnConnectionError() {
     if (bindings_.empty())
-      base::RunLoop::QuitCurrentWhenIdleDeprecated();
+      context()->QuitNow();
   }
 
   const std::string title_;

@@ -8,9 +8,9 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_scheduler.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/task_traits.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -53,7 +53,7 @@ void GetCancelStatus(bool* operation_done,
   *status_out = status;
 }
 
-void DidOpenFile(base::File file, const base::Closure& on_close_callback) {}
+void DidOpenFile(base::File file, base::OnceClosure on_close_callback) {}
 
 }  // namespace
 

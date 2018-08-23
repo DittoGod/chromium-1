@@ -18,9 +18,9 @@
 #include "base/metrics/persistent_histogram_allocator.h"
 #include "base/metrics/persistent_memory_allocator.h"
 #include "base/strings/string_piece.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/task_runner.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
 #include "base/time/time.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
@@ -107,7 +107,7 @@ scoped_refptr<base::TaskRunner> CreateBackgroundTaskRunner() {
     return scoped_refptr<base::TaskRunner>(g_task_runner_for_testing);
 
   return base::CreateTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
 }
 
@@ -268,7 +268,6 @@ bool FileMetricsProvider::LocateNextFileInDirectory(SourceInfo* source) {
   // scanned.
   size_t total_size_kib = 0;  // Using KiB allows 4TiB even on 32-bit builds.
   size_t file_count = 0;
-  size_t delete_count = 0;
 
   base::Time now_time = base::Time::Now();
   if (!source->found_files) {
@@ -316,12 +315,8 @@ bool FileMetricsProvider::LocateNextFileInDirectory(SourceInfo* source) {
         // is not removed, it will continue to be ignored bacuse of the older
         // modification time.
         base::DeleteFile(found_file.path, /*recursive=*/false);
-        ++delete_count;
       }
     }
-
-    UMA_HISTOGRAM_COUNTS_100("UMA.FileMetricsProvider.DirectoryFiles",
-                             file_count);
   }
 
   // Filter files from the front until one is found for processing.
@@ -340,7 +335,6 @@ bool FileMetricsProvider::LocateNextFileInDirectory(SourceInfo* source) {
         now_time - found.info.GetLastModifiedTime() > source->max_age;
     if (too_many || too_big || too_old) {
       base::DeleteFile(found.path, /*recursive=*/false);
-      ++delete_count;
       --file_count;
       total_size_kib -= found.info.GetSize() >> 10;
       RecordAccessResult(too_many ? ACCESS_RESULT_TOO_MANY_FILES
@@ -360,9 +354,6 @@ bool FileMetricsProvider::LocateNextFileInDirectory(SourceInfo* source) {
     if (result != ACCESS_RESULT_THIS_PID)
       RecordAccessResult(result);
   }
-
-  UMA_HISTOGRAM_COUNTS_100("UMA.FileMetricsProvider.DeletedFiles",
-                           delete_count);
 
   return have_file;
 }
@@ -506,6 +497,8 @@ FileMetricsProvider::AccessResult FileMetricsProvider::CheckAndMapMetricSource(
       base::PersistentMemoryAllocator::MEMORY_DELETED) {
     return ACCESS_RESULT_MEMORY_DELETED;
   }
+  if (memory_allocator->IsCorrupt())
+    return ACCESS_RESULT_DATA_CORRUPTION;
 
   // Create an allocator for the mapped file. Ownership passes to the allocator.
   source->allocator = std::make_unique<base::PersistentHistogramAllocator>(
@@ -524,6 +517,7 @@ FileMetricsProvider::AccessResult FileMetricsProvider::CheckAndMapMetricSource(
 // static
 void FileMetricsProvider::MergeHistogramDeltasFromSource(SourceInfo* source) {
   DCHECK(source->allocator);
+  SCOPED_UMA_HISTOGRAM_TIMER("UMA.FileMetricsProvider.SnapshotTime.File");
   base::PersistentHistogramAllocator::Iterator histogram_iter(
       source->allocator.get());
 
@@ -635,10 +629,11 @@ void FileMetricsProvider::ScheduleSourcesCheck() {
   std::swap(sources_to_check_, *check_list);
   task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::Bind(&FileMetricsProvider::CheckAndMergeMetricSourcesOnTaskRunner,
-                 base::Unretained(check_list)),
-      base::Bind(&FileMetricsProvider::RecordSourcesChecked,
-                 weak_factory_.GetWeakPtr(), base::Owned(check_list)));
+      base::BindOnce(
+          &FileMetricsProvider::CheckAndMergeMetricSourcesOnTaskRunner,
+          base::Unretained(check_list)),
+      base::BindOnce(&FileMetricsProvider::RecordSourcesChecked,
+                     weak_factory_.GetWeakPtr(), base::Owned(check_list)));
 }
 
 void FileMetricsProvider::RecordSourcesChecked(SourceInfoList* checked) {
@@ -679,7 +674,8 @@ void FileMetricsProvider::RecordSourcesChecked(SourceInfoList* checked) {
 }
 
 void FileMetricsProvider::DeleteFileAsync(const base::FilePath& path) {
-  task_runner_->PostTask(FROM_HERE, base::Bind(DeleteFileWhenPossible, path));
+  task_runner_->PostTask(FROM_HERE,
+                         base::BindOnce(DeleteFileWhenPossible, path));
 }
 
 void FileMetricsProvider::RecordSourceAsRead(SourceInfo* source) {
@@ -763,12 +759,6 @@ bool FileMetricsProvider::ProvideIndependentMetrics(
 bool FileMetricsProvider::HasPreviousSessionData() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // Measure the total time spent checking all sources as well as the time
-  // per individual file. This method is called during startup and thus blocks
-  // the initial showing of the browser window so it's important to know the
-  // total delay.
-  SCOPED_UMA_HISTOGRAM_TIMER("UMA.FileMetricsProvider.InitialCheckTime.Total");
-
   // Check all sources for previous run to see if they need to be read.
   for (auto iter = sources_for_previous_run_.begin();
        iter != sources_for_previous_run_.end();) {
@@ -819,13 +809,6 @@ void FileMetricsProvider::RecordInitialHistogramSnapshots(
     base::HistogramSnapshotManager* snapshot_manager) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // Measure the total time spent processing all sources as well as the time
-  // per individual file. This method is called during startup and thus blocks
-  // the initial showing of the browser window so it's important to know the
-  // total delay.
-  SCOPED_UMA_HISTOGRAM_TIMER(
-      "UMA.FileMetricsProvider.InitialSnapshotTime.Total");
-
   for (const std::unique_ptr<SourceInfo>& source : sources_for_previous_run_) {
     SCOPED_UMA_HISTOGRAM_TIMER(
         "UMA.FileMetricsProvider.InitialSnapshotTime.File");
@@ -846,13 +829,7 @@ void FileMetricsProvider::RecordInitialHistogramSnapshots(
 void FileMetricsProvider::MergeHistogramDeltas() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // Measure the total time spent processing all sources as well as the time
-  // per individual file. This method is called on the UI thread so it's
-  // important to know how much total "jank" may be introduced.
-  SCOPED_UMA_HISTOGRAM_TIMER("UMA.FileMetricsProvider.SnapshotTime.Total");
-
   for (std::unique_ptr<SourceInfo>& source : sources_mapped_) {
-    SCOPED_UMA_HISTOGRAM_TIMER("UMA.FileMetricsProvider.SnapshotTime.File");
     MergeHistogramDeltasFromSource(source.get());
   }
 }

@@ -9,7 +9,7 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/ntp/incognito_view.h"
-#import "ios/chrome/browser/ui/ntp/incognito_view_controller_delegate.h"
+#import "ios/chrome/browser/ui/ntp/new_tab_page_controller_delegate.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/url_loader.h"
 
@@ -25,7 +25,7 @@ const CGFloat kDistanceToFadeToolbar = 50.0;
 // The scrollview containing the actual views.
 @property(nonatomic, strong) IncognitoView* incognitoView;
 
-@property(nonatomic, weak) id<IncognitoViewControllerDelegate> toolbarDelegate;
+@property(nonatomic, weak) id<NewTabPageControllerDelegate> toolbarDelegate;
 @property(nonatomic, weak) id<UrlLoader> loader;
 @end
 
@@ -39,13 +39,13 @@ const CGFloat kDistanceToFadeToolbar = 50.0;
 @synthesize delegate = _delegate;
 
 - (id)initWithLoader:(id<UrlLoader>)loader
-     toolbarDelegate:(id<IncognitoViewControllerDelegate>)toolbarDelegate {
+     toolbarDelegate:(id<NewTabPageControllerDelegate>)toolbarDelegate {
   self = [super init];
   if (self) {
     _loader = loader;
     if (!IsIPadIdiom()) {
       _toolbarDelegate = toolbarDelegate;
-      [_toolbarDelegate setToolbarBackgroundAlpha:0];
+      [_toolbarDelegate setToolbarBackgroundToIncognitoNTPColorWithAlpha:1];
     }
   }
   return self;
@@ -69,7 +69,7 @@ const CGFloat kDistanceToFadeToolbar = 50.0;
 }
 
 - (void)dealloc {
-  [_toolbarDelegate setToolbarBackgroundAlpha:1];
+  [_toolbarDelegate setToolbarBackgroundToIncognitoNTPColorWithAlpha:0];
   [_incognitoView setDelegate:nil];
 }
 
@@ -79,12 +79,13 @@ const CGFloat kDistanceToFadeToolbar = 50.0;
 }
 
 - (void)wasShown {
-  CGFloat alpha = [self toolbarAlphaForScrollView:self.incognitoView];
-  [self.toolbarDelegate setToolbarBackgroundAlpha:alpha];
+  CGFloat alpha =
+      [self incognitoBackgroundAlphaForScrollView:self.incognitoView];
+  [self.toolbarDelegate setToolbarBackgroundToIncognitoNTPColorWithAlpha:alpha];
 }
 
 - (void)wasHidden {
-  [self.toolbarDelegate setToolbarBackgroundAlpha:1];
+  [self.toolbarDelegate setToolbarBackgroundToIncognitoNTPColorWithAlpha:0];
 }
 
 - (void)dismissModals {
@@ -104,17 +105,18 @@ const CGFloat kDistanceToFadeToolbar = 50.0;
 #pragma mark - UIScrollViewDelegate methods
 
 - (void)scrollViewDidScroll:(UIScrollView*)scrollView {
-  CGFloat alpha = [self toolbarAlphaForScrollView:self.incognitoView];
-  [self.toolbarDelegate setToolbarBackgroundAlpha:alpha];
+  CGFloat alpha =
+      [self incognitoBackgroundAlphaForScrollView:self.incognitoView];
+  [self.toolbarDelegate setToolbarBackgroundToIncognitoNTPColorWithAlpha:alpha];
 }
 
 #pragma mark - Private
 
-// Calculate the background alpha for the toolbar based on how much |scrollView|
-// has scrolled up.
-- (CGFloat)toolbarAlphaForScrollView:(UIScrollView*)scrollView {
-  CGFloat alpha = scrollView.contentOffset.y / kDistanceToFadeToolbar;
-  return MAX(MIN(alpha, 1), 0);
+// Calculate the alpha for the toolbar background color of the NTP's color.
+- (CGFloat)incognitoBackgroundAlphaForScrollView:(UIScrollView*)scrollView {
+  CGFloat alpha = (kDistanceToFadeToolbar - scrollView.contentOffset.y) /
+                  kDistanceToFadeToolbar;
+  return MAX(alpha, 0);
 }
 
 @end

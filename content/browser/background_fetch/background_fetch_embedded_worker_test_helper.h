@@ -17,10 +17,6 @@ namespace content {
 
 struct BackgroundFetchSettledFetch;
 
-namespace mojom {
-enum class BackgroundFetchState;
-}
-
 // Extension of the EmbeddedWorkerTestHelper that enables instrumentation of the
 // events related to the Background Fetch API. Storage for these tests will
 // always be kept in memory, as data persistence is tested elsewhere.
@@ -56,7 +52,7 @@ class BackgroundFetchEmbeddedWorkerTestHelper
   const base::Optional<std::string>& last_unique_id() const {
     return last_unique_id_;
   }
-  const base::Optional<mojom::BackgroundFetchState>& last_state() const {
+  const base::Optional<blink::mojom::BackgroundFetchState>& last_state() const {
     return last_state_;
   }
   const base::Optional<std::vector<BackgroundFetchSettledFetch>> last_fetches()
@@ -68,24 +64,30 @@ class BackgroundFetchEmbeddedWorkerTestHelper
   // EmbeddedWorkerTestHelper overrides:
   void OnBackgroundFetchAbortEvent(
       const std::string& developer_id,
-      mojom::ServiceWorkerEventDispatcher::
-          DispatchBackgroundFetchAbortEventCallback callback) override;
+      const std::string& unique_id,
+      blink::mojom::BackgroundFetchState state,
+      mojom::ServiceWorker::DispatchBackgroundFetchAbortEventCallback callback)
+      override;
   void OnBackgroundFetchClickEvent(
       const std::string& developer_id,
-      mojom::BackgroundFetchState state,
-      mojom::ServiceWorkerEventDispatcher::
-          DispatchBackgroundFetchClickEventCallback callback) override;
+      const std::string& unique_id,
+      blink::mojom::BackgroundFetchState state,
+      mojom::ServiceWorker::DispatchBackgroundFetchClickEventCallback callback)
+      override;
   void OnBackgroundFetchFailEvent(
       const std::string& developer_id,
+      const std::string& unique_id,
+      blink::mojom::BackgroundFetchState state,
       const std::vector<BackgroundFetchSettledFetch>& fetches,
-      mojom::ServiceWorkerEventDispatcher::
-          DispatchBackgroundFetchFailEventCallback callback) override;
-  void OnBackgroundFetchedEvent(
+      mojom::ServiceWorker::DispatchBackgroundFetchFailEventCallback callback)
+      override;
+  void OnBackgroundFetchSuccessEvent(
       const std::string& developer_id,
       const std::string& unique_id,
+      blink::mojom::BackgroundFetchState state,
       const std::vector<BackgroundFetchSettledFetch>& fetches,
-      mojom::ServiceWorkerEventDispatcher::
-          DispatchBackgroundFetchedEventCallback callback) override;
+      mojom::ServiceWorker::DispatchBackgroundFetchSuccessEventCallback
+          callback) override;
 
  private:
   bool fail_abort_event_ = false;
@@ -100,7 +102,7 @@ class BackgroundFetchEmbeddedWorkerTestHelper
 
   base::Optional<std::string> last_developer_id_;
   base::Optional<std::string> last_unique_id_;
-  base::Optional<mojom::BackgroundFetchState> last_state_;
+  base::Optional<blink::mojom::BackgroundFetchState> last_state_;
   base::Optional<std::vector<BackgroundFetchSettledFetch>> last_fetches_;
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundFetchEmbeddedWorkerTestHelper);

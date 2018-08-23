@@ -20,6 +20,7 @@
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chromeos/network/client_cert_util.h"
+#include "chromeos/network/network_event_log.h"
 #include "chromeos/network/onc/onc_signature.h"
 #include "chromeos/network/onc/onc_translation_tables.h"
 #include "chromeos/network/onc/onc_translator.h"
@@ -175,7 +176,7 @@ void LocalTranslator::TranslateOpenVPN() {
   // identical to kPasswordAndOTP.
   if (user_auth_type.empty())
     user_auth_type = ::onc::openvpn_user_auth_type::kPasswordAndOTP;
-
+  NET_LOG(DEBUG) << "USER AUTH TYPE: " << user_auth_type;
   if (user_auth_type == ::onc::openvpn_user_auth_type::kPassword ||
       user_auth_type == ::onc::openvpn_user_auth_type::kPasswordAndOTP) {
     CopyFieldFromONCToShill(::onc::openvpn::kPassword,
@@ -322,8 +323,8 @@ void LocalTranslator::TranslateEAP() {
   // password substitution variable is set.
   const base::Value* password_field =
       onc_object_->FindKey(::onc::eap::kPassword);
-  if (password_field &&
-      password_field->GetString() == ::onc::substitutes::kPasswordField) {
+  if (password_field && password_field->GetString() ==
+                            ::onc::substitutes::kPasswordPlaceholderVerbatim) {
     shill_dictionary_->SetKey(shill::kEapUseLoginPasswordProperty,
                               base::Value(true));
   }
@@ -362,10 +363,10 @@ void LocalTranslator::TranslateNetworkConfiguration() {
   const base::DictionaryValue* proxy_settings = nullptr;
   if (onc_object_->GetDictionaryWithoutPathExpansion(
           ::onc::network_config::kProxySettings, &proxy_settings)) {
-    std::unique_ptr<base::DictionaryValue> proxy_config =
+    base::Value proxy_config =
         ConvertOncProxySettingsToProxyConfig(*proxy_settings);
     std::string proxy_config_str;
-    base::JSONWriter::Write(*proxy_config.get(), &proxy_config_str);
+    base::JSONWriter::Write(proxy_config, &proxy_config_str);
     shill_dictionary_->SetKey(shill::kProxyConfigProperty,
                               base::Value(proxy_config_str));
   }
@@ -394,12 +395,12 @@ void LocalTranslator::CopyFieldFromONCToShill(
     base::Value::Type expected_type =
         field_signature->value_signature->onc_type;
     if (value->type() != expected_type) {
-      LOG(ERROR) << "Found field " << onc_field_name << " of type "
-                 << value->type() << " but expected type " << expected_type;
+      NET_LOG(ERROR) << "Found field " << onc_field_name << " of type "
+                     << value->type() << " but expected type " << expected_type;
       return;
     }
   } else {
-    LOG(ERROR)
+    NET_LOG(ERROR)
         << "Attempt to translate a field that is not part of the ONC format.";
     return;
   }
@@ -433,9 +434,9 @@ void LocalTranslator::TranslateWithTableAndSet(
   // As we previously validate ONC, this case should never occur. If it still
   // occurs, we should check here. Otherwise the failure will only show up much
   // later in Shill.
-  LOG(ERROR) << "Value '" << onc_value
-             << "' cannot be translated to Shill property: "
-             << shill_property_name;
+  NET_LOG(ERROR) << "Value '" << onc_value
+                 << "' cannot be translated to Shill property: "
+                 << shill_property_name;
 }
 
 // Iterates recursively over |onc_object| and its |signature|. At each object

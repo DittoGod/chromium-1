@@ -60,11 +60,13 @@ void CommonInitFromCommandLine(const base::CommandLine& command_line,
 
 namespace libgtkui {
 
-// TODO(erg): ThemeService has a whole interface just for reading default
-// constants. Figure out what to do with that more long term; for now, just
-// copy the constants themselves here.
+// TODO(thomasanderson): ThemeService has a whole interface just for reading
+// default constants. Figure out what to do with that more long term; for now,
+// just copy the constants themselves here.
 const color_utils::HSL kDefaultTintFrameIncognito = {-1, 0.2f, 0.35f};
 const color_utils::HSL kDefaultTintFrameIncognitoInactive = {-1, 0.3f, 0.6f};
+const color_utils::HSL kDefaultTintBackgroundTab = {-1, -1, 0.42975};
+const color_utils::HSL kDefaultTintBackgroundTabIncognito = {-1, -1, 0.34375};
 
 // Theme colors returned by GetSystemColor().
 const SkColor kInvalidColorIdColor = SkColorSetRGB(255, 0, 128);
@@ -166,12 +168,8 @@ int EventFlagsFromGdkState(guint state) {
 }
 
 void TurnButtonBlue(GtkWidget* button) {
-#if GTK_MAJOR_VERSION == 2
-  gtk_widget_set_can_default(button, true);
-#else
   gtk_style_context_add_class(gtk_widget_get_style_context(button),
                               "suggested-action");
-#endif
 }
 
 void SetGtkTransientForAura(GtkWidget* dialog, aura::Window* parent) {
@@ -229,7 +227,6 @@ void ParseButtonLayout(const std::string& button_string,
   }
 }
 
-#if GTK_MAJOR_VERSION > 2
 namespace {
 
 float GetDeviceScaleFactor() {
@@ -619,6 +616,5 @@ SkColor GetSeparatorColor(const std::string& css_selector) {
   gtk_render_frame(context, surface.cairo(), 0, 0, w, h);
   return surface.GetAveragePixelValue(false);
 }
-#endif
 
 }  // namespace libgtkui

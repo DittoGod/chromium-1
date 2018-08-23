@@ -9,7 +9,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/hover_button.h"
 #include "chrome/browser/ui/views/page_info/chosen_object_view.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row.h"
@@ -24,10 +24,9 @@
 #include "device/base/mock_device_client.h"
 #include "device/usb/mock_usb_device.h"
 #include "device/usb/mock_usb_service.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/event_utils.h"
 #include "ui/views/controls/button/menu_button.h"
@@ -78,16 +77,12 @@ class PageInfoBubbleViewTestApi {
   // Returns the number of cookies shown on the link or button to open the
   // collected cookies dialog. This should always be shown.
   base::string16 GetCookiesLinkText() {
-    if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
       EXPECT_TRUE(view_->cookie_button_);
       ui::AXNodeData data;
       view_->cookie_button_->GetAccessibleNodeData(&data);
       std::string name;
       data.GetStringAttribute(ax::mojom::StringAttribute::kName, &name);
       return base::ASCIIToUTF16(name);
-    }
-    EXPECT_TRUE(view_->cookie_link_legacy_);
-    return view_->cookie_link_legacy_->text();
   }
 
   // Returns the permission label text of the |index|th permission selector row.
@@ -118,7 +113,7 @@ class PageInfoBubbleViewTestApi {
     views::View* view = GetPermissionSelectorAt(selector_index)->button();
     DCHECK_EQ(views::Combobox::kViewClassName, view->GetClassName());
     views::Combobox* combobox = static_cast<views::Combobox*>(view);
-    combobox->SetSelectedIndex(menu_index);
+    combobox->SetSelectedRow(menu_index);
   }
 
   // Simulates updating the number of cookies.
@@ -216,10 +211,11 @@ class FlashContentSettingsChangeWaiter : public content_settings::Observer {
   }
 
   // content_settings::Observer:
-  void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
-                               const ContentSettingsPattern& secondary_pattern,
-                               ContentSettingsType content_type,
-                               std::string resource_identifier) override {
+  void OnContentSettingChanged(
+      const ContentSettingsPattern& primary_pattern,
+      const ContentSettingsPattern& secondary_pattern,
+      ContentSettingsType content_type,
+      const std::string& resource_identifier) override {
     if (content_type == CONTENT_SETTINGS_TYPE_PLUGINS)
       Proceed();
   }
@@ -248,13 +244,7 @@ TEST_F(PageInfoBubbleViewTest, SetPermissionInfo) {
   // practice. In practice, every setting in PermissionSelectorRow starts off
   // "set", so there is always one option checked in the resulting MenuModel.
   // This test creates settings that are left at their defaults, leading to zero
-  // checked options, and checks that the text on the MenuButtons is right. On
-  // Mac, the behavior matches, but only when SecondaryUiMd is enabled.
-  const bool is_md = base::FeatureList::IsEnabled(features::kSecondaryUiMd);
-#if defined(OS_MACOSX)
-  if (!is_md)
-    return;
-#endif
+  // checked options, and checks that the text on the MenuButtons is right.
 
   PermissionInfoList list(1);
   list.back().type = CONTENT_SETTINGS_TYPE_GEOLOCATION;
@@ -285,35 +275,22 @@ TEST_F(PageInfoBubbleViewTest, SetPermissionInfo) {
 
   // Simulate a user selection via the UI. Note this will also cover logic in
   // PageInfo to update the pref.
-  if (is_md) {
-    // Under MD, the changed setting is always read from the combobox selected
-    // index when changed in the UI. PermissionSelectorRow::PermissionChanged()
-    // ignores the argument, except to detect whether it is the default.
-    api_->SimulateUserSelectingComboboxItemAt(0, 1);
-  } else {
-    list.back().setting = CONTENT_SETTING_ALLOW;
-    api_->GetPermissionSelectorAt(0)->PermissionChanged(list.back());
-  }
+  api_->SimulateUserSelectingComboboxItemAt(0, 1);
   EXPECT_EQ(num_expected_children, api_->permissions_view()->child_count());
   EXPECT_EQ(base::ASCIIToUTF16("Allow"), api_->GetPermissionButtonTextAt(0));
 
   // Setting to the default via the UI should keep the button around.
-  if (is_md) {
-    api_->SimulateUserSelectingComboboxItemAt(0, 0);
-    // Under MD, PermissionMenuModel gets strings using PageInfoUI::
-    // PermissionActionToUIString(..) rather than directly from the
-    // ResourceBundle.
-    EXPECT_EQ(base::ASCIIToUTF16("Ask (default)"),
-              api_->GetPermissionButtonTextAt(0));
-  } else {
-    list.back().setting = CONTENT_SETTING_ASK;
-    api_->GetPermissionSelectorAt(0)->PermissionChanged(list.back());
-    EXPECT_EQ(base::ASCIIToUTF16("Ask"), api_->GetPermissionButtonTextAt(0));
-  }
+  api_->SimulateUserSelectingComboboxItemAt(0, 0);
+  EXPECT_EQ(base::ASCIIToUTF16("Ask (default)"),
+            api_->GetPermissionButtonTextAt(0));
   EXPECT_EQ(num_expected_children, api_->permissions_view()->child_count());
 
   // However, since the setting is now default, recreating the dialog with those
   // settings should omit the permission from the UI.
+  //
+  // TODO(https://crbug.com/829576): Reconcile the comment above with the fact
+  // that |num_expected_children| is not, at this point, 0 and therefore the
+  // permission is not being omitted from the UI.
   api_->SetPermissionInfo(list);
   EXPECT_EQ(num_expected_children, api_->permissions_view()->child_count());
 }
@@ -356,6 +333,50 @@ TEST_F(PageInfoBubbleViewTest, SetPermissionInfoWithUsbDevice) {
   api_->SetPermissionInfo(list);
   EXPECT_EQ(kExpectedChildren, api_->permissions_view()->child_count());
   EXPECT_FALSE(store->HasDevicePermission(origin, origin, device));
+}
+
+TEST_F(PageInfoBubbleViewTest, SetPermissionInfoForUsbGuard) {
+  // This test exercises PermissionSelectorRow in a way that it is not used in
+  // practice. In practice, every setting in PermissionSelectorRow starts off
+  // "set", so there is always one option checked in the resulting MenuModel.
+  // This test creates settings that are left at their defaults, leading to zero
+  // checked options, and checks that the text on the MenuButtons is right.
+  PermissionInfoList list(1);
+  list.back().type = CONTENT_SETTINGS_TYPE_USB_GUARD;
+  list.back().source = content_settings::SETTING_SOURCE_USER;
+  list.back().is_incognito = false;
+  list.back().setting = CONTENT_SETTING_ASK;
+
+  // Initially, no permissions are shown because they are all set to default.
+  int num_expected_children = 0;
+  EXPECT_EQ(num_expected_children, api_->permissions_view()->child_count());
+
+  // Verify calling SetPermissionInfo() directly updates the UI.
+  num_expected_children += kViewsPerPermissionRow * list.size();
+  list.back().setting = CONTENT_SETTING_BLOCK;
+  api_->SetPermissionInfo(list);
+  EXPECT_EQ(base::ASCIIToUTF16("Block"), api_->GetPermissionButtonTextAt(0));
+
+  // Simulate a user selection via the UI. Note this will also cover logic in
+  // PageInfo to update the pref.
+  api_->SimulateUserSelectingComboboxItemAt(0, 2);
+  EXPECT_EQ(num_expected_children, api_->permissions_view()->child_count());
+  EXPECT_EQ(base::ASCIIToUTF16("Ask"), api_->GetPermissionButtonTextAt(0));
+
+  // Setting to the default via the UI should keep the button around.
+    api_->SimulateUserSelectingComboboxItemAt(0, 0);
+    EXPECT_EQ(base::ASCIIToUTF16("Ask (default)"),
+              api_->GetPermissionButtonTextAt(0));
+  EXPECT_EQ(num_expected_children, api_->permissions_view()->child_count());
+
+  // However, since the setting is now default, recreating the dialog with those
+  // settings should omit the permission from the UI.
+  //
+  // TODO(https://crbug.com/829576): Reconcile the comment above with the fact
+  // that |num_expected_children| is not, at this point, 0 and therefore the
+  // permission is not being omitted from the UI.
+  api_->SetPermissionInfo(list);
+  EXPECT_EQ(num_expected_children, api_->permissions_view()->child_count());
 }
 
 // Test that updating the number of cookies used by the current page doesn't add

@@ -49,6 +49,7 @@ class MockPresentationReceiver : public WiredDisplayPresentationReceiver {
                void(const std::string& presentation_id, const GURL& start_url));
   void Terminate() override { TerminateInternal(); }
   MOCK_METHOD0(TerminateInternal, void());
+  MOCK_METHOD0(ExitFullscreen, void());
 
   void SetTerminationCallback(base::OnceClosure termination_callback) {
     termination_callback_ = std::move(termination_callback);
@@ -222,6 +223,10 @@ TEST_F(WiredDisplayMediaRouteProviderTest, GetDisplaysAsSinks) {
             EXPECT_EQ(sinks[0].sink().id(), primary_id);
             EXPECT_EQ(sinks[1].sink().id(), secondary_id1);
             EXPECT_EQ(sinks[2].sink().id(), secondary_id2);
+
+            EXPECT_EQ(sinks[0].sink().provider_id(),
+                      MediaRouteProviderId::WIRED_DISPLAY);
+            EXPECT_EQ(sinks[0].sink().icon_type(), SinkIconType::WIRED_DISPLAY);
           })));
   provider_pointer_->StartObservingMediaSinks(kPresentationSource);
   base::RunLoop().RunUntilIdle();
@@ -334,6 +339,10 @@ TEST_F(WiredDisplayMediaRouteProviderTest, CreateAndTerminateRoute) {
   EXPECT_CALL(callback, TerminateRoute(base::Optional<std::string>(),
                                        RouteRequestResult::OK));
   EXPECT_CALL(*receiver_creator_.receiver(), TerminateInternal());
+  EXPECT_CALL(router_,
+              OnPresentationConnectionStateChanged(
+                  presentation_id,
+                  mojom::MediaRouter::PresentationConnectionState::TERMINATED));
   provider_pointer_->TerminateRoute(
       presentation_id, base::BindOnce(&MockCallback::TerminateRoute,
                                       base::Unretained(&callback)));
@@ -377,6 +386,23 @@ TEST_F(WiredDisplayMediaRouteProviderTest, SendMediaStatusUpdate) {
       }));
   receiver_creator_.receiver()->RunTitleChangeCallback(page_title);
   base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(WiredDisplayMediaRouteProviderTest, ExitFullscreenOnDisplayRemoved) {
+  MockCallback callback;
+  provider_->set_all_displays({secondary_display1_, primary_display_});
+  provider_pointer_->StartObservingMediaRoutes(kPresentationSource);
+  base::RunLoop().RunUntilIdle();
+
+  provider_pointer_->CreateRoute(
+      kPresentationSource, GetSinkId(secondary_display1_), "presentationId",
+      url::Origin::Create(GURL(kPresentationSource)), 0,
+      base::TimeDelta::FromSeconds(100), false,
+      base::BindOnce(&MockCallback::CreateRoute, base::Unretained(&callback)));
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_CALL(*receiver_creator_.receiver(), ExitFullscreen());
+  provider_->OnDisplayRemoved(secondary_display1_);
 }
 
 }  // namespace media_router

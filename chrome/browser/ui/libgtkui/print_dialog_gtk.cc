@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -17,7 +19,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/ui/libgtkui/gtk_util.h"
 #include "chrome/browser/ui/libgtkui/printing_gtk_util.h"
@@ -169,20 +171,20 @@ class GtkPrinterList {
 }  // namespace
 
 // static
-printing::PrintDialogGtkInterface* PrintDialogGtk2::CreatePrintDialog(
+printing::PrintDialogGtkInterface* PrintDialogGtk::CreatePrintDialog(
     PrintingContextLinux* context) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  return new PrintDialogGtk2(context);
+  return new PrintDialogGtk(context);
 }
 
-PrintDialogGtk2::PrintDialogGtk2(PrintingContextLinux* context)
+PrintDialogGtk::PrintDialogGtk(PrintingContextLinux* context)
     : context_(context),
       dialog_(nullptr),
       gtk_settings_(nullptr),
       page_setup_(nullptr),
       printer_(nullptr) {}
 
-PrintDialogGtk2::~PrintDialogGtk2() {
+PrintDialogGtk::~PrintDialogGtk() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (dialog_) {
@@ -208,7 +210,7 @@ PrintDialogGtk2::~PrintDialogGtk2() {
   }
 }
 
-void PrintDialogGtk2::UseDefaultSettings() {
+void PrintDialogGtk::UseDefaultSettings() {
   DCHECK(!page_setup_);
   DCHECK(!printer_);
 
@@ -221,13 +223,13 @@ void PrintDialogGtk2::UseDefaultSettings() {
   InitPrintSettings(&settings);
 }
 
-bool PrintDialogGtk2::UpdateSettings(printing::PrintSettings* settings) {
+void PrintDialogGtk::UpdateSettings(printing::PrintSettings* settings) {
   if (!gtk_settings_) {
     gtk_settings_ =
         gtk_print_settings_copy(g_last_used_settings.Get().settings());
   }
 
-  std::unique_ptr<GtkPrinterList> printer_list(new GtkPrinterList);
+  auto printer_list = std::make_unique<GtkPrinterList>();
   printer_ = printer_list->GetPrinterWithName(
       base::UTF16ToUTF8(settings->device_name()));
   if (printer_) {
@@ -269,6 +271,7 @@ bool PrintDialogGtk2::UpdateSettings(printing::PrintSettings* settings) {
     gtk_print_settings_set(gtk_settings_, kCUPSDuplex, cups_duplex_mode);
   }
 #endif
+
   if (!page_setup_)
     page_setup_ = gtk_page_setup_new();
 
@@ -317,10 +320,9 @@ bool PrintDialogGtk2::UpdateSettings(printing::PrintSettings* settings) {
                                            : GTK_PAGE_ORIENTATION_PORTRAIT);
 
   InitPrintSettings(settings);
-  return true;
 }
 
-void PrintDialogGtk2::ShowDialog(
+void PrintDialogGtk::ShowDialog(
     gfx::NativeView parent_view,
     bool has_selection,
     PrintingContextLinux::PrintSettingsCallback callback) {
@@ -372,8 +374,8 @@ void PrintDialogGtk2::ShowDialog(
       GTK_WINDOW(dialog_), ui::X11EventSource::GetInstance()->GetTimestamp());
 }
 
-void PrintDialogGtk2::PrintDocument(const printing::MetafilePlayer& metafile,
-                                    const base::string16& document_name) {
+void PrintDialogGtk::PrintDocument(const printing::MetafilePlayer& metafile,
+                                   const base::string16& document_name) {
   // This runs on the print worker thread, does not block the UI thread.
   DCHECK(!BrowserThread::CurrentlyOn(BrowserThread::UI));
 
@@ -401,21 +403,20 @@ void PrintDialogGtk2::PrintDocument(const printing::MetafilePlayer& metafile,
   }
 
   // No errors, continue printing.
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&PrintDialogGtk2::SendDocumentToPrinter, this,
-                     document_name));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(&PrintDialogGtk::SendDocumentToPrinter,
+                                         this, document_name));
 }
 
-void PrintDialogGtk2::AddRefToDialog() {
+void PrintDialogGtk::AddRefToDialog() {
   AddRef();
 }
 
-void PrintDialogGtk2::ReleaseDialog() {
+void PrintDialogGtk::ReleaseDialog() {
   Release();
 }
 
-void PrintDialogGtk2::OnResponse(GtkWidget* dialog, int response_id) {
+void PrintDialogGtk::OnResponse(GtkWidget* dialog, int response_id) {
   int num_matched_handlers = g_signal_handlers_disconnect_by_func(
       dialog_, reinterpret_cast<gpointer>(&OnResponseThunk), this);
   CHECK_EQ(1, num_matched_handlers);
@@ -473,6 +474,7 @@ void PrintDialogGtk2::OnResponse(GtkWidget* dialog, int response_id) {
       }
 
       PrintSettings settings;
+      settings.set_is_modifiable(context_->settings().is_modifiable());
       settings.set_ranges(ranges_vector);
       settings.set_selection_only(print_selection_only);
       InitPrintSettingsGtk(gtk_settings_, page_setup_, &settings);
@@ -492,15 +494,11 @@ void PrintDialogGtk2::OnResponse(GtkWidget* dialog, int response_id) {
 
 static void OnJobCompletedThunk(GtkPrintJob* print_job,
                                 gpointer user_data,
-#if GTK_MAJOR_VERSION == 2
-                                GError* error
-#else
                                 const GError* error
-#endif
                                 ) {
-  static_cast<PrintDialogGtk2*>(user_data)->OnJobCompleted(print_job, error);
+  static_cast<PrintDialogGtk*>(user_data)->OnJobCompleted(print_job, error);
 }
-void PrintDialogGtk2::SendDocumentToPrinter(
+void PrintDialogGtk::SendDocumentToPrinter(
     const base::string16& document_name) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -523,15 +521,15 @@ void PrintDialogGtk2::SendDocumentToPrinter(
   gtk_print_job_send(print_job, OnJobCompletedThunk, this, nullptr);
 }
 
-void PrintDialogGtk2::OnJobCompleted(GtkPrintJob* print_job,
-                                     const GError* error) {
+void PrintDialogGtk::OnJobCompleted(GtkPrintJob* print_job,
+                                    const GError* error) {
   if (error)
     LOG(ERROR) << "Printing failed: " << error->message;
   if (print_job)
     g_object_unref(print_job);
 
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
                             base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
                            base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                                           path_to_pdf_, false));
@@ -539,12 +537,12 @@ void PrintDialogGtk2::OnJobCompleted(GtkPrintJob* print_job,
   Release();
 }
 
-void PrintDialogGtk2::InitPrintSettings(PrintSettings* settings) {
+void PrintDialogGtk::InitPrintSettings(PrintSettings* settings) {
   InitPrintSettingsGtk(gtk_settings_, page_setup_, settings);
   context_->InitWithSettings(*settings);
 }
 
-void PrintDialogGtk2::OnWindowDestroying(aura::Window* window) {
+void PrintDialogGtk::OnWindowDestroying(aura::Window* window) {
   DCHECK_EQ(libgtkui::GetAuraTransientParent(dialog_), window);
 
   libgtkui::ClearAuraTransientParent(dialog_);

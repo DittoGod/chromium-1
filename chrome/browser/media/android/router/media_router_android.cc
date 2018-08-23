@@ -13,9 +13,10 @@
 #include "chrome/browser/media/router/media_routes_observer.h"
 #include "chrome/browser/media/router/media_sinks_observer.h"
 #include "chrome/browser/media/router/route_message_observer.h"
+#include "chrome/browser/media/router/route_message_util.h"
 #include "chrome/common/media_router/route_request_result.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/common/presentation_connection_message.h"
+#include "content/public/browser/web_contents.h"
 #include "url/gurl.h"
 
 namespace media_router {
@@ -142,7 +143,7 @@ void MediaRouterAndroid::DetachRoute(const MediaRoute::Id& route_id) {
   bridge_->DetachRoute(route_id);
   RemoveRoute(route_id);
   NotifyPresentationConnectionClose(
-      route_id, content::PRESENTATION_CONNECTION_CLOSE_REASON_CLOSED,
+      route_id, blink::mojom::PresentationConnectionCloseReason::CLOSED,
       "Remove route");
 }
 
@@ -151,7 +152,7 @@ bool MediaRouterAndroid::RegisterMediaSinksObserver(
   const std::string& source_id = observer->source().id();
   auto& observer_list = sinks_observers_[source_id];
   if (!observer_list) {
-    observer_list = std::make_unique<base::ObserverList<MediaSinksObserver>>();
+    observer_list = std::make_unique<MediaSinksObserverList>();
   } else {
     DCHECK(!observer_list->HasObserver(observer));
   }
@@ -199,8 +200,7 @@ void MediaRouterAndroid::RegisterRouteMessageObserver(
   const MediaRoute::Id& route_id = observer->route_id();
   auto& observer_list = message_observers_[route_id];
   if (!observer_list) {
-    observer_list =
-        std::make_unique<base::ObserverList<RouteMessageObserver>>();
+    observer_list = std::make_unique<RouteMessageObserverList>();
   } else {
     DCHECK(!observer_list->HasObserver(observer));
   }
@@ -270,7 +270,7 @@ void MediaRouterAndroid::OnRouteRequestError(const std::string& error_text,
 void MediaRouterAndroid::OnRouteClosed(const MediaRoute::Id& route_id) {
   RemoveRoute(route_id);
   NotifyPresentationConnectionStateChange(
-      route_id, content::PRESENTATION_CONNECTION_STATE_TERMINATED);
+      route_id, blink::mojom::PresentationConnectionState::TERMINATED);
 }
 
 void MediaRouterAndroid::OnRouteClosedWithError(const MediaRoute::Id& route_id,
@@ -278,7 +278,7 @@ void MediaRouterAndroid::OnRouteClosedWithError(const MediaRoute::Id& route_id,
   RemoveRoute(route_id);
   NotifyPresentationConnectionClose(
       route_id,
-      content::PRESENTATION_CONNECTION_CLOSE_REASON_CONNECTION_ERROR,
+      blink::mojom::PresentationConnectionCloseReason::CONNECTION_ERROR,
       message);
 }
 
@@ -294,10 +294,14 @@ void MediaRouterAndroid::OnMessage(const MediaRoute::Id& route_id,
   if (it == message_observers_.end())
     return;
 
-  std::vector<content::PresentationConnectionMessage> messages;
-  messages.emplace_back(message);
-  for (auto& observer : *it->second.get())
-    observer.OnMessagesReceived(messages);
+  const mojom::RouteMessagePtr& route_message =
+      message_util::RouteMessageFromString(message);
+
+  for (auto& observer : *it->second.get()) {
+    std::vector<mojom::RouteMessagePtr> messages;
+    messages.emplace_back(route_message->Clone());
+    observer.OnMessagesReceived(std::move(messages));
+  }
 }
 
 void MediaRouterAndroid::RemoveRoute(const MediaRoute::Id& route_id) {
@@ -309,6 +313,11 @@ void MediaRouterAndroid::RemoveRoute(const MediaRoute::Id& route_id) {
 
   for (auto& observer : routes_observers_)
     observer.OnRoutesUpdated(active_routes_, std::vector<MediaRoute::Id>());
+}
+
+std::unique_ptr<media::FlingingController>
+MediaRouterAndroid::GetFlingingController(const MediaRoute::Id& route_id) {
+  return bridge_->GetFlingingController(route_id);
 }
 
 }  // namespace media_router

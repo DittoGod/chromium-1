@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "components/payments/content/can_make_payment_query_factory.h"
 #include "components/payments/content/content_payment_request_delegate.h"
@@ -16,10 +15,14 @@
 #include "components/payments/content/payment_request_converter.h"
 #include "components/payments/content/payment_request_web_contents_manager.h"
 #include "components/payments/core/can_make_payment_query.h"
+#include "components/payments/core/features.h"
 #include "components/payments/core/payment_details.h"
 #include "components/payments/core/payment_details_validation.h"
+#include "components/payments/core/payment_instrument.h"
 #include "components/payments/core/payment_prefs.h"
+#include "components/payments/core/payments_validators.h"
 #include "components/prefs/pref_service.h"
+#include "components/ukm/content/source_url_recorder.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
@@ -48,15 +51,14 @@ PaymentRequest::PaymentRequest(
           render_frame_host->GetLastCommittedURL())),
       observer_for_testing_(observer_for_testing),
       journey_logger_(delegate_->IsIncognito(),
-                      web_contents_->GetLastCommittedURL(),
-                      delegate_->GetUkmRecorder()),
+                      ukm::GetSourceIdForWebContentsDocument(web_contents)),
       weak_ptr_factory_(this) {
   // OnConnectionTerminated will be called when the Mojo pipe is closed. This
   // will happen as a result of many renderer-side events (both successful and
   // erroneous in nature).
   // TODO(crbug.com/683636): Investigate using
   // set_connection_error_with_reason_handler with Binding::CloseWithReason.
-  binding_.set_connection_error_handler(base::Bind(
+  binding_.set_connection_error_handler(base::BindOnce(
       &PaymentRequest::OnConnectionTerminated, weak_ptr_factory_.GetWeakPtr()));
 }
 
@@ -91,16 +93,8 @@ void PaymentRequest::Init(mojom::PaymentRequestClientPtr client,
     LOG(ERROR) << "SSL certificate is not valid";
 
   if (!allowed_origin || invalid_ssl) {
-    // Don't show UI. Resolve .canMakepayment() with "false". Reject .show()
-    // with "NotSupportedError".
-    spec_ = std::make_unique<PaymentRequestSpec>(
-        mojom::PaymentOptions::New(), mojom::PaymentDetails::New(),
-        std::vector<mojom::PaymentMethodDataPtr>(), this,
-        delegate_->GetApplicationLocale());
-    state_ = std::make_unique<PaymentRequestState>(
-        web_contents_, top_level_origin_, frame_origin_, spec_.get(), this,
-        delegate_->GetApplicationLocale(), delegate_->GetPersonalDataManager(),
-        delegate_.get(), &journey_logger_);
+    // Intentionally don't set |spec_| and |state_|. Don't show UI. Resolve
+    // .canMakepayment() with "false". Reject .show() with "NotSupportedError".
     return;
   }
 
@@ -150,7 +144,7 @@ void PaymentRequest::Init(mojom::PaymentRequestClientPtr client,
           spec_->url_payment_method_identifiers().end());
 }
 
-void PaymentRequest::Show() {
+void PaymentRequest::Show(bool is_user_gesture) {
   if (!client_.is_bound() || !binding_.is_bound()) {
     LOG(ERROR) << "Attempted Show(), but binding(s) missing.";
     OnConnectionTerminated();
@@ -176,20 +170,41 @@ void PaymentRequest::Show() {
     return;
   }
 
-  // TODO(crbug.com/783811): Display a spinner when checking whether
-  // the methods are supported asynchronously for better user experience.
+  if (!state_) {
+    // SSL is not valid.
+    AreRequestedMethodsSupportedCallback(false);
+    return;
+  }
+
+  is_show_user_gesture_ = is_user_gesture;
+
+  display_handle_->Show(this);
+
   state_->AreRequestedMethodsSupported(
       base::BindOnce(&PaymentRequest::AreRequestedMethodsSupportedCallback,
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
+void PaymentRequest::Retry(mojom::PaymentValidationErrorsPtr errors) {
+  std::string error;
+  if (!PaymentsValidators::IsValidPaymentValidationErrorsFormat(errors,
+                                                                &error)) {
+    DLOG(ERROR) << error;
+    client_->OnError(mojom::PaymentErrorReason::USER_CANCEL);
+    OnConnectionTerminated();
+    return;
+  }
+
+  // TODO(zino): Should implement this method (including updating UI part).
+  // Please see https://crbug.com/861704
+  NOTIMPLEMENTED();
+}
+
 void PaymentRequest::AreRequestedMethodsSupportedCallback(
     bool methods_supported) {
   if (methods_supported) {
-    journey_logger_.SetEventOccurred(JourneyLogger::EVENT_SHOWN);
-
-    DCHECK(display_handle_);
-    display_handle_->Show(this);
+    if (SatisfiesSkipUIConstraints())
+      Pay();
   } else {
     journey_logger_.SetNotShown(
         JourneyLogger::NOT_SHOWN_REASON_NO_SUPPORTED_PAYMENT_METHOD);
@@ -263,11 +278,17 @@ void PaymentRequest::Complete(mojom::PaymentComplete result) {
 }
 
 void PaymentRequest::CanMakePayment() {
-  state()->CanMakePayment(base::BindOnce(
-      &PaymentRequest::CanMakePaymentCallback, weak_ptr_factory_.GetWeakPtr()));
-
   if (observer_for_testing_)
     observer_for_testing_->OnCanMakePaymentCalled();
+
+  if (!delegate_->GetPrefService()->GetBoolean(kCanMakePaymentEnabled) ||
+      !state_) {
+    CanMakePaymentCallback(/*can_make_payment=*/false);
+  } else {
+    state_->CanMakePayment(
+        base::BindOnce(&PaymentRequest::CanMakePaymentCallback,
+                       weak_ptr_factory_.GetWeakPtr()));
+  }
 }
 
 void PaymentRequest::OnPaymentResponseAvailable(
@@ -340,12 +361,50 @@ void PaymentRequest::OnConnectionTerminated() {
 
 void PaymentRequest::Pay() {
   journey_logger_.SetEventOccurred(JourneyLogger::EVENT_PAY_CLICKED);
-  journey_logger_.SetEventOccurred(JourneyLogger::EVENT_SELECTED_CREDIT_CARD);
+
+  // Log the correct "selected instrument" metric according to type.
+  DCHECK(state_->selected_instrument());
+  JourneyLogger::Event selected_event =
+      JourneyLogger::Event::EVENT_SELECTED_OTHER;
+  switch (state_->selected_instrument()->type()) {
+    case PaymentInstrument::Type::AUTOFILL:
+      selected_event = JourneyLogger::Event::EVENT_SELECTED_CREDIT_CARD;
+      break;
+    case PaymentInstrument::Type::SERVICE_WORKER_APP:
+      selected_event = JourneyLogger::Event::EVENT_SELECTED_OTHER;
+      break;
+    case PaymentInstrument::Type::NATIVE_MOBILE_APP:
+      NOTREACHED();
+      break;
+  }
+  journey_logger_.SetEventOccurred(selected_event);
+
   state_->GeneratePaymentResponse();
 }
 
 void PaymentRequest::HideIfNecessary() {
   display_handle_.reset();
+}
+
+void PaymentRequest::RecordDialogShownEventInJourneyLogger() {
+  journey_logger_.SetEventOccurred(JourneyLogger::EVENT_SHOWN);
+}
+
+bool PaymentRequest::IsIncognito() const {
+  return delegate_->IsIncognito();
+}
+
+bool PaymentRequest::SatisfiesSkipUIConstraints() const {
+  return base::FeatureList::IsEnabled(features::kWebPaymentsSingleAppUiSkip) &&
+         base::FeatureList::IsEnabled(::features::kServiceWorkerPaymentApps) &&
+         is_show_user_gesture_ && state()->is_get_all_instruments_finished() &&
+         state()->available_instruments().size() == 1 &&
+         spec()->stringified_method_data().size() == 1 &&
+         !spec()->request_shipping() && !spec()->request_payer_name() &&
+         !spec()->request_payer_phone() &&
+         !spec()->request_payer_email()
+         // Only allowing URL base payment apps to skip the payment sheet.
+         && spec()->url_payment_method_identifiers().size() == 1;
 }
 
 void PaymentRequest::RecordFirstAbortReason(
@@ -357,10 +416,10 @@ void PaymentRequest::RecordFirstAbortReason(
 }
 
 void PaymentRequest::CanMakePaymentCallback(bool can_make_payment) {
-  if (CanMakePaymentQueryFactory::GetInstance()
-          ->GetForContext(web_contents_->GetBrowserContext())
-          ->CanQuery(top_level_origin_, frame_origin_,
-                     spec()->stringified_method_data())) {
+  if (!spec_ || CanMakePaymentQueryFactory::GetInstance()
+                    ->GetForContext(web_contents_->GetBrowserContext())
+                    ->CanQuery(top_level_origin_, frame_origin_,
+                               spec_->stringified_method_data())) {
     RespondToCanMakePaymentQuery(can_make_payment, false);
   } else if (OriginSecurityChecker::IsOriginLocalhostOrFile(frame_origin_)) {
     RespondToCanMakePaymentQuery(can_make_payment, true);
@@ -375,12 +434,6 @@ void PaymentRequest::CanMakePaymentCallback(bool can_make_payment) {
 
 void PaymentRequest::RespondToCanMakePaymentQuery(bool can_make_payment,
                                                   bool warn_localhost_or_file) {
-  if (delegate_->IsIncognito()) {
-    can_make_payment =
-        spec()->HasBasicCardMethodName() ||
-        base::FeatureList::IsEnabled(features::kServiceWorkerPaymentApps);
-  }
-
   mojom::CanMakePaymentQueryResult positive =
       warn_localhost_or_file
           ? mojom::CanMakePaymentQueryResult::WARNING_CAN_MAKE_PAYMENT

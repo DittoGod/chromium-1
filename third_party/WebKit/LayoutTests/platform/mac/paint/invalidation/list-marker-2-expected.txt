@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -16,11 +17,6 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
-        {
-          "object": "LayoutListItem LI",
-          "rect": [48, 94, 744, 104],
-          "reason": "geometry"
-        },
         {
           "object": "LayoutImage IMG id='target'",
           "rect": [48, 94, 100, 100],
@@ -37,24 +33,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutListItem LI",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutListMarker (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutImage IMG id='target'",
-      "reason": "geometry"
     }
   ]
 }

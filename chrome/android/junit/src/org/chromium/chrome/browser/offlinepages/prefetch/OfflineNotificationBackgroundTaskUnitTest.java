@@ -40,7 +40,6 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.multidex.ShadowMultiDex;
 
-import org.chromium.base.BaseChromiumApplication;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.library_loader.ProcessInitException;
@@ -64,8 +63,7 @@ import java.util.concurrent.TimeUnit;
 
 /** Unit tests for {@link OfflineNotificationBackgroundTask}. */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, application = BaseChromiumApplication.class,
-        shadows = {ShadowMultiDex.class, ShadowDeviceConditions.class})
+@Config(manifest = Config.NONE, shadows = {ShadowMultiDex.class, ShadowDeviceConditions.class})
 public class OfflineNotificationBackgroundTaskUnitTest {
     /**
      * Fake of BackgroundTaskScheduler system service.
@@ -204,8 +202,8 @@ public class OfflineNotificationBackgroundTaskUnitTest {
         DeviceConditions deviceConditions =
                 new DeviceConditions(false /* POWER_CONNECTED */, 75 /* BATTERY_LEVEL */,
                         online ? ConnectionType.CONNECTION_WIFI : ConnectionType.CONNECTION_NONE,
-                        false /* POWER_SAVE */);
-        ShadowDeviceConditions.setCurrentConditions(deviceConditions, false /* metered */);
+                        false /* POWER_SAVE */, false /* metered */);
+        ShadowDeviceConditions.setCurrentConditions(deviceConditions);
     }
 
     public void assertTaskScheduledForOfflineDelay(String message) {

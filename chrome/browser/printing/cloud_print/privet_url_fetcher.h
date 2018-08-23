@@ -98,15 +98,23 @@ class PrivetURLFetcher : public net::URLFetcherDelegate {
   void SetUploadData(const std::string& upload_content_type,
                      const std::string& upload_data);
 
-  void SetUploadFilePath(const std::string& upload_content_type,
-                         const base::FilePath& upload_file_path);
-
   const GURL& url() const {
     return url_fetcher_ ? url_fetcher_->GetOriginalURL() : url_;
   }
   int response_code() const {
     return url_fetcher_ ? url_fetcher_->GetResponseCode() : -1;
   }
+
+  // A class that can be used in tests that want to bypass the delay when
+  // retrying loading a URL. Create one of this object in your test, it will
+  // disable the delay for retry on construction and revert it back on
+  // destruction.
+  // Note that you should not have more than one of these allocated at a time.
+  class RetryImmediatelyForTest final {
+   public:
+    RetryImmediatelyForTest();
+    ~RetryImmediatelyForTest();
+  };
 
  private:
   void OnURLFetchCompleteParseData(const net::URLFetcher* source);
@@ -134,6 +142,7 @@ class PrivetURLFetcher : public net::URLFetcherDelegate {
   bool send_empty_privet_token_ = false;
   bool has_byte_range_ = false;
   bool make_response_file_ = false;
+  static bool skip_retry_timeouts_for_tests_;
 
   int byte_range_start_ = 0;
   int byte_range_end_ = 0;
@@ -141,7 +150,6 @@ class PrivetURLFetcher : public net::URLFetcherDelegate {
   int tries_ = 0;
   std::string upload_data_;
   std::string upload_content_type_;
-  base::FilePath upload_file_path_;
   std::unique_ptr<net::URLFetcher> url_fetcher_;
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
 

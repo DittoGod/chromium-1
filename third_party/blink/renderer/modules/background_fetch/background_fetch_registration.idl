@@ -1,0 +1,27 @@
+// Copyright 2017 The Chromium Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// https://wicg.github.io/background-fetch/#background-fetch-registration
+enum BackgroundFetchState { "pending", "success", "failure" };
+
+[
+    Exposed=(Window,Worker),
+    RuntimeEnabled=BackgroundFetch
+] interface BackgroundFetchRegistration : EventTarget {
+    readonly attribute DOMString id;
+    readonly attribute unsigned long long uploadTotal;
+    readonly attribute unsigned long long uploaded;
+    readonly attribute unsigned long long downloadTotal;
+    readonly attribute unsigned long long downloaded;
+    readonly attribute BackgroundFetchState state;
+
+    attribute EventHandler onprogress;
+
+    [CallWith=ScriptState] Promise<boolean> abort();
+    
+    // TODO(crbug.com/875201): Change to (Window,Worker) once we support
+    // match() and matchAll() for active fetches.
+    [CallWith=ScriptState, Exposed=ServiceWorker, RaisesException] Promise<BackgroundFetchRecord> match(RequestInfo request, optional CacheQueryOptions options);
+    [CallWith=ScriptState, Exposed=ServiceWorker, RaisesException] Promise<sequence<BackgroundFetchRecord>> matchAll(optional RequestInfo request, optional CacheQueryOptions options);
+};

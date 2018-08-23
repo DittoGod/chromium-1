@@ -18,7 +18,11 @@
 #include "components/download/public/common/download_save_info.h"
 #include "components/download/public/common/download_url_parameters.h"
 #include "content/browser/loader/resource_handler.h"
-#include "services/device/public/interfaces/wake_lock.mojom.h"
+#include "services/device/public/mojom/wake_lock.mojom.h"
+
+namespace download {
+struct DownloadCreateInfo;
+}  // namespace download
 
 namespace net {
 class HttpResponseHeaders;
@@ -29,7 +33,6 @@ class URLRequestStatus;
 namespace content {
 class ByteStreamReader;
 class ByteStreamWriter;
-struct DownloadCreateInfo;
 
 // This class encapsulates the core logic for reading data from a URLRequest and
 // writing it into a ByteStream. It's common to both DownloadResourceHandler and
@@ -43,7 +46,7 @@ class CONTENT_EXPORT DownloadRequestCore
    public:
     virtual void OnReadyToRead() = 0;
     virtual void OnStart(
-        std::unique_ptr<DownloadCreateInfo> download_create_info,
+        std::unique_ptr<download::DownloadCreateInfo> download_create_info,
         std::unique_ptr<ByteStreamReader> stream_reader,
         const download::DownloadUrlParameters::OnStartedCallback& callback) = 0;
   };
@@ -61,7 +64,7 @@ class CONTENT_EXPORT DownloadRequestCore
   // Should be called when the URLRequest::Delegate receives OnResponseStarted.
   // Invokes Delegate::OnStart() with download start parameters. The
   // |override_mime_type| is used as the MIME type for the download when
-  // constructing a DownloadCreateInfo object.
+  // constructing a download::DownloadCreateInfo object.
   bool OnResponseStarted(const std::string& override_mime_type);
 
   // Should be called to handle a redirect. The caller should only allow the
@@ -106,7 +109,7 @@ class CONTENT_EXPORT DownloadRequestCore
   std::string DebugString() const;
 
   static std::unique_ptr<net::URLRequest> CreateRequestOnIOThread(
-      uint32_t download_id,
+      bool is_new_download,
       download::DownloadUrlParameters* params);
 
   // Size of the buffer used between the DownloadRequestCore and the
@@ -117,18 +120,19 @@ class CONTENT_EXPORT DownloadRequestCore
   net::URLRequest* request() const { return request_; }
 
  private:
-  std::unique_ptr<DownloadCreateInfo> CreateDownloadCreateInfo(
+  std::unique_ptr<download::DownloadCreateInfo> CreateDownloadCreateInfo(
       download::DownloadInterruptReason result);
 
   Delegate* delegate_;
   net::URLRequest* request_;
 
   // "Passthrough" fields. These are only kept here so that they can be used to
-  // populate the DownloadCreateInfo when the time comes.
+  // populate the download::DownloadCreateInfo when the time comes.
   std::unique_ptr<download::DownloadSaveInfo> save_info_;
-  uint32_t download_id_;
+  bool is_new_download_;
   std::string guid_;
   bool fetch_error_body_;
+  download::DownloadUrlParameters::RequestHeadersType request_headers_;
   bool transient_;
   download::DownloadUrlParameters::OnStartedCallback on_started_callback_;
 
@@ -140,11 +144,6 @@ class CONTENT_EXPORT DownloadRequestCore
   // system enters power saving mode while a URLRequest is alive, it can cause
   // URLRequest to fail and the associated download will be interrupted.
   device::mojom::WakeLockPtr wake_lock_;
-
-  // The following are used to collect stats.
-  base::TimeTicks download_start_time_;
-  base::TimeTicks last_stream_pause_time_;
-  base::TimeDelta total_pause_time_;
 
   int64_t bytes_read_;
 

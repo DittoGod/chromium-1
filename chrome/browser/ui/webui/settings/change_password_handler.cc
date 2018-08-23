@@ -26,11 +26,12 @@ ChangePasswordHandler::~ChangePasswordHandler() {}
 void ChangePasswordHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "initializeChangePasswordHandler",
-      base::Bind(&ChangePasswordHandler::HandleInitialize,
-                 base::Unretained(this)));
+      base::BindRepeating(&ChangePasswordHandler::HandleInitialize,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "changePassword", base::Bind(&ChangePasswordHandler::HandleChangePassword,
-                                   base::Unretained(this)));
+      "changePassword",
+      base::BindRepeating(&ChangePasswordHandler::HandleChangePassword,
+                          base::Unretained(this)));
 }
 
 void ChangePasswordHandler::OnJavascriptAllowed() {
@@ -51,10 +52,11 @@ void ChangePasswordHandler::HandleInitialize(const base::ListValue* args) {
 }
 
 void ChangePasswordHandler::HandleChangePassword(const base::ListValue* args) {
-  service_->OnUserAction(
-      web_ui()->GetWebContents(),
-      safe_browsing::PasswordProtectionService::CHROME_SETTINGS,
-      safe_browsing::PasswordProtectionService::CHANGE_PASSWORD);
+  service_->OnUserAction(web_ui()->GetWebContents(),
+                         safe_browsing::LoginReputationClientRequest::
+                             PasswordReuseEvent::SIGN_IN_PASSWORD,
+                         safe_browsing::WarningUIType::CHROME_SETTINGS,
+                         safe_browsing::WarningAction::CHANGE_PASSWORD);
 }
 
 void ChangePasswordHandler::UpdateChangePasswordCardVisibility() {

@@ -78,9 +78,8 @@ ConfigurationPolicyProvider* TestHarness::CreateProvider(
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   // Create and initialize the store.
   store_.NotifyStoreLoaded();
-  ConfigurationPolicyProvider* provider =
-      new CloudPolicyManager(dm_protocol::kChromeUserPolicyType, std::string(),
-                             &store_, task_runner, task_runner);
+  ConfigurationPolicyProvider* provider = new CloudPolicyManager(
+      dm_protocol::kChromeUserPolicyType, std::string(), &store_, task_runner);
   Mock::VerifyAndClearExpectations(&store_);
   return provider;
 }
@@ -148,7 +147,6 @@ class TestCloudPolicyManager : public CloudPolicyManager {
       : CloudPolicyManager(dm_protocol::kChromeUserPolicyType,
                            std::string(),
                            store,
-                           task_runner,
                            task_runner) {}
   ~TestCloudPolicyManager() override {}
 
@@ -232,7 +230,7 @@ TEST_F(CloudPolicyManagerTest, InitAndShutdown) {
   EXPECT_TRUE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
 
   MockCloudPolicyClient* client = new MockCloudPolicyClient();
-  EXPECT_CALL(*client, SetupRegistration(_, _));
+  EXPECT_CALL(*client, SetupRegistration(_, _, _));
   manager_->core()->Connect(std::unique_ptr<CloudPolicyClient>(client));
   Mock::VerifyAndClearExpectations(client);
   EXPECT_TRUE(manager_->client());
@@ -308,7 +306,7 @@ TEST_F(CloudPolicyManagerTest, RefreshSuccessful) {
   // Simulate a store load.
   store_.policy_.reset(new em::PolicyData(policy_.policy_data()));
   EXPECT_CALL(observer_, OnUpdatePolicy(manager_.get()));
-  EXPECT_CALL(*client, SetupRegistration(_, _));
+  EXPECT_CALL(*client, SetupRegistration(_, _, _));
   store_.NotifyStoreLoaded();
   Mock::VerifyAndClearExpectations(client);
   Mock::VerifyAndClearExpectations(&observer_);

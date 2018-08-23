@@ -17,6 +17,8 @@
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_utils.h"
 #include "ash/system/tray/tri_view.h"
+#include "base/metrics/user_metrics.h"
+#include "base/metrics/user_metrics_action.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -92,8 +94,8 @@ class VolumeButton : public ButtonListenerActionableView {
                             : std::max(1, static_cast<int>(std::ceil(
                                               level * (volume_levels - 1)))));
     gfx::ImageSkia image_skia = gfx::CreateVectorIcon(
-        *kVolumeLevelIcons[image_index], features::IsNewSystemMenuEnabled()
-                                             ? kNewMenuIconColor
+        *kVolumeLevelIcons[image_index], features::IsSystemTrayUnifiedEnabled()
+                                             ? kUnifiedMenuIconColor
                                              : kMenuIconColor);
     image_->SetImage(&image_skia);
     image_index_ = image_index;
@@ -137,8 +139,8 @@ VolumeView::VolumeView(SystemTrayItem* owner,
       l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_VOLUME));
   tri_view_->AddView(TriView::Container::CENTER, slider_);
 
-  SetBackground(features::IsNewSystemMenuEnabled()
-                    ? views::CreateSolidBackground(kNewMenuBackgroundColor)
+  SetBackground(features::IsSystemTrayUnifiedEnabled()
+                    ? views::CreateSolidBackground(kUnifiedMenuBackgroundColor)
                     : views::CreateThemedSolidBackground(
                           this, ui::NativeTheme::kColorId_BubbleBackground));
 
@@ -222,8 +224,9 @@ void VolumeView::UpdateDeviceTypeAndMore() {
   tri_view_->InvalidateLayout();
   if (device_icon_visibility)
     device_type_->SetImage(gfx::CreateVectorIcon(
-        device_icon, features::IsNewSystemMenuEnabled() ? kNewMenuIconColor
-                                                        : kMenuIconColor));
+        device_icon, features::IsSystemTrayUnifiedEnabled()
+                         ? kUnifiedMenuIconColor
+                         : kMenuIconColor));
   if (device_type_->visible() != device_icon_visibility) {
     device_type_->SetVisible(device_icon_visibility);
     device_type_->InvalidateLayout();
@@ -255,6 +258,12 @@ void VolumeView::ButtonPressed(views::Button* sender, const ui::Event& event) {
   if (sender == icon_) {
     CrasAudioHandler* audio_handler = CrasAudioHandler::Get();
     bool mute_on = !audio_handler->IsOutputMuted();
+
+    if (mute_on)
+      base::RecordAction(base::UserMetricsAction("StatusArea_Audio_Muted"));
+    else
+      base::RecordAction(base::UserMetricsAction("StatusArea_Audio_Unmuted"));
+
     audio_handler->SetOutputMute(mute_on);
     if (!mute_on)
       audio_handler->AdjustOutputVolumeToAudibleLevel();

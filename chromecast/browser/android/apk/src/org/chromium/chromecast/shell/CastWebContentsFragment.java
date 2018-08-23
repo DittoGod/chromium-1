@@ -6,6 +6,8 @@ package org.chromium.chromecast.shell;
 
 import android.app.Fragment;
 import android.content.Context;
+import android.content.Intent;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -16,7 +18,9 @@ import android.widget.Toast;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.content_public.browser.WebContents;
+import org.chromium.chromecast.base.CastSwitches;
+import org.chromium.chromecast.base.Controller;
+import org.chromium.chromecast.base.Unit;
 
 /**
  * Fragment for displaying a WebContents in CastShell.
@@ -32,11 +36,13 @@ import org.chromium.content_public.browser.WebContents;
 public class CastWebContentsFragment extends Fragment {
     private static final String TAG = "cr_CastWebContentFrg";
 
+    private final Controller<Unit> mResumedState = new Controller<>();
+
     private Context mPackageContext;
-
     private CastWebContentsSurfaceHelper mSurfaceHelper;
-
     private View mFragmentRootView;
+    private String mAppId;
+    private int mInitialVisiblityPriority;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -58,11 +64,11 @@ public class CastWebContentsFragment extends Fragment {
         }
         if (mFragmentRootView == null) {
             mFragmentRootView = inflater.cloneInContext(getContext())
-                .inflate(R.layout.cast_web_contents_activity, null);
+                                        .inflate(R.layout.cast_web_contents_activity, null);
         }
+        mFragmentRootView.setVisibility(View.VISIBLE);
         return mFragmentRootView;
     }
-
 
     @Override
     public Context getContext() {
@@ -76,42 +82,48 @@ public class CastWebContentsFragment extends Fragment {
     public void onStart() {
         Log.d(TAG, "onStart");
         super.onStart();
+
         if (mSurfaceHelper != null) {
             return;
         }
-        mSurfaceHelper = new CastWebContentsSurfaceHelper(getActivity(), /* hostActivity */
-                    (FrameLayout) getView().findViewById(R.id.web_contents_container),
-                    true /* showInFragment */);
-        Bundle bundle = getArguments();
-        bundle.setClassLoader(WebContents.class.getClassLoader());
-        String uriString = bundle.getString(CastWebContentsComponent.INTENT_EXTRA_URI);
-        if (uriString == null) {
-            return;
-        }
-        Uri uri = Uri.parse(uriString);
-        WebContents webContents = (WebContents) bundle.getParcelable(
-                CastWebContentsComponent.ACTION_EXTRA_WEB_CONTENTS);
 
-        boolean touchInputEnabled =
-                bundle.getBoolean(CastWebContentsComponent.ACTION_EXTRA_TOUCH_INPUT_ENABLED, false);
-        mSurfaceHelper.onNewWebContents(uri, webContents, touchInputEnabled);
+        mSurfaceHelper = new CastWebContentsSurfaceHelper(getActivity(), /* hostActivity */
+                CastWebContentsView.onLayoutFragment(getContext(),
+                        (FrameLayout) getView().findViewById(R.id.web_contents_container),
+                        CastSwitches.getSwitchValueColor(
+                                CastSwitches.CAST_APP_BACKGROUND_COLOR, Color.BLACK)),
+                (Uri uri) -> sendIntentSync(CastWebContentsIntentUtils.onWebContentStopped(uri)));
+
+        Bundle bundle = getArguments();
+        CastWebContentsSurfaceHelper.StartParams params =
+                CastWebContentsSurfaceHelper.StartParams.fromBundle(bundle);
+        if (params == null) return;
+
+        mAppId = CastWebContentsIntentUtils.getAppId(bundle);
+        mInitialVisiblityPriority = CastWebContentsIntentUtils.getVisibilityPriority(bundle);
+        mSurfaceHelper.onNewStartParams(params);
     }
 
     @Override
     public void onPause() {
         Log.d(TAG, "onPause");
         super.onPause();
-        if (mSurfaceHelper != null) {
-            mSurfaceHelper.onPause();
-        }
+        // Set mFragmentRootView to invisible to avoid dismiss fragment animation -> activity back
+        // ground -> one frame of cast app UI -> acivity back ground
+        mFragmentRootView.setVisibility(View.INVISIBLE);
+        mResumedState.reset();
     }
 
     @Override
     public void onResume() {
         Log.d(TAG, "onResume");
         super.onResume();
-        if (mSurfaceHelper != null) {
-            mSurfaceHelper.onResume();
+        mResumedState.set(Unit.unit());
+    }
+
+    private void setToVisible() {
+        if (isResumed()) {
+            mFragmentRootView.setVisibility(View.VISIBLE);
         }
     }
 
@@ -128,5 +140,9 @@ public class CastWebContentsFragment extends Fragment {
             mSurfaceHelper.onDestroy();
         }
         super.onDestroy();
+    }
+
+    private void sendIntentSync(Intent in) {
+        CastWebContentsIntentUtils.getLocalBroadcastManager().sendBroadcastSync(in);
     }
 }

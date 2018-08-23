@@ -3,6 +3,7 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
       "backgroundColor": "#FFFFFF"
     },
     {
@@ -18,20 +19,10 @@
       "paintInvalidations": [
         {
           "object": "InlineTextBox 'Should have green background'",
-          "rect": [8, 8, 198, 19],
+          "rect": [8, 8, 197, 19],
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'Should have green background'",
-      "reason": "geometry"
     }
   ]
 }

@@ -12,7 +12,7 @@ namespace switches {
 
 extern const char kCrashDumpsDir[];
 extern const char kDefaultBackgroundColor[];
-extern const char kDeterministicFetch[];
+extern const char kDeterministicMode[];
 extern const char kDisableCrashReporter[];
 extern const char kDumpDom[];
 extern const char kEnableBeginFrameControl[];
@@ -23,7 +23,6 @@ extern const char kPrintToPDF[];
 extern const char kProxyBypassList[];
 extern const char kProxyServer[];
 extern const char kRemoteDebuggingAddress[];
-extern const char kRemoteDebuggingSocketFd[];
 extern const char kRepl[];
 extern const char kScreenshot[];
 extern const char kSSLKeyLogFile[];
@@ -35,9 +34,11 @@ extern const char kVirtualTimeBudget[];
 extern const char kWindowSize[];
 extern const char kAuthServerWhitelist[];
 extern const char kFontRenderHinting[];
+extern const char kBlockNewWebContents[];
 
 // Switches which are replicated from content.
 using ::switches::kRemoteDebuggingPort;
+using ::switches::kRemoteDebuggingPipe;
 
 }  // namespace switches
 }  // namespace headless

@@ -38,6 +38,7 @@ void ConcludeLaunchDeviceWithSuccess(
 
 void ConcludeLaunchDeviceWithFailure(
     bool abort_requested,
+    media::VideoCaptureError error,
     std::unique_ptr<VideoCaptureFactoryDelegate> device_factory,
     VideoCaptureDeviceLauncher::Callbacks* callbacks,
     base::OnceClosure done_cb) {
@@ -45,7 +46,7 @@ void ConcludeLaunchDeviceWithFailure(
   if (abort_requested)
     callbacks->OnDeviceLaunchAborted();
   else
-    callbacks->OnDeviceLaunchFailed();
+    callbacks->OnDeviceLaunchFailed(error);
   base::ResetAndReturn(&done_cb).Run();
 }
 
@@ -84,8 +85,11 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
     // This can happen when the ServiceVideoCaptureProvider owning
     // |device_factory_| loses connection to the service process and resets
     // |device_factory_|.
-    ConcludeLaunchDeviceWithFailure(false, std::move(device_factory_),
-                                    callbacks, std::move(done_cb));
+    ConcludeLaunchDeviceWithFailure(
+        false,
+        media::VideoCaptureError::
+            kServiceDeviceLauncherLostConnectionToDeviceFactoryDuringDeviceStart,
+        std::move(device_factory_), callbacks, std::move(done_cb));
     return;
   }
 
@@ -117,8 +121,8 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
           // Use of Unretained |this| is safe, because |done_cb_| guarantees
           // that |this| stays alive.
           &ServiceVideoCaptureDeviceLauncher::OnCreateDeviceCallback,
-          base::Unretained(this), params, base::Passed(&device),
-          std::move(receiver), base::Passed(&connection_lost_cb)));
+          base::Unretained(this), params, std::move(device),
+          std::move(receiver), std::move(connection_lost_cb)));
   state_ = State::DEVICE_START_IN_PROGRESS;
 }
 
@@ -137,7 +141,7 @@ void ServiceVideoCaptureDeviceLauncher::OnCreateDeviceCallback(
   DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(callbacks_);
   DCHECK(done_cb_);
-  device.set_connection_error_handler(base::BindOnce(&base::DoNothing));
+  device.set_connection_error_handler(base::DoNothing());
   const bool abort_requested = (state_ == State::DEVICE_START_ABORTING);
   state_ = State::READY_TO_LAUNCH;
   Callbacks* callbacks = callbacks_;
@@ -157,9 +161,11 @@ void ServiceVideoCaptureDeviceLauncher::OnCreateDeviceCallback(
       return;
     case video_capture::mojom::DeviceAccessResultCode::ERROR_DEVICE_NOT_FOUND:
     case video_capture::mojom::DeviceAccessResultCode::NOT_INITIALIZED:
-      ConcludeLaunchDeviceWithFailure(abort_requested,
-                                      std::move(device_factory_), callbacks,
-                                      std::move(done_cb_));
+      ConcludeLaunchDeviceWithFailure(
+          abort_requested,
+          media::VideoCaptureError::
+              kServiceDeviceLauncherServiceRespondedWithDeviceNotFound,
+          std::move(device_factory_), callbacks, std::move(done_cb_));
       return;
   }
 }
@@ -172,8 +178,11 @@ void ServiceVideoCaptureDeviceLauncher::
   state_ = State::READY_TO_LAUNCH;
   Callbacks* callbacks = callbacks_;
   callbacks_ = nullptr;
-  ConcludeLaunchDeviceWithFailure(abort_requested, std::move(device_factory_),
-                                  callbacks, std::move(done_cb_));
+  ConcludeLaunchDeviceWithFailure(
+      abort_requested,
+      media::VideoCaptureError::
+          kServiceDeviceLauncherConnectionLostWhileWaitingForCallback,
+      std::move(device_factory_), callbacks, std::move(done_cb_));
 }
 
 }  // namespace content

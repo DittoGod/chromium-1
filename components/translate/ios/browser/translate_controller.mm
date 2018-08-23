@@ -50,7 +50,6 @@ void TranslateController::InjectTranslateScript(
     const std::string& translate_script) {
   [js_manager_ setScript:base::SysUTF8ToNSString(translate_script)];
   [js_manager_ inject];
-  [js_manager_ injectWaitUntilTranslateReadyScript];
 }
 
 void TranslateController::RevertTranslation() {
@@ -62,10 +61,6 @@ void TranslateController::StartTranslation(const std::string& source_language,
   [js_manager_ startTranslationFrom:source_language to:target_language];
 }
 
-void TranslateController::CheckTranslateStatus() {
-  [js_manager_ injectTranslateStatusScript];
-}
-
 void TranslateController::SetJsTranslateManagerForTesting(
     JsTranslateManager* manager) {
   js_manager_.reset(manager);
@@ -74,7 +69,12 @@ void TranslateController::SetJsTranslateManagerForTesting(
 bool TranslateController::OnJavascriptCommandReceived(
     const base::DictionaryValue& command,
     const GURL& url,
-    bool interacting) {
+    bool interacting,
+    bool is_main_frame) {
+  if (!is_main_frame) {
+    // Translate is only supported on main frame.
+    return false;
+  }
   const base::Value* value = nullptr;
   command.Get("command", &value);
   if (!value) {

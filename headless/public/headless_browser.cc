@@ -34,17 +34,7 @@ std::string GetProductNameAndVersion() {
 Options::Options(int argc, const char** argv)
     : argc(argc),
       argv(argv),
-#if defined(USE_OZONE)
-      // TODO(skyostil): Implement SwiftShader backend for headless ozone.
-      gl_implementation("osmesa"),
-#elif defined(OS_WIN)
-      // TODO(skyostil): Enable SwiftShader on Windows (crbug.com/729961).
-      gl_implementation("osmesa"),
-#elif !defined(OS_MACOSX)
       gl_implementation("swiftshader-webgl"),
-#else
-      gl_implementation("any"),
-#endif
       product_name_and_version(GetProductNameAndVersion()),
       user_agent(content::BuildUserAgentFromProduct(product_name_and_version)),
       window_size(kDefaultWindowSize),
@@ -58,7 +48,7 @@ Options::~Options() = default;
 Options& Options::operator=(Options&& options) = default;
 
 bool Options::DevtoolsServerEnabled() {
-  return (!devtools_endpoint.IsEmpty() || devtools_socket_fd != 0);
+  return (devtools_pipe_enabled || !devtools_endpoint.IsEmpty());
 }
 
 Builder::Builder(int argc, const char** argv) : options_(argc, argv) {}
@@ -93,8 +83,8 @@ Builder& Builder::EnableDevToolsServer(const net::HostPortPair& endpoint) {
   return *this;
 }
 
-Builder& Builder::EnableDevToolsServer(const size_t socket_fd) {
-  options_.devtools_socket_fd = socket_fd;
+Builder& Builder::EnableDevToolsPipe() {
+  options_.devtools_pipe_enabled = true;
   return *this;
 }
 
@@ -134,11 +124,6 @@ Builder& Builder::SetGLImplementation(const std::string& gl_implementation) {
   return *this;
 }
 
-Builder& Builder::AddMojoServiceName(const std::string& mojo_service_name) {
-  options_.mojo_service_names.insert(mojo_service_name);
-  return *this;
-}
-
 Builder& Builder::SetAppendCommandLineFlagsCallback(
     const Options::AppendCommandLineFlagsCallback& callback) {
   options_.append_command_line_flags_callback = callback;
@@ -172,19 +157,19 @@ Builder& Builder::SetIncognitoMode(bool incognito_mode) {
   return *this;
 }
 
+Builder& Builder::SetSitePerProcess(bool site_per_process) {
+  options_.site_per_process = site_per_process;
+  return *this;
+}
+
 Builder& Builder::SetBlockNewWebContents(bool block_new_web_contents) {
   options_.block_new_web_contents = block_new_web_contents;
   return *this;
 }
 
-Builder& Builder::SetInitialVirtualTime(base::Time initial_virtual_time) {
-  options_.initial_virtual_time = initial_virtual_time;
-  return *this;
-}
-
 Builder& Builder::SetOverrideWebPreferencesCallback(
-    const base::Callback<void(WebPreferences*)>& callback) {
-  options_.override_web_preferences_callback = callback;
+    base::RepeatingCallback<void(WebPreferences*)> callback) {
+  options_.override_web_preferences_callback = std::move(callback);
   return *this;
 }
 

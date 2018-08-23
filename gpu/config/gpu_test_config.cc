@@ -147,6 +147,8 @@ bool GPUTestConfig::OverlapsWith(const GPUTestConfig& config) const {
       build_type_ != kBuildTypeUnknown &&
       (build_type_ & config.build_type_) == 0)
     return false;
+  if (config.api() != kAPIUnknown && api_ != kAPIUnknown && api_ != config.api_)
+    return false;
   return true;
 }
 
@@ -251,8 +253,7 @@ bool GPUTestBotConfig::LoadCurrentConfig(const GPUInfo* gpu_info) {
     rt = false;
 #else
     GPUInfo my_gpu_info;
-    CollectInfoResult result = CollectBasicGraphicsInfo(&my_gpu_info);
-    if (result != kCollectInfoSuccess) {
+    if (!CollectBasicGraphicsInfo(&my_gpu_info)) {
       LOG(ERROR) << "Fail to identify GPU";
       rt = false;
     } else {
@@ -278,7 +279,7 @@ bool GPUTestBotConfig::LoadCurrentConfig(const GPUInfo* gpu_info) {
 // static
 bool GPUTestBotConfig::CurrentConfigMatches(const std::string& config_data) {
   GPUTestBotConfig my_config;
-  if (!my_config.LoadCurrentConfig(NULL))
+  if (!my_config.LoadCurrentConfig(nullptr))
     return false;
   return my_config.Matches(config_data);
 }
@@ -287,7 +288,7 @@ bool GPUTestBotConfig::CurrentConfigMatches(const std::string& config_data) {
 bool GPUTestBotConfig::CurrentConfigMatches(
     const std::vector<std::string>& configs) {
   GPUTestBotConfig my_config;
-  if (!my_config.LoadCurrentConfig(NULL))
+  if (!my_config.LoadCurrentConfig(nullptr))
     return false;
   for (size_t i = 0 ; i < configs.size(); ++i) {
     if (my_config.Matches(configs[i]))

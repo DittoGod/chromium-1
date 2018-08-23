@@ -15,7 +15,7 @@
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/upgrade_detector.h"
+#include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/menu_model_test.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -113,6 +113,8 @@ TEST_F(AppMenuModelTest, Basics) {
   EXPECT_GT(itemCount, 10);
 
   UpgradeDetector* detector = UpgradeDetector::GetInstance();
+  detector->set_upgrade_notification_stage(
+      UpgradeDetector::UPGRADE_ANNOYANCE_LOW);
   detector->NotifyUpgrade();
   EXPECT_TRUE(detector->notify_upgrade());
   EXPECT_EQ(browser_defaults::kShowUpgradeMenuItem,

@@ -12,7 +12,7 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/version.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/version_info/version_info.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/geolocation/CLLocation+OmniboxGeolocation.h"
@@ -457,7 +457,8 @@ const char* const kGeolocationAuthorizationActionNewUser =
     web::NavigationManager* navigationManager =
         tab.webState->GetNavigationManager();
     web::NavigationItem* item = navigationManager->GetVisibleItem();
-    if ([self addLocationToNavigationItem:item browserState:tab.browserState]) {
+    if (item &&
+        [self addLocationToNavigationItem:item browserState:tab.browserState]) {
       navigationManager->Reload(web::ReloadType::NORMAL,
                                 false /* check_for_repost */);
     }
@@ -469,7 +470,7 @@ const char* const kGeolocationAuthorizationActionNewUser =
   if (!previousVersion.IsValid())
     return YES;
 
-  base::Version currentVersion(version_info::GetVersionNumber());
+  const base::Version& currentVersion = version_info::GetVersion();
   DCHECK(currentVersion.IsValid());
   return currentVersion.components()[0] != previousVersion.components()[0];
 }
